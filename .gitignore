@@ -1,0 +1,31 @@
+# Build output
+/telemetryctl
+/telemetryctl.exe
+/dist/
+/bin/
+
+# Go test and coverage artifacts
+*.test
+*.out
+coverage.*
+
+# Runtime data and generated analysis
+/data/
+/analysis/report.json
+/analysis/history.jsonl
+
+# Backups created by telemetryctl
+*.telemetryctl.bak
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Editors and operating systems
+/.claude/
+/.idea/
+/.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*~

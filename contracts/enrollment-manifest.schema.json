@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://get.your-service.com/contracts/enrollment-manifest.schema.json",
+  "title": "Enrollment Manifest",
+  "description": "설치 스크립트가 enrollment API 로부터 브라우저/device-code 로그인 후 받아오는 설정 manifest. installer(Go), enrollment 서버, 파이프라인이 공유하는 유일한 진실원. docs/installation-architecture.md §3.3 / §3.5 참조.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "config_revision",
+    "installation_id",
+    "installation_token",
+    "otlp",
+    "signals",
+    "privacy"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "manifest 스키마 버전. 하위호환 깨는 변경 시 증가. installer 는 지원 범위를 벗어나면 거부한다.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "config_revision": {
+      "description": "이 tenant 설정의 리비전. installer 는 로컬에 적용된 revision 과 비교해 update/repair 필요 여부를 판단한다 (§5.3).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "installation_id": {
+      "description": "설치 단위 식별자. 예: ins_01JABC (§3.4 설치 단위 변수).",
+      "type": "string",
+      "minLength": 1
+    },
+    "installation_token": {
+      "description": "OTLP 전송 인증용 설치별 ingest-only 토큰. 회사 공용 토큰 금지, HTTPS 필수, 로그 출력 금지 (§4.5). 클라이언트 설정 파일에 평문으로 기록되므로 최소 권한만 부여한다.",
+      "type": "string",
+      "minLength": 1,
+      "writeOnly": true
+    },
+    "otlp": {
+      "description": "회사 단위 Collector 전송 설정 (§3.4). 모든 값은 서버가 결정하며 클라이언트가 임의 지정하지 않는다.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endpoint", "protocol"],
+      "properties": {
+        "endpoint": {
+          "description": "telemetry 를 전송할 Collector 주소. SaaS 는 공통 endpoint + token 으로 tenant 구분, 셀프호스트는 사내 주소.",
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        },
+        "protocol": {
+          "description": "전송 방식. Codex/Claude Code OTLP exporter 가 지원하는 값.",
+          "type": "string",
+          "enum": ["http/protobuf", "http/json", "grpc"]
+        },
+        "compression": {
+          "description": "압축 방식.",
+          "type": "string",
+          "enum": ["none", "gzip"],
+          "default": "gzip"
+        },
+        "timeout_ms": {
+          "description": "telemetry 전송 제한 시간(ms). 짧게 잡아 Collector 장애가 개발을 방해하지 않게 한다 (§5.4).",
+          "type": "integer",
+          "minimum": 1,
+          "default": 10000
+        }
+      }
+    },
+    "signals": {
+      "description": "활성화할 signal (회사 단위). 서버가 결정한다.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logs", "metrics", "traces"],
+      "properties": {
+        "logs": { "type": "boolean" },
+        "metrics": { "type": "boolean" },
+        "traces": { "type": "boolean" }
+      }
+    },
+    "privacy": {
+      "description": "민감 정보 수집 정책 (§4.6). MVP 기본값은 전부 false. 클라이언트 설정만 믿지 않고 Collector redaction 과 이중으로 방어한다.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "collect_user_prompts",
+        "collect_assistant_responses",
+        "collect_tool_details",
+        "collect_tool_content",
+        "collect_user_email"
+      ],
+      "properties": {
+        "collect_user_prompts": { "type": "boolean", "default": false },
+        "collect_assistant_responses": { "type": "boolean", "default": false },
+        "collect_tool_details": { "type": "boolean", "default": false },
+        "collect_tool_content": { "type": "boolean", "default": false },
+        "collect_user_email": { "type": "boolean", "default": false }
+      }
+    },
+    "repository_allowlist": {
+      "description": "수집을 허용할 회사 저장소 목록 (§4.3, 권장). git remote 로 식별해 등록된 저장소만 저장. 비어있거나 생략이면 정책 미적용으로 간주.",
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "resource_attributes": {
+      "description": "모든 telemetry 에 붙일 OTel resource attribute. deployment.environment 등 (§3.4).",
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "default": {}
+    }
+  }
+}
