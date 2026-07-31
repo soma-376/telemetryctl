@@ -26,13 +26,14 @@ var claudeManagedEnvKeys = []string{
 	"OTEL_LOG_USER_PROMPTS",
 }
 
-// claudeEnv 는 manifest 로부터 주입할 env 키/값을 만든다.
-func claudeEnv(m *manifest.Manifest) map[string]string {
+// claudeEnv 는 manifest 설정과 설치 토큰으로부터 주입할 env 키/값을 만든다.
+// 토큰은 manifest(설정)가 아니라 enroll 봉투에서 오므로 별도 인자로 받는다.
+func claudeEnv(m *manifest.Manifest, token string) map[string]string {
 	env := map[string]string{
 		"CLAUDE_CODE_ENABLE_TELEMETRY":   "1",
 		"OTEL_EXPORTER_OTLP_PROTOCOL":    m.OTLP.Protocol,
 		"OTEL_EXPORTER_OTLP_ENDPOINT":    m.OTLP.Endpoint,
-		"OTEL_EXPORTER_OTLP_HEADERS":     "Authorization=Bearer " + m.InstallationToken,
+		"OTEL_EXPORTER_OTLP_HEADERS":     "Authorization=Bearer " + token,
 		"OTEL_LOG_USER_PROMPTS":          boolEnv(m.Privacy.CollectUserPrompts),
 	}
 	if c := m.OTLP.Compression; c != "" {
@@ -56,7 +57,8 @@ func boolEnv(b bool) string {
 
 // MergeClaude 는 Claude Code settings.json 의 env 객체에 OTel 키만 병합한다.
 // 기존 env 의 다른 키와 최상위 다른 설정(model, mcp 등)은 보존한다.
-func MergeClaude(path string, m *manifest.Manifest, force bool) (Result, error) {
+// token 은 enroll 봉투의 installation_token 이다 (Authorization 헤더에 쓰인다).
+func MergeClaude(path string, m *manifest.Manifest, token string, force bool) (Result, error) {
 	raw, existed, err := readFileIfExists(path)
 	if err != nil {
 		return Result{}, err
@@ -88,7 +90,7 @@ func MergeClaude(path string, m *manifest.Manifest, force bool) (Result, error) 
 		res.BackupPath = bak
 	}
 
-	desired := claudeEnv(m)
+	desired := claudeEnv(m, token)
 	keys := make([]string, 0, len(desired))
 	for k, v := range desired {
 		env[k] = v

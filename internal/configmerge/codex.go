@@ -32,10 +32,13 @@ func codexOTelTable(m *manifest.Manifest) map[string]any {
 // MergeCodex 는 Codex config.toml 의 [otel] 테이블만 병합한다.
 // 다른 최상위 키(model 등)와 다른 테이블은 파서를 통해 보존한다.
 //
+// token 은 MergeClaude 와 시그니처를 맞추기 위해 받는다. Codex 의 실제 OTel 인증 키가
+// 아직 미확인이라(TODO(verify) codexOTelTable 참조) 현재는 사용하지 않는다.
+//
 // 한계 (TODO): BurntSushi/toml 은 decode→encode 왕복에서 주석과 키 순서를 보존하지 못한다.
 // 사용자 config.toml 의 주석/서식을 지키려면 서식 보존 편집 전략(별도 후속 작업)이 필요하다.
 // 정규식 편집은 §4.1 에 따라 금지.
-func MergeCodex(path string, m *manifest.Manifest, force bool) (Result, error) {
+func MergeCodex(path string, m *manifest.Manifest, token string, force bool) (Result, error) {
 	raw, existed, err := readFileIfExists(path)
 	if err != nil {
 		return Result{}, err

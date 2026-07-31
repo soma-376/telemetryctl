@@ -10,12 +10,14 @@ import (
 	"github.com/your-org/telemetryctl/internal/manifest"
 )
 
+// testToken 은 enroll 봉투의 installation_token 을 대신하는 테스트 값이다.
+// 봉투 분리 후 토큰은 manifest 가 아니라 Merge 함수 인자로 들어간다.
+const testToken = "inst_secret"
+
 func testManifest() *manifest.Manifest {
 	return &manifest.Manifest{
-		SchemaVersion:     1,
-		ConfigRevision:    12,
-		InstallationID:    "ins_test",
-		InstallationToken: "inst_secret",
+		SchemaVersion:  1,
+		ConfigRevision: 12,
 		OTLP: manifest.OTLP{
 			Endpoint: "https://telemetry.company.com",
 			Protocol: "http/protobuf",
@@ -42,7 +44,7 @@ func readEnv(t *testing.T, path string) map[string]any {
 func TestMergeClaude(t *testing.T) {
 	t.Run("새 파일 생성", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "settings.json")
-		res, err := MergeClaude(path, testManifest(), false)
+		res, err := MergeClaude(path, testManifest(), testToken, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,7 +69,7 @@ func TestMergeClaude(t *testing.T) {
 		if err := os.WriteFile(path, []byte(orig), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		res, err := MergeClaude(path, testManifest(), false)
+		res, err := MergeClaude(path, testManifest(), testToken, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -96,7 +98,7 @@ func TestMergeClaude(t *testing.T) {
 		if err := os.WriteFile(path, []byte(orig), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		_, err := MergeClaude(path, testManifest(), false)
+		_, err := MergeClaude(path, testManifest(), testToken, false)
 		if !errors.Is(err, ErrEndpointConflict) {
 			t.Fatalf("충돌 에러 기대, got %v", err)
 		}
@@ -108,7 +110,7 @@ func TestMergeClaude(t *testing.T) {
 		if err := os.WriteFile(path, []byte(orig), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := MergeClaude(path, testManifest(), true); err != nil {
+		if _, err := MergeClaude(path, testManifest(), testToken, true); err != nil {
 			t.Fatalf("force 교체 실패: %v", err)
 		}
 		env := readEnv(t, path)
