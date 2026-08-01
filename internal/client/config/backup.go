@@ -5,7 +5,7 @@
 //   - 수정 전 원본을 백업한다.
 //   - installer 가 추가/수정한 키 목록을 반환해 uninstall 이 그 키만 제거할 수 있게 한다.
 //   - 다른 endpoint 가 이미 있으면 자동 덮어쓰지 않고 충돌로 보고한다.
-package configmerge
+package config
 
 import (
 	"errors"
@@ -13,9 +13,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
-
-const backupSuffix = ".telemetryctl.bak"
 
 // Result 는 병합 한 건의 결과다. 호출자는 ManagedKeys 를 state 에 기록해 두었다가
 // uninstall 시 그 키만 제거한다.
@@ -42,10 +41,18 @@ func readFileIfExists(path string) (data []byte, existed bool, err error) {
 	return b, true, nil
 }
 
-// backupOnce 는 원본을 <path>.telemetryctl.bak 로 복사한다. 백업이 이미 있으면 건드리지 않는다
+// backupPath 는 원본 경로의 확장자 앞에 pulsemetry-backup 마커를 넣은 백업 경로를 만든다.
+// 예: ~/.claude/settings.json -> ~/.claude/settings.pulsemetry-backup.json
+// 확장자를 유지해 에디터가 파일 형식(json/toml)을 그대로 인식하게 한다.
+func backupPath(path string) string {
+	ext := filepath.Ext(path)
+	return strings.TrimSuffix(path, ext) + ".pulsemetry-backup" + ext
+}
+
+// backupOnce 는 원본을 backupPath 위치로 복사한다. 백업이 이미 있으면 건드리지 않는다
 // (첫 설치 시점의 원본을 보존하기 위해).
 func backupOnce(path string, content []byte) (string, error) {
-	bak := path + backupSuffix
+	bak := backupPath(path)
 	if _, err := os.Stat(bak); err == nil {
 		return bak, nil // 이미 백업됨
 	} else if !errors.Is(err, fs.ErrNotExist) {

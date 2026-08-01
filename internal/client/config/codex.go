@@ -1,4 +1,4 @@
-package configmerge
+package config
 
 import (
 	"bytes"
@@ -7,7 +7,7 @@ import (
 	"sort"
 
 	"github.com/BurntSushi/toml"
-	"github.com/your-org/telemetryctl/internal/manifest"
+	"github.com/your-org/pulsemetry/internal/contract"
 )
 
 // codexOTelTable 은 manifest 로부터 Codex config.toml 의 [otel] 테이블 값을 만든다.
@@ -15,7 +15,7 @@ import (
 // TODO(verify): [otel] 하위 키 이름은 Codex 의 실제 OTel 설정 스키마와 대조해 확정할 것.
 // 문서(§4.1)가 확인해 준 키는 environment, log_user_prompt 뿐이다. endpoint/protocol/token 을
 // Codex 가 어떤 키로 받는지 확인 전까지 이 매핑은 잠정이다.
-func codexOTelTable(m *manifest.Manifest) map[string]any {
+func codexOTelTable(m *contract.Manifest) map[string]any {
 	env := "production"
 	if v, ok := m.ResourceAttributes["deployment.environment"]; ok && v != "" {
 		env = v
@@ -38,7 +38,7 @@ func codexOTelTable(m *manifest.Manifest) map[string]any {
 // 한계 (TODO): BurntSushi/toml 은 decode→encode 왕복에서 주석과 키 순서를 보존하지 못한다.
 // 사용자 config.toml 의 주석/서식을 지키려면 서식 보존 편집 전략(별도 후속 작업)이 필요하다.
 // 정규식 편집은 §4.1 에 따라 금지.
-func MergeCodex(path string, m *manifest.Manifest, token string, force bool) (Result, error) {
+func MergeCodex(path string, m *contract.Manifest, token string, force bool) (Result, error) {
 	raw, existed, err := readFileIfExists(path)
 	if err != nil {
 		return Result{}, err

@@ -6,25 +6,31 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/your-org/pulsemetry/internal/contract"
 )
 
-const sampleEnrollment = `{
-  "installation_id": "ins_test",
-  "installation_token": "inst_secret",
-  "manifest": {
-    "schema_version": 1,
-    "config_revision": 12,
-    "otlp": { "endpoint": "https://telemetry.company.com", "protocol": "http/protobuf" },
-    "signals": { "logs": true, "metrics": true, "traces": false },
-    "privacy": {
-      "collect_user_prompts": false,
-      "collect_assistant_responses": false,
-      "collect_tool_details": false,
-      "collect_tool_content": false,
-      "collect_user_email": false
-    }
-  }
-}`
+func testEnrollment() *contract.Enrollment {
+	return &contract.Enrollment{
+		InstallationID:    "ins_test",
+		InstallationToken: "inst_secret",
+		Manifest: contract.Manifest{
+			SchemaVersion:  1,
+			ConfigRevision: 12,
+			OTLP:           contract.OTLP{Endpoint: "https://telemetry.company.com", Protocol: "http/protobuf"},
+			Signals:        contract.Signals{Logs: true, Metrics: true, Traces: false},
+			Privacy:        contract.Privacy{}, // 전부 false
+		},
+	}
+}
+
+func testOptions(dir string) Options {
+	return Options{
+		ClaudePath: filepath.Join(dir, ".claude", "settings.json"),
+		CodexPath:  filepath.Join(dir, ".codex", "config.toml"),
+		StatePath:  filepath.Join(dir, ".pulsemetry", "state.json"),
+	}
+}
 
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
@@ -36,21 +42,11 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-func testOptions(dir string) Options {
-	return Options{
-		ManifestPath: filepath.Join(dir, "manifest.json"),
-		ClaudePath:   filepath.Join(dir, ".claude", "settings.json"),
-		CodexPath:    filepath.Join(dir, ".codex", "config.toml"),
-		StatePath:    filepath.Join(dir, ".telemetryctl", "state.json"),
-	}
-}
-
-func TestInstall(t *testing.T) {
+func TestApply(t *testing.T) {
 	dir := t.TempDir()
 	opts := testOptions(dir)
-	writeFile(t, opts.ManifestPath, sampleEnrollment)
 
-	rep, err := Install(opts)
+	rep, err := Apply(testEnrollment(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,43 +71,28 @@ func TestInstall(t *testing.T) {
 		t.Errorf("claude endpoint 미적용: %v", env["OTEL_EXPORTER_OTLP_ENDPOINT"])
 	}
 
-	// 상태 저장 확인
+	// 상태 저장 확인 + 토큰이 상태 파일에 새지 않았는지 (§4.5)
 	st, err := LoadState(opts.StatePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st == nil {
-		t.Fatal("상태 파일이 저장되지 않음")
+	if st == nil || len(st.Targets) != 2 {
+		t.Fatalf("상태 타깃 2개 기대")
 	}
-	if len(st.Targets) != 2 {
-		t.Errorf("상태 타깃 2개 기대, got %d", len(st.Targets))
-	}
-
-	// 토큰이 상태 파일에 새지 않아야 한다 (§4.5)
 	rawState, _ := os.ReadFile(opts.StatePath)
 	if strings.Contains(string(rawState), "inst_secret") {
 		t.Error("상태 파일에 installation_token 이 노출됨 (§4.5 위반)")
 	}
 }
 
-func TestInstallMissingManifest(t *testing.T) {
+func TestApplyEndpointConflictAborts(t *testing.T) {
 	dir := t.TempDir()
 	opts := testOptions(dir)
-	// manifest 파일을 만들지 않음
-	if _, err := Install(opts); err == nil {
-		t.Fatal("없는 manifest 파일이면 에러여야 함")
-	}
-}
-
-func TestInstallEndpointConflictAborts(t *testing.T) {
-	dir := t.TempDir()
-	opts := testOptions(dir)
-	writeFile(t, opts.ManifestPath, sampleEnrollment)
-	// Claude 에 이미 다른 endpoint 가 있는 상태 (첫 대상에서 충돌)
+	// Claude 에 이미 다른 endpoint (첫 대상에서 충돌)
 	writeFile(t, opts.ClaudePath, `{"env":{"OTEL_EXPORTER_OTLP_ENDPOINT":"https://other.datadog.com"}}`)
 
-	if _, err := Install(opts); err == nil {
-		t.Fatal("endpoint 충돌 시 설치가 실패해야 함 (§4.2)")
+	if _, err := Apply(testEnrollment(), opts); err == nil {
+		t.Fatal("endpoint 충돌 시 실패해야 함 (§4.2)")
 	}
 	// 첫 대상에서 실패했으므로 적용된 게 없어 상태 파일이 없어야 한다.
 	if st, _ := LoadState(opts.StatePath); st != nil {
@@ -119,14 +100,13 @@ func TestInstallEndpointConflictAborts(t *testing.T) {
 	}
 }
 
-func TestInstallForceReplacesConflict(t *testing.T) {
+func TestApplyForceReplacesConflict(t *testing.T) {
 	dir := t.TempDir()
 	opts := testOptions(dir)
 	opts.Force = true
-	writeFile(t, opts.ManifestPath, sampleEnrollment)
 	writeFile(t, opts.ClaudePath, `{"env":{"OTEL_EXPORTER_OTLP_ENDPOINT":"https://other.datadog.com"}}`)
 
-	if _, err := Install(opts); err != nil {
+	if _, err := Apply(testEnrollment(), opts); err != nil {
 		t.Fatalf("--force 면 충돌을 교체해야 함: %v", err)
 	}
 	b, _ := os.ReadFile(opts.ClaudePath)

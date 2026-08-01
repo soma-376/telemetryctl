@@ -1,4 +1,4 @@
-package configmerge
+package config
 
 import (
 	"encoding/json"
@@ -6,7 +6,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/your-org/telemetryctl/internal/manifest"
+	"github.com/your-org/pulsemetry/internal/contract"
 )
 
 // claudeManagedEnvKeys 는 installer 가 관리하는 Claude Code env 키다.
@@ -28,7 +28,7 @@ var claudeManagedEnvKeys = []string{
 
 // claudeEnv 는 manifest 설정과 설치 토큰으로부터 주입할 env 키/값을 만든다.
 // 토큰은 manifest(설정)가 아니라 enroll 봉투에서 오므로 별도 인자로 받는다.
-func claudeEnv(m *manifest.Manifest, token string) map[string]string {
+func claudeEnv(m *contract.Manifest, token string) map[string]string {
 	env := map[string]string{
 		"CLAUDE_CODE_ENABLE_TELEMETRY":   "1",
 		"OTEL_EXPORTER_OTLP_PROTOCOL":    m.OTLP.Protocol,
@@ -58,7 +58,7 @@ func boolEnv(b bool) string {
 // MergeClaude 는 Claude Code settings.json 의 env 객체에 OTel 키만 병합한다.
 // 기존 env 의 다른 키와 최상위 다른 설정(model, mcp 등)은 보존한다.
 // token 은 enroll 봉투의 installation_token 이다 (Authorization 헤더에 쓰인다).
-func MergeClaude(path string, m *manifest.Manifest, token string, force bool) (Result, error) {
+func MergeClaude(path string, m *contract.Manifest, token string, force bool) (Result, error) {
 	raw, existed, err := readFileIfExists(path)
 	if err != nil {
 		return Result{}, err

@@ -1,5 +1,5 @@
 // Package installer 는 manifest 를 읽어 Codex·Claude Code 설정에 적용하고 그 결과를
-// 로컬 상태로 남기는 설치 오케스트레이션이다. cmd/telemetryctl 은 이 패키지를 얇게 호출한다.
+// 로컬 상태로 남기는 설치 오케스트레이션이다. cmd/pulsemetry 은 이 패키지를 얇게 호출한다.
 //
 // 이 계층을 main 밖으로 분리한 이유: 설치 흐름을 단위 테스트하기 위해서다 (PROJ-11).
 package installer

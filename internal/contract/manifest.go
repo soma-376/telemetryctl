@@ -1,7 +1,7 @@
-// Package manifest 는 enrollment 서버가 발급하는 설정 manifest 를 표현한다.
-// 이 struct 는 contracts/enrollment-manifest.schema.json 과 1:1 로 대응해야 한다 —
-// 스키마가 바뀌면 여기도 같이 바꾸고, manifest_test.go 의 계약 테스트로 드리프트를 잡는다.
-package manifest
+// Package contract 는 서버와 클라이언트가 네트워크 경계를 넘어 공유하는 계약 타입이다:
+// enroll 요청/응답과 설정 manifest. manifest 는 contracts/enrollment-manifest.schema.json 과
+// 1:1 로 대응한다 — 스키마가 바뀌면 여기도 같이 바꾼다. 서버·클라이언트 구현 세부는 여기 두지 않는다.
+package contract
 
 import (
 	"encoding/json"
@@ -83,40 +83,4 @@ func redactEndpoint(s string) string {
 		return s[:40] + "…"
 	}
 	return s
-}
-
-// Enrollment 은 enroll 응답 봉투다. 순수 설정 manifest 에 이 설치의 정체성·토큰을 감싼다.
-// installation_id·installation_token 은 "설정"이 아니라 이 설치의 자격이므로 manifest 밖에 둔다:
-// 설정 재조회(GET /v1/manifest)에 secret 을 매번 싣지 않기 위함이다 (enrollment-server-spec §4.3·§5).
-type Enrollment struct {
-	InstallationID    string   `json:"installation_id"`
-	InstallationToken string   `json:"installation_token"`
-	Manifest          Manifest `json:"manifest"`
-}
-
-// ParseEnrollment 는 enroll 응답(JSON 봉투)을 디코드하고 검증한다.
-// DisallowUnknownFields 가 중첩 manifest 까지 적용되므로, manifest 안에 installation_token 같은
-// 필드가 잘못 들어오면 계약 위반으로 거부된다(봉투 분리 강제).
-func ParseEnrollment(raw []byte) (*Enrollment, error) {
-	var e Enrollment
-	dec := json.NewDecoder(strings.NewReader(string(raw)))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&e); err != nil {
-		return nil, fmt.Errorf("enrollment decode: %w", err)
-	}
-	if err := e.Validate(); err != nil {
-		return nil, err
-	}
-	return &e, nil
-}
-
-// Validate 는 봉투의 정체성 필드와 내부 manifest 를 검증한다.
-func (e *Enrollment) Validate() error {
-	if e.InstallationID == "" {
-		return fmt.Errorf("enrollment installation_id 누락")
-	}
-	if e.InstallationToken == "" {
-		return fmt.Errorf("enrollment installation_token 누락")
-	}
-	return e.Manifest.Validate()
 }

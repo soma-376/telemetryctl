@@ -1,4 +1,4 @@
-package configmerge
+package config
 
 import (
 	"errors"

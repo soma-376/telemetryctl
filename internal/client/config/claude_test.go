@@ -1,4 +1,4 @@
-package configmerge
+package config
 
 import (
 	"encoding/json"
@@ -7,23 +7,23 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/your-org/telemetryctl/internal/manifest"
+	"github.com/your-org/pulsemetry/internal/contract"
 )
 
 // testToken 은 enroll 봉투의 installation_token 을 대신하는 테스트 값이다.
 // 봉투 분리 후 토큰은 manifest 가 아니라 Merge 함수 인자로 들어간다.
 const testToken = "inst_secret"
 
-func testManifest() *manifest.Manifest {
-	return &manifest.Manifest{
+func testManifest() *contract.Manifest {
+	return &contract.Manifest{
 		SchemaVersion:  1,
 		ConfigRevision: 12,
-		OTLP: manifest.OTLP{
+		OTLP: contract.OTLP{
 			Endpoint: "https://telemetry.company.com",
 			Protocol: "http/protobuf",
 		},
-		Signals: manifest.Signals{Logs: true, Metrics: true, Traces: false},
-		Privacy: manifest.Privacy{}, // 전부 false
+		Signals: contract.Signals{Logs: true, Metrics: true, Traces: false},
+		Privacy: contract.Privacy{}, // 전부 false
 	}
 }
 

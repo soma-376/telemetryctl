@@ -1,4 +1,4 @@
-module github.com/your-org/telemetryctl
+module github.com/your-org/pulsemetry
 
 go 1.23
 
