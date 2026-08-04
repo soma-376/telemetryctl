@@ -12,7 +12,7 @@ import (
 )
 
 // StateSchemaVersion 은 로컬 설치 상태 파일의 스키마 버전이다.
-const StateSchemaVersion = 1
+const StateSchemaVersion = 2
 
 // State 는 이 장치에 적용된 설치 상태다. uninstall/status/drift 감지의 근거가 된다 (§5.2, §5.3).
 //
@@ -30,11 +30,12 @@ type State struct {
 // Target 은 설정 파일 한 개에 대해 installer 가 한 일이다. ManagedKeys 로 uninstall 이
 // 우리가 넣은 키만 제거할 수 있다 (§5.2).
 type Target struct {
-	Tool        string   `json:"tool"` // "claude" | "codex"
-	Path        string   `json:"path"`
-	BackupPath  string   `json:"backup_path,omitempty"`
-	ManagedKeys []string `json:"managed_keys"`
-	Created     bool     `json:"created"`
+	Tool           string   `json:"tool"` // "claude" | "codex"
+	Path           string   `json:"path"`
+	BackupPath     string   `json:"backup_path,omitempty"`
+	OriginalSHA256 string   `json:"original_sha256,omitempty"`
+	ManagedKeys    []string `json:"managed_keys"`
+	Created        bool     `json:"created"`
 }
 
 // SaveState 는 상태를 path 에 0600 으로 기록한다. 상위 디렉터리는 0700 으로 생성한다.

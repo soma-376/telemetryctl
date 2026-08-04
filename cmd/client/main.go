@@ -4,10 +4,17 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"log"
 	"os"
+	"os/signal"
+	"runtime"
+	"syscall"
+	"time"
 
+	"github.com/your-org/pulsemetry/internal/client/daemon"
 	"github.com/your-org/pulsemetry/internal/client/enrollment"
 	"github.com/your-org/pulsemetry/internal/client/installer"
 	"github.com/your-org/pulsemetry/internal/contract"
@@ -30,6 +37,8 @@ func main() {
 		os.Exit(cmdEnroll(os.Args[2:]))
 	case "status":
 		os.Exit(cmdStatus(os.Args[2:]))
+	case "daemon":
+		os.Exit(cmdDaemon(os.Args[2:]))
 	case "version", "--version", "-v":
 		fmt.Println("pulsemetry", installer.Version)
 	case "help", "-h", "--help":
@@ -47,10 +56,39 @@ func usage() {
 사용법:
   pulsemetry enroll --invite <code> [--server <url>] [--force]   초대 코드로 등록 후 설정 적용
   pulsemetry status                                             현재 설치 상태 표시
+  pulsemetry daemon [--interval 30s]                            foreground 데몬 실행
   pulsemetry version                                            버전 출력
 
 보통은 한 줄 설치로 실행됩니다:  irm <server>/windows | iex
 `)
+}
+
+func cmdDaemon(args []string) int {
+	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
+	interval := fs.Duration("interval", 30*time.Second, "주기 작업 실행 간격")
+	statePath := fs.String("state", "", "설치 상태 파일 경로")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	path := *statePath
+	if path == "" {
+		var err error
+		path, err = installer.DefaultStatePath()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "오류:", err)
+			return 1
+		}
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	logger := log.New(os.Stdout, "pulsemetry: ", log.LstdFlags|log.LUTC)
+	if err := daemon.Run(ctx, daemon.Options{StatePath: path, Interval: *interval, Logger: logger}); err != nil {
+		fmt.Fprintln(os.Stderr, "daemon 실패:", err)
+		return 1
+	}
+	return 0
 }
 
 func cmdEnroll(args []string) int {
@@ -72,9 +110,13 @@ func cmdEnroll(args []string) int {
 		return 2
 	}
 
+	hostname, _ := os.Hostname()
 	enr, err := enrollment.Enroll(srv, contract.EnrollRequest{
-		Invite:           *invite,
-		InstallerVersion: installer.Version,
+		Code:          *invite,
+		Platform:      runtime.GOOS,
+		Architecture:  runtime.GOARCH,
+		Hostname:      hostname,
+		ClientVersion: installer.Version,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "enroll 실패:", err)

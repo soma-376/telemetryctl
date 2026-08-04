@@ -14,13 +14,13 @@ import (
 const SupportedSchemaVersion = 1
 
 type Manifest struct {
-	SchemaVersion      int               `json:"schema_version"`
-	ConfigRevision     int               `json:"config_revision"`
-	OTLP               OTLP              `json:"otlp"`
-	Signals            Signals           `json:"signals"`
-	Privacy            Privacy           `json:"privacy"`
-	RepositoryAllowlist []string         `json:"repository_allowlist,omitempty"`
-	ResourceAttributes map[string]string `json:"resource_attributes,omitempty"`
+	SchemaVersion       int               `json:"schema_version"`
+	ConfigRevision      int               `json:"config_revision"`
+	OTLP                OTLP              `json:"otlp"`
+	Signals             Signals           `json:"signals"`
+	Privacy             Privacy           `json:"privacy"`
+	RepositoryAllowlist []string          `json:"repository_allowlist,omitempty"`
+	ResourceAttributes  map[string]string `json:"resource_attributes,omitempty"`
 }
 
 type OTLP struct {
@@ -39,11 +39,12 @@ type Signals struct {
 // Privacy 기본값은 전부 false 여야 한다 (§4.6). installer 는 서버가 준 값을 그대로 적용하되,
 // 클라이언트 설정만 믿지 않고 Collector redaction 과 이중으로 방어한다.
 type Privacy struct {
-	CollectUserPrompts       bool `json:"collect_user_prompts"`
+	CollectUserPrompts        bool `json:"collect_user_prompts"`
 	CollectAssistantResponses bool `json:"collect_assistant_responses"`
-	CollectToolDetails       bool `json:"collect_tool_details"`
-	CollectToolContent       bool `json:"collect_tool_content"`
-	CollectUserEmail         bool `json:"collect_user_email"`
+	CollectToolDetails        bool `json:"collect_tool_details"`
+	CollectToolContent        bool `json:"collect_tool_content"`
+	CollectUserEmail          bool `json:"collect_user_email"`
+	CollectRawAPIBodies       bool `json:"collect_raw_api_bodies"`
 }
 
 // Parse 는 enrollment 응답(JSON)을 Manifest 로 디코드하고 최소 검증을 수행한다.

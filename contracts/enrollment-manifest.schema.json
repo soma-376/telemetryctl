@@ -81,7 +81,8 @@
         "collect_assistant_responses": { "type": "boolean", "default": false },
         "collect_tool_details": { "type": "boolean", "default": false },
         "collect_tool_content": { "type": "boolean", "default": false },
-        "collect_user_email": { "type": "boolean", "default": false }
+        "collect_user_email": { "type": "boolean", "default": false },
+        "collect_raw_api_bodies": { "type": "boolean", "default": false }
       }
     },
     "repository_allowlist": {

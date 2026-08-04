@@ -9,6 +9,12 @@ import (
 // EnrollRequest 는 POST /v1/enroll 요청 본문이다. 서버와 클라이언트가 공유하는 유일한 요청 계약이다
 // (각자 따로 선언하지 않는다 — 필드 드리프트 방지).
 type EnrollRequest struct {
+	Code          string `json:"code,omitempty"`
+	Platform      string `json:"platform,omitempty"`
+	Architecture  string `json:"architecture,omitempty"`
+	Hostname      string `json:"hostname,omitempty"`
+	ClientVersion string `json:"client_version,omitempty"`
+	// Deprecated compatibility fields.
 	Invite               string   `json:"invite"`
 	InstallerVersion     string   `json:"installer_version,omitempty"`
 	OperatingEnvironment string   `json:"operating_environment,omitempty"`
