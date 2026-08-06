@@ -9,23 +9,52 @@ import (
 	"github.com/your-org/pulsemetry/internal/contract"
 )
 
-var codexManagedOTelKeys = []string{"environment", "log_user_prompt", "endpoint", "protocol"}
+var codexManagedOTelKeys = []string{
+	"environment",
+	"log_user_prompt",
+	"exporter",
+	"endpoint",
+	"protocol",
+	"headers",
+}
 
-func codexOTelTable(m *contract.Manifest) map[string]any {
+func codexOTelTable(m *contract.Manifest, token string) (map[string]any, error) {
 	environment := "production"
 	if value := m.ResourceAttributes["deployment.environment"]; value != "" {
 		environment = value
 	}
+
+	exporterID := ""
+	exporter := map[string]any{
+		"endpoint": m.OTLP.Endpoint,
+		"headers": map[string]any{
+			"Authorization": "Bearer " + token,
+		},
+	}
+	switch m.OTLP.Protocol {
+	case "http/protobuf":
+		exporterID = "otlp-http"
+		exporter["protocol"] = "binary"
+	case "http/json":
+		exporterID = "otlp-http"
+		exporter["protocol"] = "json"
+	case "grpc":
+		exporterID = "otlp-grpc"
+	default:
+		return nil, fmt.Errorf("unsupported Codex OTLP protocol %q", m.OTLP.Protocol)
+	}
+
 	return map[string]any{
 		"environment":     environment,
 		"log_user_prompt": m.Privacy.CollectUserPrompts,
-		"endpoint":        m.OTLP.Endpoint,
-		"protocol":        m.OTLP.Protocol,
-	}
+		"exporter": map[string]any{
+			exporterID: exporter,
+		},
+	}, nil
 }
 
 // MergeCodex authoritatively synchronizes only Pulsemetry-managed [otel] keys.
-func MergeCodex(path string, m *contract.Manifest, _ string, _ bool) (Result, error) {
+func MergeCodex(path string, m *contract.Manifest, token string, _ bool) (Result, error) {
 	raw, existed, err := readFileIfExists(path)
 	if err != nil {
 		return Result{}, err
@@ -43,7 +72,10 @@ func MergeCodex(path string, m *contract.Manifest, _ string, _ bool) (Result, er
 	for _, key := range codexManagedOTelKeys {
 		delete(otel, key)
 	}
-	desired := codexOTelTable(m)
+	desired, err := codexOTelTable(m, token)
+	if err != nil {
+		return Result{}, err
+	}
 	managed := make([]string, 0, len(desired))
 	for key, value := range desired {
 		otel[key] = value

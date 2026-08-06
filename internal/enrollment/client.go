@@ -21,6 +21,7 @@ func Enroll(serverURL string, req contract.EnrollRequest) (*contract.Enrollment,
 	}
 	url := strings.TrimRight(serverURL, "/") + "/v1/enroll"
 	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+
 	if err != nil {
 		return nil, fmt.Errorf("enroll 요청 실패 (%s): %w", url, err)
 	}
@@ -30,9 +31,11 @@ func Enroll(serverURL string, req contract.EnrollRequest) (*contract.Enrollment,
 	if err != nil {
 		return nil, err
 	}
+
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("enroll 거부 (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
+
 	// 서버가 준 봉투를 클라이언트와 동일한 계약으로 검증(https·enum 등)까지 한다.
 	return contract.ParseEnrollment(data)
 }

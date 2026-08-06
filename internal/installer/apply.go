@@ -7,9 +7,10 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/your-org/pulsemetry/internal/client/config"
-	"github.com/your-org/pulsemetry/internal/client/hostenv"
+	"github.com/your-org/pulsemetry/internal/config"
 	"github.com/your-org/pulsemetry/internal/contract"
+	"github.com/your-org/pulsemetry/internal/credential"
+	"github.com/your-org/pulsemetry/internal/hostenv"
 )
 
 var Version = "0.1.0"
@@ -99,7 +100,20 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 		})
 	}
 
+	// 자격증명 원본을 설정 파일보다 먼저 확정한다: settings.json 의 Authorization 헤더는
+	// 키링의 이 값에서 언제든 다시 만들 수 있는 파생물이다.
+	if err := credential.SaveInstallationToken(&credential.Credential{
+		InstallationID:    enrollment.InstallationID,
+		InstallationToken: enrollment.InstallationToken,
+	}); err != nil {
+		if rollbackErr := rollback(); rollbackErr != nil {
+			return report, fmt.Errorf("save credential: %v; rollback failed: %w", err, rollbackErr)
+		}
+		return report, err
+	}
+
 	if err := SaveState(opts.StatePath, state); err != nil {
+		_ = credential.DeleteInstallationToken()
 		if rollbackErr := rollback(); rollbackErr != nil {
 			return report, fmt.Errorf("save state: %v; rollback failed: %w", err, rollbackErr)
 		}
@@ -147,3 +161,4 @@ func DefaultStatePath() (string, error) {
 	}
 	return StatePath(env), nil
 }
+

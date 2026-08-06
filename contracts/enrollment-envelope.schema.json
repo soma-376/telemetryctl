@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://get.your-service.com/contracts/enrollment-envelope.schema.json",
+  "title": "Enrollment Envelope",
+  "description": "POST /v1/enroll 의 요청(EnrollRequest)과 응답 봉투(Enrollment) 계약. internal/contract/enrollment.go 의 구조체·json 태그와 1:1 로 대응한다 — Go 코드가 바뀌면 여기도 같이 바꾼다. manifest 는 enrollment-manifest.schema.json 을 $ref 로 재사용한다(봉투 분리: installation_id·installation_token 은 설정이 아니라 이 설치의 자격이므로 manifest 밖에 둔다).",
+  "$defs": {
+    "enroll_request": {
+      "title": "EnrollRequest",
+      "description": "POST /v1/enroll 요청 본문. code/platform/client_version 이 비어 있으면 서버가 deprecated 필드(invite/operating_environment/installer_version)로 fallback 한다. 서버는 unknown field 를 400 invalid_request 로 거부한다.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string" },
+        "platform": {
+          "description": "windows|linux|macos (darwin 은 서버가 macos 로 정규화)",
+          "type": "string"
+        },
+        "architecture": { "type": "string" },
+        "hostname": { "type": "string" },
+        "client_version": { "type": "string" },
+        "invite": {
+          "description": "Deprecated: code 로 대체. Go 클라이언트는 항상 직렬화한다(omitempty 없음).",
+          "type": "string"
+        },
+        "installer_version": {
+          "description": "Deprecated: client_version 으로 대체.",
+          "type": "string"
+        },
+        "operating_environment": {
+          "description": "Deprecated: platform 으로 대체.",
+          "type": "string"
+        },
+        "device_id": {
+          "description": "Deprecated.",
+          "type": "string"
+        },
+        "tools_detected": {
+          "description": "Deprecated.",
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "enrollment": {
+      "title": "Enrollment",
+      "description": "POST /v1/enroll 성공(201) 응답 봉투. 클라이언트는 DisallowUnknownFields 로 파싱하므로 여기 없는 필드를 추가하면 계약 위반이다.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["installation_id", "installation_token", "manifest"],
+      "properties": {
+        "installation_id": { "type": "string", "minLength": 1 },
+        "installation_token": {
+          "description": "\"pit_\" + base64url(32 bytes). 응답에만 실리고 서버는 SHA-256 해시만 저장한다. 로그 금지.",
+          "type": "string",
+          "minLength": 1
+        },
+        "manifest": { "$ref": "./enrollment-manifest.schema.json" }
+      }
+    }
+  }
+}

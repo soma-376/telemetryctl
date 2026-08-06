@@ -14,15 +14,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/your-org/pulsemetry/internal/client/daemon"
-	"github.com/your-org/pulsemetry/internal/client/enrollment"
-	"github.com/your-org/pulsemetry/internal/client/installer"
 	"github.com/your-org/pulsemetry/internal/contract"
+	"github.com/your-org/pulsemetry/internal/credential"
+	"github.com/your-org/pulsemetry/internal/daemon"
+	"github.com/your-org/pulsemetry/internal/enrollment"
+	"github.com/your-org/pulsemetry/internal/installer"
 )
 
 // defaultServer 는 enrollment 서버 URL 의 빌드 기본값이다. 릴리스 빌드에서 주입한다:
 //
-//	go build -ldflags "-X main.defaultServer=https://get.your-service.com" ./cmd/pulsemetry
+//	go build -ldflags "-X main.defaultServer=https://get.your-service.com" ./cmd/telemetryctl
 //
 // 개발 중에는 --server 또는 PULSEMETRY_SERVER 로 지정한다(하드코딩된 localhost 기본값은 두지 않는다).
 var defaultServer = ""
@@ -93,17 +94,21 @@ func cmdDaemon(args []string) int {
 
 func cmdEnroll(args []string) int {
 	fs := flag.NewFlagSet("enroll", flag.ContinueOnError)
+
 	invite := fs.String("invite", "", "초대 코드 (필수)")
 	server := fs.String("server", "", "enrollment 서버 URL (미지정 시 PULSEMETRY_SERVER/빌드 기본값)")
-	force := fs.Bool("force", false, "다른 OTel endpoint 가 있어도 강제 교체 (§4.2)")
+	force := fs.Bool("force", false, "다른 OTel endpoint 가 있어도 강제 교체")
 	quiet := fs.Bool("quiet", false, "상세 출력 억제(백업 경로만 표시)")
+
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+
 	if *invite == "" {
 		fmt.Fprintln(os.Stderr, "오류: --invite 는 필수입니다")
 		return 2
 	}
+
 	srv := resolveServer(*server)
 	if srv == "" {
 		fmt.Fprintln(os.Stderr, "오류: enrollment 서버 URL 이 없습니다. --server 또는 PULSEMETRY_SERVER 를 지정하세요.")
@@ -122,6 +127,7 @@ func cmdEnroll(args []string) int {
 		fmt.Fprintln(os.Stderr, "enroll 실패:", err)
 		return 1
 	}
+	
 	opts, err := installer.DefaultPaths(*force)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "오류:", err)
@@ -196,5 +202,20 @@ func cmdStatus(_ []string) int {
 	for _, t := range st.Targets {
 		fmt.Printf("  - [%s] %s (관리 키 %d개)\n", t.Tool, t.Path, len(t.ManagedKeys))
 	}
+	printCredentialStatus()
 	return 0
+}
+
+// printCredentialStatus 는 키링에 저장된 자격증명의 존재·조회 가능 여부만 표시한다.
+// 토큰 값은 출력하지 않는다 (§4.5).
+func printCredentialStatus() {
+	cred, err := credential.LoadInstallationToken()
+	switch {
+	case err != nil:
+		fmt.Printf("  자격증명: 읽기 실패 (%v)\n", err)
+	case cred == nil:
+		fmt.Printf("  자격증명: 없음 (OS 키링) — 구버전 설치이거나 유실됨, 재enroll 필요\n")
+	default:
+		fmt.Printf("  자격증명: 정상 (OS 키링)\n")
+	}
 }

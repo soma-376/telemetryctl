@@ -33,7 +33,7 @@
           "description": "telemetry 를 전송할 Collector 주소. SaaS 는 공통 endpoint + token 으로 tenant 구분, 셀프호스트는 사내 주소.",
           "type": "string",
           "format": "uri",
-          "pattern": "^https://"
+          "pattern": "^(https://|http://localhost(?::[0-9]+)?(?:/|$))"
         },
         "protocol": {
           "description": "전송 방식. Codex/Claude Code OTLP exporter 가 지원하는 값.",

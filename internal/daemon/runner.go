@@ -7,7 +7,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/your-org/pulsemetry/internal/client/installer"
+	"github.com/your-org/pulsemetry/internal/installer"
 )
 
 type Options struct {

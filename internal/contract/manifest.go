@@ -6,6 +6,7 @@ package contract
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -68,8 +69,8 @@ func (m *Manifest) Validate() error {
 	if m.SchemaVersion < 1 {
 		return fmt.Errorf("manifest schema_version 은 1 이상이어야 함 (got %d)", m.SchemaVersion)
 	}
-	if !strings.HasPrefix(m.OTLP.Endpoint, "https://") {
-		return fmt.Errorf("otlp.endpoint 는 https 여야 함 (got %q)", redactEndpoint(m.OTLP.Endpoint))
+	if !validOTLPEndpoint(m.OTLP.Endpoint) {
+		return fmt.Errorf("otlp.endpoint must use https (http is allowed only for localhost; got %q)", redactEndpoint(m.OTLP.Endpoint))
 	}
 	switch m.OTLP.Protocol {
 	case "http/protobuf", "http/json", "grpc":
@@ -77,6 +78,14 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("지원하지 않는 otlp.protocol: %q", m.OTLP.Protocol)
 	}
 	return nil
+}
+
+func validOTLPEndpoint(endpoint string) bool {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	return parsed.Scheme == "https" || (parsed.Scheme == "http" && parsed.Hostname() == "localhost")
 }
 
 func redactEndpoint(s string) string {
