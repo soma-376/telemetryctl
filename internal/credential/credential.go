@@ -1,9 +1,8 @@
 // Package credential 은 enrollment 로 발급받은 설치 자격증명(installation_token)의
 // 로컬 보관소다. OS 키링(Windows Credential Manager·macOS Keychain·Linux Secret
-// Service)에 저장하므로 디스크에 평문 파일로 남지 않는다. 벤더 설정 파일
-// (~/.claude/settings.json)의 Authorization 헤더는 여기서 파생되는 사본으로 취급한다 —
-// 설정 파일 유실 시 재주입(repair)의 근거가 된다. state.json 에 토큰을 두지 않는
-// 원칙(§4.5)은 그대로다: 토큰 원본은 키링에만 존재한다.
+// Service)에 저장하므로 디스크에 평문 파일로 남지 않는다. 이 자격증명은
+// telemetry_token 재발급 시에만 사용한다. Claude/Codex 설정에는 이 토큰이 아니라
+// 교체 가능한 telemetry_token을 기록하고, state.json에도 비밀을 두지 않는다.
 package credential
 
 import (

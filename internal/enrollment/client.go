@@ -39,3 +39,30 @@ func Enroll(serverURL string, req contract.EnrollRequest) (*contract.Enrollment,
 	// 서버가 준 봉투를 클라이언트와 동일한 계약으로 검증(https·enum 등)까지 한다.
 	return contract.ParseEnrollment(data)
 }
+
+// RefreshTelemetryToken exchanges the installation credential kept in the OS
+// keyring for the replaceable bearer token used by OTLP exporters.
+func RefreshTelemetryToken(serverURL, installationToken string) (*contract.TelemetryTokenResponse, error) {
+	url := strings.TrimRight(serverURL, "/") + "/v1/installations/telemetry-token"
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+installationToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("telemetry token 재발급 요청 실패 (%s): %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("telemetry token 재발급 거부 (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	return contract.ParseTelemetryTokenResponse(data)
+}

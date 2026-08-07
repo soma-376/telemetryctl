@@ -38,6 +38,8 @@ func main() {
 		os.Exit(cmdEnroll(os.Args[2:]))
 	case "status":
 		os.Exit(cmdStatus(os.Args[2:]))
+	case "reconnect":
+		os.Exit(cmdReconnect(os.Args[2:]))
 	case "daemon":
 		os.Exit(cmdDaemon(os.Args[2:]))
 	case "version", "--version", "-v":
@@ -56,6 +58,7 @@ func usage() {
 
 사용법:
   pulsemetry enroll --invite <code> [--server <url>] [--force]   초대 코드로 등록 후 설정 적용
+  pulsemetry reconnect [--server <url>]                          저장된 설치 자격증명으로 텔레메트리 토큰 재발급
   pulsemetry status                                             현재 설치 상태 표시
   pulsemetry daemon [--interval 30s]                            foreground 데몬 실행
   pulsemetry version                                            버전 출력
@@ -127,12 +130,13 @@ func cmdEnroll(args []string) int {
 		fmt.Fprintln(os.Stderr, "enroll 실패:", err)
 		return 1
 	}
-	
+
 	opts, err := installer.DefaultPaths(*force)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "오류:", err)
 		return 1
 	}
+	opts.ServerURL = srv
 	rep, err := installer.Apply(enr, opts)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "설정 적용 실패:", err)
@@ -142,6 +146,37 @@ func cmdEnroll(args []string) int {
 		printBackups(rep)
 	} else {
 		printReport(rep)
+	}
+	return 0
+}
+
+func cmdReconnect(args []string) int {
+	fs := flag.NewFlagSet("reconnect", flag.ContinueOnError)
+	server := fs.String("server", "", "enrollment 서버 URL (미지정 시 기존 설치 상태/PULSEMETRY_SERVER/빌드 기본값)")
+	statePath := fs.String("state", "", "설치 상태 파일 경로")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	path := *statePath
+	if path == "" {
+		var err error
+		path, err = installer.DefaultStatePath()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "오류:", err)
+			return 1
+		}
+	}
+
+	serverOverride := resolveServer(*server)
+	rep, err := installer.Reconnect(path, serverOverride)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "재연결 실패:", err)
+		return 1
+	}
+	fmt.Printf("재연결 완료 · installation_id=%s\n", rep.InstallationID)
+	for _, target := range rep.Targets {
+		fmt.Printf("  - %s\n", target.Path)
 	}
 	return 0
 }

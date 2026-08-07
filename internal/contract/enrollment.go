@@ -28,7 +28,15 @@ type EnrollRequest struct {
 type Enrollment struct {
 	InstallationID    string   `json:"installation_id"`
 	InstallationToken string   `json:"installation_token"`
+	TelemetryToken    string   `json:"telemetry_token"`
 	Manifest          Manifest `json:"manifest"`
+}
+
+// TelemetryTokenResponse is returned when an installed client exchanges its
+// OS-keyring installation credential for a replaceable telemetry credential.
+type TelemetryTokenResponse struct {
+	InstallationID string `json:"installation_id"`
+	TelemetryToken string `json:"telemetry_token"`
 }
 
 // ParseEnrollment 는 enroll 응답(JSON 봉투)을 디코드하고 검증한다.
@@ -55,5 +63,24 @@ func (e *Enrollment) Validate() error {
 	if e.InstallationToken == "" {
 		return fmt.Errorf("enrollment installation_token 누락")
 	}
+	if e.TelemetryToken == "" {
+		return fmt.Errorf("enrollment telemetry_token 누락")
+	}
 	return e.Manifest.Validate()
+}
+
+func ParseTelemetryTokenResponse(raw []byte) (*TelemetryTokenResponse, error) {
+	var response TelemetryTokenResponse
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&response); err != nil {
+		return nil, fmt.Errorf("telemetry token decode: %w", err)
+	}
+	if response.InstallationID == "" {
+		return nil, fmt.Errorf("telemetry token installation_id 누락")
+	}
+	if response.TelemetryToken == "" {
+		return nil, fmt.Errorf("telemetry_token 누락")
+	}
+	return &response, nil
 }

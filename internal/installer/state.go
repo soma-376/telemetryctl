@@ -9,22 +9,26 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/your-org/pulsemetry/internal/contract"
 )
 
 // StateSchemaVersion 은 로컬 설치 상태 파일의 스키마 버전이다.
-const StateSchemaVersion = 2
+const StateSchemaVersion = 3
 
 // State 는 이 장치에 적용된 설치 상태다. uninstall/status/drift 감지의 근거가 된다 (§5.2, §5.3).
 //
-// 주의: installation_token 같은 비밀은 절대 여기 저장하지 않는다 (§4.5).
-// 설치 식별에 필요한 installation_id 만 남긴다.
+// 주의: installation_token·telemetry_token 같은 비밀은 절대 여기 저장하지 않는다 (§4.5).
+// 재연결에 필요한 서버 URL, manifest, 설정 대상만 비밀이 아닌 상태로 남긴다.
 type State struct {
-	StateSchemaVersion int      `json:"state_schema_version"`
-	InstallationID     string   `json:"installation_id"`
-	ConfigRevision     int      `json:"config_revision"`
-	InstallerVersion   string   `json:"installer_version"`
-	InstalledAt        string   `json:"installed_at"` // RFC3339 (UTC)
-	Targets            []Target `json:"targets"`
+	StateSchemaVersion int               `json:"state_schema_version"`
+	InstallationID     string            `json:"installation_id"`
+	ServerURL          string            `json:"server_url"`
+	ConfigRevision     int               `json:"config_revision"`
+	InstallerVersion   string            `json:"installer_version"`
+	InstalledAt        string            `json:"installed_at"` // RFC3339 (UTC)
+	Manifest           contract.Manifest `json:"manifest"`
+	Targets            []Target          `json:"targets"`
 }
 
 // Target 은 설정 파일 한 개에 대해 installer 가 한 일이다. ManagedKeys 로 uninstall 이

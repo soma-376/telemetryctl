@@ -20,6 +20,7 @@ type Options struct {
 	CodexPath  string
 	StatePath  string
 	BackupDir  string
+	ServerURL  string
 	Force      bool
 }
 
@@ -44,9 +45,11 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 	state := &State{
 		StateSchemaVersion: StateSchemaVersion,
 		InstallationID:     enrollment.InstallationID,
+		ServerURL:          opts.ServerURL,
 		ConfigRevision:     manifest.ConfigRevision,
 		InstallerVersion:   Version,
 		InstalledAt:        time.Now().UTC().Format(time.RFC3339),
+		Manifest:           *manifest,
 	}
 
 	steps := []applyStep{
@@ -79,7 +82,7 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 	}
 
 	for _, step := range prepared {
-		result, err := step.merge(step.path, manifest, enrollment.InstallationToken, opts.Force)
+		result, err := step.merge(step.path, manifest, enrollment.TelemetryToken, opts.Force)
 		if err != nil {
 			if rollbackErr := rollback(); rollbackErr != nil {
 				return report, fmt.Errorf("%s config failed: %v; rollback failed: %w", step.tool, err, rollbackErr)
@@ -100,8 +103,8 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 		})
 	}
 
-	// 자격증명 원본을 설정 파일보다 먼저 확정한다: settings.json 의 Authorization 헤더는
-	// 키링의 이 값에서 언제든 다시 만들 수 있는 파생물이다.
+	// 장기 설치 자격증명은 OS 키링에만 저장한다. 벤더 설정에는 enrollment 응답의
+	// 교체 가능한 telemetry_token만 기록되어 있다.
 	if err := credential.SaveInstallationToken(&credential.Credential{
 		InstallationID:    enrollment.InstallationID,
 		InstallationToken: enrollment.InstallationToken,
@@ -161,4 +164,3 @@ func DefaultStatePath() (string, error) {
 	}
 	return StatePath(env), nil
 }
-

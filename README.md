@@ -45,13 +45,18 @@ curl -fsSL <server>/unix | sh        # bash
 
 ```sh
 telemetryctl enroll --invite <code> [--server <url>]   # 등록 후 설정 적용
+telemetryctl reconnect [--server <url>]                # 텔레메트리 토큰 재발급 및 설정 갱신
 telemetryctl status                                    # 현재 설치 상태 표시
 ```
 
-`enroll` 은 서버에서 받은 설정 봉투(`{installation_id, installation_token, manifest}`)를 적용해
+`enroll` 은 서버에서 받은 설정 봉투(`{installation_id, installation_token, telemetry_token, manifest}`)를 적용해
 Claude Code(`~/.claude/settings.json`)·Codex(`~/.codex/config.toml`)에 OTel 키만 병합하고,
 적용 내역을 `~/.pulsemetry/state.json` 에 기록합니다. 서버 URL 은 `--server` > `PULSEMETRY_SERVER` >
 빌드 기본값(릴리스 시 `-ldflags` 주입) 순으로 결정합니다.
+
+`installation_token`은 OS 키링에만 저장하고 Claude·Codex 설정에는 교체 가능한
+`telemetry_token`만 기록합니다. `reconnect`는 설치 토큰으로
+`POST /v1/installations/telemetry-token`을 호출해 새 telemetry token을 발급받습니다.
 
 ## 로컬 개발
 

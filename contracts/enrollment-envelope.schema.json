@@ -41,16 +41,32 @@
         }
       }
     },
+    "telemetry_token_response": {
+      "title": "TelemetryTokenResponse",
+      "description": "POST /v1/installations/telemetry-token 응답.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["installation_id", "telemetry_token"],
+      "properties": {
+        "installation_id": { "type": "string", "minLength": 1 },
+        "telemetry_token": { "type": "string", "minLength": 1 }
+      }
+    },
     "enrollment": {
       "title": "Enrollment",
       "description": "POST /v1/enroll 성공(201) 응답 봉투. 클라이언트는 DisallowUnknownFields 로 파싱하므로 여기 없는 필드를 추가하면 계약 위반이다.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["installation_id", "installation_token", "manifest"],
+      "required": ["installation_id", "installation_token", "telemetry_token", "manifest"],
       "properties": {
         "installation_id": { "type": "string", "minLength": 1 },
         "installation_token": {
           "description": "\"pit_\" + base64url(32 bytes). 응답에만 실리고 서버는 SHA-256 해시만 저장한다. 로그 금지.",
+          "type": "string",
+          "minLength": 1
+        },
+        "telemetry_token": {
+          "description": "Codex/Claude OTLP Authorization 헤더에 삽입하는 폐기·교체 가능한 텔레메트리 전송 토큰.",
           "type": "string",
           "minLength": 1
         },
