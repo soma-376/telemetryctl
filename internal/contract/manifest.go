@@ -1,11 +1,12 @@
-// Package manifest 는 enrollment 서버가 발급하는 설정 manifest 를 표현한다.
-// 이 struct 는 contracts/enrollment-manifest.schema.json 과 1:1 로 대응해야 한다 —
-// 스키마가 바뀌면 여기도 같이 바꾸고, manifest_test.go 의 계약 테스트로 드리프트를 잡는다.
-package manifest
+// Package contract 는 서버와 클라이언트가 네트워크 경계를 넘어 공유하는 계약 타입이다:
+// enroll 요청/응답과 설정 manifest. manifest 는 contracts/enrollment-manifest.schema.json 과
+// 1:1 로 대응한다 — 스키마가 바뀌면 여기도 같이 바꾼다. 서버·클라이언트 구현 세부는 여기 두지 않는다.
+package contract
 
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -14,15 +15,13 @@ import (
 const SupportedSchemaVersion = 1
 
 type Manifest struct {
-	SchemaVersion      int               `json:"schema_version"`
-	ConfigRevision     int               `json:"config_revision"`
-	InstallationID     string            `json:"installation_id"`
-	InstallationToken  string            `json:"installation_token"`
-	OTLP               OTLP              `json:"otlp"`
-	Signals            Signals           `json:"signals"`
-	Privacy            Privacy           `json:"privacy"`
-	RepositoryAllowlist []string         `json:"repository_allowlist,omitempty"`
-	ResourceAttributes map[string]string `json:"resource_attributes,omitempty"`
+	SchemaVersion       int               `json:"schema_version"`
+	ConfigRevision      int               `json:"config_revision"`
+	OTLP                OTLP              `json:"otlp"`
+	Signals             Signals           `json:"signals"`
+	Privacy             Privacy           `json:"privacy"`
+	RepositoryAllowlist []string          `json:"repository_allowlist,omitempty"`
+	ResourceAttributes  map[string]string `json:"resource_attributes,omitempty"`
 }
 
 type OTLP struct {
@@ -41,11 +40,12 @@ type Signals struct {
 // Privacy 기본값은 전부 false 여야 한다 (§4.6). installer 는 서버가 준 값을 그대로 적용하되,
 // 클라이언트 설정만 믿지 않고 Collector redaction 과 이중으로 방어한다.
 type Privacy struct {
-	CollectUserPrompts       bool `json:"collect_user_prompts"`
+	CollectUserPrompts        bool `json:"collect_user_prompts"`
 	CollectAssistantResponses bool `json:"collect_assistant_responses"`
-	CollectToolDetails       bool `json:"collect_tool_details"`
-	CollectToolContent       bool `json:"collect_tool_content"`
-	CollectUserEmail         bool `json:"collect_user_email"`
+	CollectToolDetails        bool `json:"collect_tool_details"`
+	CollectToolContent        bool `json:"collect_tool_content"`
+	CollectUserEmail          bool `json:"collect_user_email"`
+	CollectRawAPIBodies       bool `json:"collect_raw_api_bodies"`
 }
 
 // Parse 는 enrollment 응답(JSON)을 Manifest 로 디코드하고 최소 검증을 수행한다.
@@ -69,14 +69,8 @@ func (m *Manifest) Validate() error {
 	if m.SchemaVersion < 1 {
 		return fmt.Errorf("manifest schema_version 은 1 이상이어야 함 (got %d)", m.SchemaVersion)
 	}
-	if m.InstallationID == "" {
-		return fmt.Errorf("manifest installation_id 누락")
-	}
-	if m.InstallationToken == "" {
-		return fmt.Errorf("manifest installation_token 누락")
-	}
-	if !strings.HasPrefix(m.OTLP.Endpoint, "https://") {
-		return fmt.Errorf("otlp.endpoint 는 https 여야 함 (got %q)", redactEndpoint(m.OTLP.Endpoint))
+	if !validOTLPEndpoint(m.OTLP.Endpoint) {
+		return fmt.Errorf("otlp.endpoint must use https (http is allowed only for localhost; got %q)", redactEndpoint(m.OTLP.Endpoint))
 	}
 	switch m.OTLP.Protocol {
 	case "http/protobuf", "http/json", "grpc":
@@ -84,6 +78,14 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("지원하지 않는 otlp.protocol: %q", m.OTLP.Protocol)
 	}
 	return nil
+}
+
+func validOTLPEndpoint(endpoint string) bool {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	return parsed.Scheme == "https" || (parsed.Scheme == "http" && parsed.Hostname() == "localhost")
 }
 
 func redactEndpoint(s string) string {
