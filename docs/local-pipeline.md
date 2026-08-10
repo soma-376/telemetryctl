@@ -1,0 +1,804 @@
+# 로컬 데이터 파이프라인 — 아키텍처 및 GUI 계약
+
+## 1. 문서 목적
+
+이 문서는 PROJ-36 이 추가한 **로컬 계층**의 구현을 서술한다. 데몬이 loopback OTLP 수신기를 띄워
+Claude Code·Codex 의 시그널을 직접 받고, 정규화·집계해 로컬 SQLite 에 저장한 뒤 회사 Collector 로
+전달하는 구조다.
+
+독자는 둘이다.
+
+- 이 저장소를 이어받는 개발자 — 2·3·4·5·7절
+- GUI(PROJ-35)를 만드는 사람 — 6절이 계약이고 5절이 그 배경이다
+
+결정의 **배경과 대안**은 ADR 에 있다. 이 문서는 "무엇이 어떻게 구현돼 있는가" 만 다룬다.
+
+| ADR | 내용 |
+|---|---|
+| [0001](adr/0001-로컬-OTLP-수신기-인라인-프록시-토폴로지.md) | loopback 수신기 + 상위 전달. 재배선은 opt-in 기본 OFF |
+| [0002](adr/0002-로컬-집계-저장소로-SQLite-채택.md) | `modernc.org/sqlite` + 계층별 보존 |
+| [0003](adr/0003-원문과-tool-details를-로컬에만-보관.md) | 원문·tool details 는 로컬에만, 포워더가 제거해 전달 |
+| [0004](adr/0004-GUI-연동을-Go-패키지-공유로.md) | Wails v3 가 `internal/dashboard` 직접 import |
+| [0005](adr/0005-세션을-1급-엔티티로-조립.md) | 이벤트를 `session.id` 로 묶어 세션을 1급 엔티티로 |
+
+기존 설치 아키텍처는 [설치 아키텍처](installation-architecture.md)에 있다. 이 문서의 `§4.5`·`§5.4`
+같은 표기는 그 문서의 절 번호다.
+
+---
+
+## 2. 토폴로지와 데이터 흐름
+
+```text
+Claude Code / Codex
+  (OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:<port>,
+   OTEL_LOG_USER_PROMPTS=1, OTEL_LOG_TOOL_DETAILS=1)
+        │ OTLP/HTTP  (protobuf | json, identity | gzip)
+        ▼
+telemetryctl daemon
+  ├── receiver     127.0.0.1 + [::1] 두 리스너, bearer 인증, 4 MiB 캡, 유계 큐 → 워커 2개
+  │                   └─ 워커가 otlpdecode.Decode 로 정규화
+  │
+  ├── forward      Batch.Body(원본 바이트) → otlpdecode.Scrub → 회사 Collector
+  │                   (여기만 네트워크로 나간다)
+  │
+  └── pipeline     Batch.Result → dedup 창 → session.Assembler + rollup.Aggregator
+                                            → store.Batch (한 트랜잭션)
+        │
+        ▼ (read-only, WAL)
+internal/dashboard  ←  telemetryctl stats·sessions·status
+                    ←  gui/ (Wails v3, 별도 go.mod)
+```
+
+한 배치가 두 갈래로 갈린다는 것이 핵심이다.
+
+- **원본 바이트**(`receiver.Batch.Body`)는 포워더로 간다. 포워더가 회사 manifest 의 `Privacy` 기준으로
+  원문·tool details 를 제거하고 재인코딩해 상위로 보낸다.
+- **정규화 결과**(`receiver.Batch.Result`)는 세션 조립기·롤업 집계기·저장소로 간다. 원문은 여기서
+  `event_content` 로만 흐른다.
+
+`daemon/pipeline.go` 의 `Consume` 은 **`forward.Enqueue` 를 직렬화 지점 밖에서 먼저 호출한다.**
+SQLite 가 느려도 상위 전달이 막히지 않아야 하기 때문이다(§5.4).
+
+집계기 두 개는 `pipeline.run` 이 소유하는 고루틴 하나가 **같은 순서로** 먹인다. 순서가 갈리면
+`sessions` 합계와 `rollup_hourly` 합계가 갈린다.
+
+---
+
+## 3. 패키지 레이아웃
+
+```text
+internal/
+  event/        정규화 이벤트 타입 · DedupKey · Content · Path · CumulativeState  (표준 라이브러리만, IO 없음)
+  otlpdecode/   protobuf·protojson 디코드, content 제거 재인코딩(Scrub)          (proto 의존 격리)
+  receiver/     loopback OTLP/HTTP 수신기 + Sink 인터페이스
+  forward/      상위 Collector 전달 (유계 큐 · 제한된 재시도 · 토큰 갱신)
+  session/      이벤트 → 세션 조립, 제목 휴리스틱, 파일·툴 추출                   (순수 함수, 시계 미접근)
+  rollup/       시간 버킷 집계, delta/cumulative 분기                             (순수 함수, IO 없음)
+  store/        SQLite 스키마·마이그레이션·쓰기·보존 정책·read-only 열기
+  dashboard/    화면별 조회 API                                                   (Wails 의존 없음)
+  runtimeinfo/  runtime.json (비밀 없음: 주소·pid·데이터 경로)
+  daemon/       위 여덟 개를 잇는 배선 + 틱 루프 + graceful shutdown
+gui/            Wails v3 앱 (별도 go.mod, 아직 없음 — PROJ-35)
+```
+
+### 3.1 의존 방향
+
+`event` 가 파이프라인 전체의 공용 어휘이고 아무것도 import 하지 않는다. 나머지는 전부 `event` 를
+향한다. `daemon` 만이 다른 패키지를 여럿 import 한다 — 배선이 그 패키지의 유일한 임무다.
+
+`receiver` 는 `store`·`session`·`rollup`·`forward` 중 어느 것도 import 하지 않고 `Sink` 인터페이스만
+노출한다. 그래서 "OTLP 를 받는다" 는 관심사를 파이프라인 없이 `httptest` 로 전부 테스트할 수 있다.
+
+`installer` 는 `receiver`·`store` 를 import 하지 않는다. 하면 `enroll`·`status` 경로까지 protobuf
+디코더와 SQLite 드라이버를 끌고 들어온다. 그래서 `installer.DefaultLocalPort`·
+`installer.DefaultRetentionDays` 가 `receiver.DefaultPort`·`store.DefaultEventRetentionDays` 와
+같은 값을 따로 갖는다. 두 값이 어긋나면 `cmd/telemetryctl`·`daemon` 의 테스트가 잡는다.
+
+### 3.2 proto 의존성은 `otlpdecode` 에 격리돼 있다 (계약)
+
+**`go.opentelemetry.io/proto/otlp` 와 `google.golang.org/protobuf` 를 import 하는 패키지는
+`internal/otlpdecode` 하나뿐이다.** 이것은 지켜야 할 계약이다.
+
+- 파이프라인의 다른 패키지는 protobuf 타입을 보지 않는다. `receiver` 조차 보지 않는다.
+- 그 대가로 `otlpdecode` 는 인코딩 두 가지(`EncodingProtobuf`·`EncodingJSON`)를 모두 다루고,
+  같은 골든 픽스처가 양쪽 경로에서 같은 결과를 내는지 테스트가 단언한다.
+- OTLP/JSON 의 `traceId`·`spanId` 는 hex 인데 protojson 은 base64 를 기대한다. 32자 hex 는 base64
+  로도 **에러 없이** 해독돼 엉뚱한 ID 가 만들어지므로 JSON 경로에서만 앞뒤로 변환한다
+  (`otlpdecode/jsonids.go`).
+
+### 3.3 어휘가 `event` 로 통합돼 있다
+
+2~5단계를 병렬로 만들면서 패키지 경계의 어휘가 세 벌로 갈렸고, `store` 가 그것을 SQLite 스키마로
+굳히기 전에 합쳤다(`PROJ-36 refactor: 원문·경로·cumulative 어휘를 event 패키지로 통합`). 결과:
+
+| 어휘 | 소유자 | 이유 |
+|---|---|---|
+| `event.Content` · `event.ContentKind` | `event` | `otlpdecode` 가 뽑고 `session` 이 제목을 만들고 `store` 가 `event_content.kind` 에 쓴다. 세 지점이 같은 타입이어야 어긋남을 컴파일러가 잡는다 |
+| `event.Path` · `event.NormalizePath` | `event` | `project_hash`+`project_name`, `file_path_hash`+`file_name`, `target_hash`+`target_name` 세 쌍의 **유일한 생산자**. 전체 경로가 이 타입을 통과할 자리가 없다 |
+| `event.CumulativeState` | `event` | `session` 과 `rollup` 이 각자 갖고 있던 리셋 판정이 이미 갈라져 있었다. `Step` 하나로 합치고 계열 저장·용량 정책만 각자에게 남겼다 |
+
+`otlpdecode.Content`·`otlpdecode.Target` 은 남아 있지만 `event.Content`/`event.Path` 를 싣는
+껍데기다 — `EventIndex`·`DedupKey` 는 한 번의 디코드 결과 안에서만 뜻이 있기 때문이다.
+
+이 리팩터가 실제 버그 두 건을 고쳤다. (a) 디코더가 `tool_input` 의 `file_path` 를 버리고 있어
+「파일 변경」 화면이 영원히 비어 있었을 것이고, (b) cumulative 리셋 판정이 `start_time` 을 보지 않아
+벤더 재시작 후 누적분을 잃거나 순서 뒤집힘을 리셋으로 오인해 이중 집계했다.
+
+### 3.4 `daemon` 이 중복 제거를 한 겹 더 한다
+
+같은 이벤트를 세 소비자가 받는데 중복에 대한 태도가 셋 다 다르다.
+
+| 소비자 | 중복 처리 |
+|---|---|
+| `store` | `events.dedup_key` UNIQUE. 영구적이고 재시작에도 유효하다 |
+| `rollup` | 자체 유계 FIFO 창(16384). `rollup_hourly` 는 UPSERT 누적이라 한 번 더한 값을 되돌릴 수 없다 |
+| `session` | **없다.** 조립기는 받은 것을 그대로 세고 타임라인에 붙인다 |
+
+그래서 배선이 걸러 주지 않으면 exporter 재전송 한 번에 툴 타임라인이 부풀고 `sessions` 합계가
+`rollup_hourly` 와 갈린다 — `internal/session/agreement_test.go` 가 막으려는 바로 그 어긋남이다.
+`internal/daemon/dedup.go` 의 `dedupWindow` 가 세 소비자 앞에서 한 번만 거른다. 창 크기는 `rollup`
+과 같은 **16384** 다. 다르면 그 사이 구간에서만 판정이 갈리는, 가장 재현하기 어려운 불일치가 생긴다.
+
+창 밖으로 밀려난 중복은 통과하지만 `store` 의 UNIQUE 가 잡는다. 즉 창 크기는 정확성이 아니라
+"얼마나 일찍 거르느냐" 의 문제이고, 창을 지나친 중복의 유일한 실질 피해는 세션 타임라인 중복이다.
+
+---
+
+## 4. 프라이버시 불변식
+
+ADR 0003 이 정한 규칙의 구현 형태다. **로컬 저장 규칙과 상위 전달 규칙 두 벌이 있다.**
+
+### 4.1 무엇이 어디에 남는가
+
+| 데이터 | `events` | `event_content` | 상위 Collector |
+|---|---|---|---|
+| 전체 작업·파일 경로 | **없음** (해시+basename 만) | `tool_input` 원문에 **그대로 남는다** | 없음 (`tool_details` 제거) |
+| 프롬프트·응답 원문 | 길이만 (`prompt_length`·`response_length`) | 16KB 캡으로 저장 | 없음 (`user_prompts`·`assistant_responses` 제거) |
+| `user.email`·`user.id`·`user.account_uuid`·`organization.id` | **없음** | 해당 속성이 원문에 실려 오지 않는 한 없음 | 회사 manifest 가 정한다 |
+| 토큰(인증) | 없음 | 없음 | Authorization 헤더로만 |
+
+`events` 에 전체 경로가 없는 것은 **스키마로 보장된다.** 속성은 allowlist 컬럼 21개로만 받고
+catch-all `map[string]string` 컬럼이 없다(`internal/store/schema.go` 의 `events` DDL,
+`internal/event/event.go` 의 `Attributes`). 경로를 `Attributes` 에 넣는 유일한 통로가
+`event.NormalizePath` 이고 `event.Path` 에는 해시·basename·확장자 자리밖에 없다.
+
+**`event_content.body` 는 설계상 원본 그대로다.** `tool_input` 원문에는 전체 경로가 **반드시** 남아야
+한다 — 그게 없으면 `session_files` 를 만들 수 없고 「파일 변경」 화면이 영원히 빈다. ADR 0003 이
+이 자리를 16KB 캡·30일 보존·상위 미전달 세 조건으로 허용했다. `internal/otlpdecode/target.go` 와
+`internal/event/content.go` 의 주석이 이 구분을 명시적으로 못박고, 프라이버시 회귀 테스트가
+`Targets`·조립된 `Session` 에는 전체 경로가 없고 `Content.Body` 에는 있다는 것을 양쪽으로 단언한다.
+
+### 4.2 상위 전달의 제거
+
+포워더에 제거 규칙이 하나도 하드코딩돼 있지 않다. `forward.New` 가
+`otlpdecode.PolicyFromPrivacy(manifest.Privacy)` 로 정책을 한 번 만들고, 워커가 전송 직전
+`otlpdecode.Scrub` 을 한 번 호출한다. manifest 가 항목을 허용으로 바꾸면 그 항목은 자동으로 통과한다.
+
+- 기준은 **회사 manifest 원본**이다. `local enable` 이 만드는 로컬 사본이 아니다
+  (`daemon/runner.go` 의 `forward.Options{Manifest: d.state.Manifest}`).
+- `Scrub` 실패는 전송하지 않는다. 정리되지 않은 본문을 흘려보내느니 버린다(`DroppedScrub`).
+- denylist 원칙이다 — 정책이 지목한 키만 빼고 나머지는 순서까지 그대로 흘린다.
+- 입력 인코딩을 보존한다. 큐 항목이 `Encoding` 을 들고 다닌다.
+
+그래서 **회사로 나가는 데이터는 재배선 전후로 동일하다.** 이것이 12단계의 가장 중요한 불변식이고,
+`local enable` 이 회사 manifest 원본을 절대 오염시키지 않는 이유이기도 하다
+(`installer.localManifest` 의 `cloneManifest`).
+
+### 4.3 회귀 검증 절차
+
+> **계획서 「검증」 5번은 틀렸다.** 계획서는 `sqlite3 .dump | grep -c '/Users/'` 로 0 을 기대하지만,
+> `.dump` 는 `event_content` 를 포함하고 그쪽에는 전체 경로가 **있어야 정상**이다. 검증은
+> `events` 테이블로 좁혀야 한다.
+
+```sh
+DB=/tmp/pm-test/pulsemetry.db
+
+# (1) events 에 전체 경로가 없어야 한다 — 0 이어야 통과
+sqlite3 "$DB" ".mode list" "SELECT * FROM events;" | grep -c '/Users/'
+
+# (2) session_files·tool_events 도 basename 만 있어야 한다 — 0 이어야 통과
+sqlite3 "$DB" "SELECT file_name FROM session_files;"   | grep -c '/'
+sqlite3 "$DB" "SELECT target_name FROM tool_events;"   | grep -c '/'
+
+# (3) 이메일·조직 ID 는 어디에도 없어야 한다 — 0 이어야 통과 (event_content 포함)
+sqlite3 "$DB" ".dump" | grep -ciE 'user\.(email|id|account_uuid)|organization\.id'
+
+# (4) event_content 의 tool_input 에는 전체 경로가 "있어야" 한다 — 0 이면 오히려 회귀다
+sqlite3 "$DB" "SELECT body FROM event_content WHERE kind='tool_input';" | grep -c '/'
+```
+
+(4)를 함께 확인하는 것이 중요하다. "다 지워 버려서 통과하는" 구현을 (1)~(3)만으로는 잡을 수 없다.
+같은 원칙이 `daemon` 의 엔드투엔드 테스트에도 적용돼 있다 — 상위 본문 검증이 사라져야 할 것과
+남아야 할 것을 양쪽 다 단언한다.
+
+---
+
+## 5. SQLite 스키마
+
+실제 DDL 은 `internal/store/schema.go` 의 `schemaV1` 이다. 파일은 `<data-dir>/pulsemetry.db`
+(기본 `~/.pulsemetry/pulsemetry.db`), 드라이버는 `modernc.org/sqlite`(드라이버명 `"sqlite"`)이며
+**CGO 를 요구하지 않는다.** CI 에 `CGO_ENABLED=0` 빌드 스텝이 이 성질의 회귀 방어선으로 들어 있다.
+
+| 테이블 | 역할 | 보존 |
+|---|---|---|
+| `meta` | `local_schema_version`·`installation_id`·`retention_days`·`last_rollup_at` | — |
+| `sessions` | 화면의 중심. 세션 한 행에 수치 전부 | 400일 |
+| `session_files` | 파일별 변경량. `WITHOUT ROWID` | 400일 (CASCADE) |
+| `mcp_session_usage` | MCP 서버별 연결·호출·토큰. `WITHOUT ROWID` | 400일 (CASCADE) |
+| `vendors` | `first_seen`·`last_seen`·`events_total` (Settings 연결 상태) | 400일 |
+| `rollup_hourly` | 시간 버킷 집계. `PRIMARY KEY (hour, dim, key)`, `WITHOUT ROWID` | 400일 |
+| `tool_events` | 툴 타임라인 | 30일 |
+| `events` | 정규화 원본 이벤트. 속성 allowlist 컬럼만 | 30일 |
+| `event_content` | 프롬프트·응답·tool_input·tool_result 원문 | 30일 |
+| `content_fts` | `event_content.body` 의 FTS5 external content 색인 | `event_content` 를 따라감 |
+
+`rollup_hourly` 의 컬럼 순서는 `rollup.Bucket` 의 필드 순서와 같다. 어긋나면 INSERT 인자 나열이
+조용히 밀린다. `dim` 은 `total|vendor|model|tool|project|type` 여섯 가지이고 `dim='total'` 이면
+`key` 는 빈 문자열이다.
+
+### 5.1 `event_content` 는 계획서와 다르다
+
+계획서 DDL 은 `event_id INTEGER PRIMARY KEY` 로 **이벤트당 원문 하나**를 가정했다. 실제로는 한
+이벤트가 최대 4종(`prompt`·`response`·`tool_input`·`tool_result`)을 가지며, `claude_code.tool_result`
+로그 한 건이 `tool_input` 과 `tool_result` 를 함께 실어 오는 것이 예외가 아니라 **기본 경로**다.
+계획서대로 두면 그중 하나만 남고 나머지가 조용히 사라진다.
+
+```sql
+CREATE TABLE event_content (
+  id        INTEGER PRIMARY KEY,            -- 대리 키
+  event_id  INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  kind      TEXT    NOT NULL,               -- prompt | response | tool_input | tool_result
+  body      TEXT    NOT NULL,
+  truncated INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (event_id, kind)
+);
+CREATE VIRTUAL TABLE content_fts USING fts5(
+  body, content='event_content', content_rowid='id'   -- 계획서는 'event_id' 였다
+);
+```
+
+`content_rowid` 는 FTS5 external content 규약상 content 테이블의 rowid 여야 하므로 대리 키 `id` 를
+가리킨다. external content FTS5 는 원본 테이블을 자동으로 따라가지 않으므로 AFTER
+INSERT/DELETE/UPDATE 트리거 세 개가 함께 있다 — 빠뜨리면 색인이 영원히 비고 검색이 "결과 없음" 으로
+조용히 실패한다.
+
+`store.EventRecord` 가 `Event` 와 `[]event.Content` 를 **묶어서** 받는 것도 같은 맥락이다. 따로 받으면
+"이벤트는 중복이라 무시했는데 원문은 저장" 상태가 표현 가능해진다.
+
+### 5.2 PRAGMA
+
+PRAGMA 는 전부 DSN 으로 건다. 커넥션마다 적용되므로 코드에서 한 번 실행하면 새 커넥션에 붙지 않는다.
+
+- `foreign_keys` — SQLite 기본이 **OFF** 다. 켜지 않으면 SQL 은 전부 성공하고 CASCADE 만 조용히 안 돈다.
+- `recursive_triggers` — 이게 있어야 CASCADE 로 지워진 원문까지 FTS 색인이 따라간다.
+- 읽기는 `mode=ro` + `busy_timeout(5000)`.
+
+### 5.3 보존 계층과 점진적 저하
+
+두 계층의 컷오프가 다르고, **이벤트 계층을 지울 때 `sessions` 행을 건드리지 않는다.**
+
+```text
+30일 경과 →  events · event_content · tool_events 삭제
+             sessions · session_files 는 남는다
+             ⇒ 세션 목록과 수치·파일 목록은 보이고, 그 안의 툴 타임라인과 원문만 빈다
+
+400일 경과 → sessions 삭제 → CASCADE 로 session_files · mcp_session_usage 정리
+             rollup_hourly · vendors 도 같은 컷오프
+```
+
+CASCADE 방향이 한쪽뿐(`sessions → tool_events`)이라는 성질이 이 저하를 만든다. 이벤트 계층 삭제가
+`tool_events` 를 **직접** 조준하는 것도 그래서다 — `sessions` 를 건드리는 순간 파일 목록까지 사라진다.
+
+세션 계층의 기준은 `started_at` 이 아니라 `last_event_at` 이다. 시작 시각으로 재면 아직 살아 있는
+장기 세션이 잘린다.
+
+`Prune` 전체가 트랜잭션 하나다. 실패해도 부분 삭제가 남지 않으므로 다음 틱 재시도가 안전하다
+(Windows 에서 GUI 가 파일을 연 채인 경우).
+
+### 5.4 마이그레이션
+
+`meta.local_schema_version` 기반이다. 다음 마이그레이션 추가 절차는 `store/migrate.go` 의
+`migrations` 슬라이스 끝에 항목 하나를 더하는 것이고, **1건 = 트랜잭션 1건**이다.
+**이미 배포된 버전의 문장은 고치지 않는다** — 고치면 기존 설치와 신규 설치의 스키마가 조용히 갈린다.
+`meta` 자체는 어느 마이그레이션에도 속하지 않는다(버전을 담는 그릇이 버전 관리 대상이면 첫 실행이
+닭과 달걀이 된다).
+
+---
+
+## 6. GUI 계약 (PROJ-35)
+
+ADR 0004 의 구현이다. **`internal/dashboard` 는 순수 Go 이고 Wails 를 import 하지 않는다.**
+
+### 6.1 공개 API
+
+```go
+func Open(dbPath string) (*Reader, error)
+
+func (r *Reader) Today(ctx context.Context, tz string) (TodaySummary, error)
+func (r *Reader) Sessions(ctx context.Context, q SessionQuery) ([]SessionRow, error)
+func (r *Reader) Session(ctx context.Context, id string) (SessionDetail, error)
+func (r *Reader) Breakdown(ctx context.Context, q BreakdownQuery) ([]Row, error)
+func (r *Reader) Search(ctx context.Context, q SearchQuery) ([]Hit, error)
+func (r *Reader) Vendors(ctx context.Context) ([]VendorStatus, error)
+func (r *Reader) MCPUsage(ctx context.Context, lastNSessions int) ([]MCPRow, error)
+func (r *Reader) Status(ctx context.Context) (Status, error)
+
+func (r *Reader) Available() bool     // DB 파일이 실제로 열렸는가
+func (r *Reader) Reopen() error       // 아직 못 연 DB 를 다시 시도
+func (r *Reader) Close() error        // 열린 적 없어도 안전 (ServiceShutdown)
+func (r *Reader) Path() string
+func (r *Reader) DataDir() string
+```
+
+계획서에 없던 것이 셋 추가됐다. `Available()`·`Reopen()`·`Close()` 다. `Reopen` 은 **정상 시나리오**를
+위해 있다 — GUI 가 먼저 뜨고 나중에 `telemetryctl local enable` 로 데몬이 DB 를 만드는 순서가 정상이고,
+이 메서드가 없으면 그 사용자는 앱을 껐다 켜야 데이터를 본다.
+
+화면 대응:
+
+| 화면 요소 | 메서드 |
+|---|---|
+| Today 4개 카드 + 어제 대비 %, 상단 "N agents active" | `Today(tz)` |
+| 오늘의 활동 / 세션 리스트 | `Sessions(q)` |
+| 세션 상세 (수치 + 파일 변경 + 툴 타임라인 + MCP) | `Session(id)` |
+| Agent 사용 비율 · 시간대별 집중도 · 일별 추이 | `Breakdown(q)` |
+| 검색 (제목·파일명·원문) | `Search(q)` |
+| Settings 연결 상태 | `Vendors()` |
+| Insights MCP 카드 | `MCPUsage(n)` |
+| Settings 저장소·데몬 상태 | `Status()` |
+
+`Today` 의 `Cards` 는 `cost_usd`·`tokens`·`sessions_started`·`active_seconds` 네 장이다
+(`dashboard.MetricCostUSD` 등 상수). `Breakdown` 은 `Dim` 여섯 가지 × `BucketBy` 세 가지
+(`BucketKey`=""·`BucketHourOfDay`·`BucketDay`) 조합이다.
+
+### 6.2 `json` 태그 규약
+
+- **모든 공개 구조체 필드에 `json` 태그가 붙어 있다. 규약은 snake_case.** 태그가 곧 TS 필드명이라
+  이름을 바꾸면 프런트엔드가 조용히 `undefined` 를 읽는다.
+- **nullable 은 포인터다.** `SessionRow.EndedAt *int64`, `ToolRow.DurationMS *int64`,
+  `ToolRow.Success *bool`. 0 으로 눕히면 "1970년에 끝난 세션" 과 "진행 중", "0ms 툴 호출" 과
+  "소요 시간 미상" 이 구분되지 않는다. JSON 에서는 `null` 이 된다.
+- **밖으로 나가는 시각은 전부 UTC unix 초다.** `events.ts` 만 나노초이고 그 값은 이 패키지를
+  지나가지 않는다.
+- **슬라이스는 비어 있되 `nil` 이 아니다.** JSON `null` 에 `.map` 을 걸면 프런트엔드가 터진다.
+- **에러 메시지에 SQL 이 들어가지 않는다.** Go 의 `error` 가 Promise reject 로 전파돼 사용자에게
+  그대로 보인다. `queryErr` 가 이 규칙을 소유하고, 닫힌 핸들로 호출해 `SELECT`·`FROM`·`JOIN` 부재를
+  단언하는 테스트가 있다.
+- `Card.HasBaseline` 이 `false` 면 어제 값이 0 이라 증감률이 정의되지 않는다는 뜻이다. 화면은
+  `+∞%` 대신 "신규" 같은 표시를 골라야 한다. (0 으로 나눈 `+Inf` 는 `encoding/json` 이 직렬화하지
+  못해 조회 전체가 실패한다.)
+- `SessionDetail.ToolsTruncated` 가 `true` 면 타임라인이 1000행에서 잘렸다는 뜻이다.
+
+### 6.3 DB 없음은 error 가 아니라 빈 결과다
+
+`ServiceStartup` 이 error 를 반환하면 **앱 기동 자체가 중단된다.** 그런데 DB 가 없는 상태(미설치 ·
+`local enable` 전 · 데몬 첫 실행 전)는 정상이다.
+
+- `Open` 은 DB 부재를 error 로 만들지 않고 "비어 있는 `Reader`" 를 돌려준다(`Available()` 이 `false`).
+- 모든 조회가 **모양을 유지한 채** 빈 결과를 준다. `Today` 는 카드 4장을 채우고,
+  `Breakdown(hour_of_day)` 는 0값 24행 골격을 주며, 슬라이스는 전부 비어 있되 `nil` 이 아니다.
+- `Session(id)` 는 없는 세션에 `Found: false` 를 준다. 보존 정책이 지운 세션의 id 를 화면이 아직
+  들고 있는 것은 정상 상황이고, 그때 앱이 에러 토스트를 띄울 이유가 없다.
+- **진짜 실패는 여전히 에러다.** 빈 경로, 디렉터리를 지목한 경로, 잘못된 시간대 문자열.
+
+### 6.4 `Today(tz)` 의 시간대 처리
+
+`rollup_hourly.hour` 는 **UTC** 시간 버킷이고 화면은 **사용자 시간대**의 "오늘" 을 묻는다.
+`Asia/Seoul` 의 오늘은 UTC 로 어제 15:00 에 시작한다. UTC 자정으로 잘라 답하면 매일 9시간이
+어긋나고, 그 오차는 아침에 크고 저녁에 사라져 "가끔 숫자가 이상하다" 로만 보고된다.
+
+구현(`internal/dashboard/timezone.go`):
+
+- 경계 계산은 전부 `time.Location` 위에서 한다. 어제는 `AddDate` 달력 연산이라 DST 로 하루가
+  23/25시간인 날에도 맞는다.
+- 시간 버킷은 **자기 시작 시각이 속한 현지 날짜에 통째로** 귀속된다. 겹치지도 비지도 않는 규칙이라
+  합계가 두 번 세지지 않는 대신, UTC+5:30 같은 30·45분 오프셋에서는 하루 경계에 최대 한 버킷만큼의
+  근사가 남는다. 정시 오프셋에서는 정확하다.
+- `hour_of_day`·`day` 축은 SQL 이 아니라 Go 에서 묶는다. SQL 로 하려면 고정 오프셋을 박아야 하고
+  그러면 DST 전환일이 한 시간 밀린다.
+- 빈 문자열은 UTC 다. **잘못된 시간대 문자열은 명확한 에러로 거부한다** — 조용히 UTC 로 떨어지면
+  사용자는 자기 시간대가 무시된 줄 모른 채 9시간 어긋난 숫자를 본다.
+- `TodaySummary.TZ` 로 실제 적용된 시간대 이름이 되돌아온다. 화면이 무엇을 기준으로 계산됐는지
+  확인할 수 있어야 한다.
+- 패키지가 `_ "time/tzdata"` 를 import 한다. Windows·최소 컨테이너에는 시스템 tz DB 가 없어
+  `LoadLocation` 이 실패하고, 그러면 이 API 의 핵심 인자가 통째로 못 쓰인다. 표준 라이브러리라
+  `go.mod` 는 바뀌지 않고 대가는 바이너리 수백 KB 다.
+
+### 6.5 `gui/go.mod` 의 모듈 경로 제약 — 먼저 읽어라
+
+**`internal/` 은 Go 언어 차원의 접근 제한이다.** `gui/` 가 별도 모듈이므로 그 규칙을 만족시키지
+못하면 `internal/dashboard` import 가 **컴파일 단계에서 거부된다.** 모르고 시작하면 첫 빌드에서 막힌다.
+
+상위 모듈 경로는 `github.com/your-org/pulsemetry` 다. 따라서:
+
+```text
+gui/go.mod
+  module github.com/your-org/pulsemetry/gui      ← 반드시 상위 모듈 경로 아래
+  require github.com/your-org/pulsemetry v0.0.0
+  replace github.com/your-org/pulsemetry => ../   ← 로컬 소스를 가리킨다
+```
+
+`module pulsemetry-gui` 나 `module github.com/your-org/pulsemetry-gui` 처럼 상위 경로 밖에 두면
+`use of internal package ... not allowed` 로 거부된다. 이 배치를 벗어날 방법은 없다 — 유일한 대안은
+`dashboard` 를 `internal/` 밖으로 옮기는 것인데, 그러면 공개 API 표면이 하나 늘어난다.
+
+### 6.6 Wails 쪽
+
+```go
+// gui 쪽 — 여기서만 Wails
+func (s *DashboardService) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error
+func (s *DashboardService) ServiceShutdown() error
+func (s *DashboardService) Today(tz string) (dashboard.TodaySummary, error)
+```
+
+`application.NewService(&DashboardService{})` 로 등록하고 `wails3 generate bindings` 로 TS 바인딩을
+생성하면 JS 에서 `await DashboardService.Today("Asia/Seoul")` 이 된다. Go 의 `error` 는 Promise
+reject 로 전파된다.
+
+DB 경로는 `runtime.json`(7.4절)의 `database_path` 에서 얻거나, `~/.pulsemetry/pulsemetry.db` 를
+직접 쓴다. **GUI 는 SQLite 를 직접 열지 않는다** — 스키마 지식은 `internal/dashboard` 밖으로 나가지
+않는다.
+
+읽기 커넥션은 최대 4개, 유휴 30초에 닫힌다. 화면을 오래 안 보는 동안 파일 핸들을 붙잡고 있으면
+Windows 에서 데몬의 prune 이 막힌다.
+
+### 6.7 CI
+
+현재 `.github/workflows/go.yml` 에 **`gui/` 스텝이 없다.** 디렉터리와 별도 `go.mod` 가 아직 없어
+지금 넣으면 무조건 실패하기 때문이다. GUI 티켓에서 `working-directory: gui` 스텝과 `gui/go.sum`
+캐시 경로를 함께 추가해야 한다. 검증 명령은 `(cd gui && go build ./...)` 다.
+
+---
+
+## 7. 운영
+
+### 7.1 `telemetryctl daemon`
+
+```text
+telemetryctl daemon [--listen localhost:4318] [--data-dir <경로>] [--state <경로>]
+                    [--no-receiver] [--no-forward] [--no-store-content]
+                    [--retention-days 30] [--interval 30s]
+```
+
+| 플래그 | 동작 |
+|---|---|
+| `--listen` | `localhost:4318` 또는 `4318`. loopback 호스트만 받는다. **명시하면 포트 폴백 없이 하드 실패** |
+| `--data-dir` | SQLite·`runtime.json` 위치. 미지정 시 `state.Local.DataDir` → `~/.pulsemetry` |
+| `--no-receiver` | 수신기를 띄우지 않는다. 이때는 `runtime.json` 도 쓰지 않는다(듣는 곳이 없다) |
+| `--no-forward` | 상위 전달 없이 수신·로컬 집계만. `grpc` manifest 에서의 탈출구이기도 하다 |
+| `--no-store-content` | 원문을 로컬에 저장하지 않는다. **끄는 방향으로만 작동한다** — 플래그로 켜 주지는 않는다 |
+| `--retention-days` | `events`·`event_content`·`tool_events` 보존일. 세션 계층 400일은 고정 |
+| `--interval` | 세션 마감·스냅샷 저장 주기 (기본 30초) |
+
+데몬은 `enroll` 된 상태를 요구한다(`state.json` 이 없으면 기동 실패). 회사 manifest 가 `grpc` 면
+**하드 실패**한다 — 조용히 수신만 하면 벤더 설정이 우리를 가리키는 순간 회사 Collector 로 가던
+스트림이 아무도 모르게 끊긴다. 오류 메시지가 `--no-forward` 탈출구를 안내한다.
+
+틱 주기: flush 2초(또는 512 이벤트) · 세션 30초 · prune 1시간(+기동 직후 1회) · 토큰 확인 15분.
+크래시 시 잃는 양의 상한이 곧 flush 주기다.
+
+세션 틱 안의 순서가 load-bearing 이다: **`Advance` → `Snapshot` → flush → 조립기 `Prune`.**
+`Prune` 을 앞에 두면 데몬이 몇 시간 잠들었다 깰 때, 마감되는 순간 이미 TTL(2시간)을 넘긴 세션이
+`store` 에 한 번도 쓰이지 못하고 사라진다.
+
+종료는 **수신기 → 파이프라인 → 포워더 → DB → `runtime.json`** 순서로 15초 예산 안에서 끝난다.
+파이프라인이 제한 시간을 넘겼으면 DB 를 닫지 않는다 — 진행 중 트랜잭션을 우리 손으로 깨뜨리느니
+WAL 복구에 맡긴다.
+
+#### 401 은 사유와 함께 로그로 남는다 (분당 1줄)
+
+```text
+인증 실패: 로컬 헤더 없음 (누계 12, 최근 11건 생략) — 벤더 설정이 로컬 수신기와 어긋났다면 `telemetryctl local enable` 로 재병합하세요
+```
+
+사유는 `토큰 불일치`·`로컬 헤더 없음` 두 가지이고 둘 다면 ` + ` 로 이어 붙는다. 전자는 낡은
+토큰(→ `local disable && local enable`)을, 후자는 벤더 설정이 §7.2 의 두 번째 헤더를 안 적었음을
+가리킨다. **HTTP 응답은 여전히 불투명한 `unauthorized` 다** — 청중이 다르다. 원격 호출자에게
+사유를 주면 헤더를 하나씩 맞춰 보는 탐색을 돕지만, 이 기계의 주인에게는 그것이 진단의 전부다.
+
+로그에는 제시된 토큰·헤더 값·요청 경로가 담기지 않는다. 틀린 토큰이라도 남으면 오타 하나 차이의
+진짜 토큰을 유추할 수 있다(`auth_test.go` 의 `TestTokenNeverReachesLogs`).
+
+첫 건은 무조건 찍고 이후는 분당 1회로 접으며, 접힌 수를 함께 보고한다. 벤더 exporter 는
+metrics 60초·logs 5초 주기로 재시도하므로 매 건 찍으면 로그가 그것만으로 채워진다. 반대로
+아예 안 찍으면 텔레메트리가 전량 사라지는 동안 아무 흔적도 남지 않는다 — 실제로 그런 사고가
+있었고 이 로그가 그 대응이다. 총량은 `telemetryctl status` 의 `수신 카운터 · 인증실패` 에서
+접히지 않은 값으로 볼 수 있다.
+
+### 7.2 `telemetryctl local enable | disable`
+
+이 명령이 저장소에서 **유일하게 사용자의 기존 설정을 바꾸는 지점**이다. 기본은 OFF 다.
+
+```text
+telemetryctl local enable [--port 4318] [--data-dir <경로>] [--state <경로>]
+telemetryctl local disable [--data-dir <경로>] [--state <경로>]
+```
+
+`enable` 이 하는 일:
+
+1. 회사 manifest 의 **깊은 사본**(`localManifest`)을 만들어 세 가지만 바꾼다.
+   - `otlp.endpoint` → `http://localhost:<port>`
+   - `privacy.collect_user_prompts` → `true`
+   - `privacy.collect_tool_details` → `true`
+
+   `signals` 와 나머지 `privacy` 네 항목은 건드리지 않는다. 회사가 끈 시그널을 로컬에서 켜면
+   포워더가 그 시그널을 상위로 **새로** 보내게 되어 4.2절의 불변식이 깨진다.
+   회사 `compression` 이 `gzip`·빈 값이 아니면 로컬 사본에서만 지운다 — 수신기가 `identity`·`gzip`
+   만 풀기 때문에 그대로 두면 모든 배치가 415 로 조용히 사라진다.
+2. **회사 telemetry token 을 키링(`credential.AccountTelemetry`)으로 대피시킨다.**
+3. `MergeClaude`/`MergeCodex` 로 벤더 설정을 로컬 사본 + 로컬 ingest 토큰으로 다시 쓴다.
+4. `state.Local.Enabled`·`ListenPort` 를 저장한다. 저장에 실패하면 설정을 되돌리고 실패로 끝낸다.
+
+`disable` 은 같은 `(회사 manifest, 회사 token)` 으로 다시 병합한다. `MergeClaude`/`MergeCodex` 가
+관리 키를 전부 지우고 다시 쓰는 **권위적 병합**이라 결과는 재배선 전과 바이트 단위로 같다.
+
+#### 재배선된 설정은 인증 헤더를 **두 개** 적는다
+
+수신기의 인증은 3중이고 bearer 토큰과 `X-Pulsemetry-Local: 1` 을 **AND** 로 묶는다
+(`internal/receiver/auth.go`, ADR 0001). 따라서 설정을 쓰는 쪽도 둘 다 적어야 한다.
+`Authorization` 만 적으면 Claude Code·Codex 가 보내는 **모든 배치가 401 로 사라진다** —
+벤더 exporter 는 조용히 재시도할 뿐이라 사용자에게는 "아무것도 수집되지 않음" 으로만 보인다.
+
+```text
+# Claude settings.json — 쉼표로 나눈 "K=V,K=V" 한 줄이다
+env.OTEL_EXPORTER_OTLP_HEADERS = "Authorization=Bearer <로컬 ingest 토큰>,X-Pulsemetry-Local=1"
+
+# Codex config.toml — 헤더가 원래 표라 두 항목이다
+[otel.exporter.otlp-http.headers]
+  Authorization = "Bearer <로컬 ingest 토큰>"
+  X-Pulsemetry-Local = "1"
+```
+
+**붙일지 말지는 `otlp.endpoint` 에서 파생한다** (`internal/config/localheader.go` 의
+`isLocalEndpoint`). `http://localhost:*` 이면 붙이고 아니면 안 붙인다. 별도 플래그를 두지 않는
+이유는 진실원을 하나로 유지하기 위해서다 — "endpoint 는 로컬인데 헤더는 없는" 상태가 정확히
+이 헤더를 빠뜨렸던 버그이고, endpoint 에서 파생시키면 그 상태를 만들 자리가 없어진다.
+규칙이 성립하는 근거는 `contract.validOTLPEndpoint` 가 `http` 를 리터럴 `localhost` 에만
+허용한다는 것이다(§7.3). 따라서 `http` + `localhost` ⟺ 로컬 수신기다.
+
+`config` 는 `receiver` 를 import 하지 않으므로 헤더 상수를 복제한다(§3.1 의 의존 방향).
+두 값이 어긋나면 `internal/config/localheader_test.go` 의
+`TestLocalIngestHeaderMatchesReceiver` 가 잡는다.
+
+토큰에 `,` 나 `=` 가 없어야 `K=V,K=V` 파싱이 모호해지지 않는데, `receiver.NewToken` 이
+패딩 없는 base64url 을 쓰므로 그 조건이 성립한다. 되읽기는 `config.bearerFromHeaderList` 가
+하고, 그 경로가 `disable` 이 회사 토큰을 되찾는 **유일한 통로**다.
+
+#### 회사 telemetry token 의 키링 대피 (계획서에 없던 항목)
+
+회사 manifest 는 `state.json` 에 있지만 **회사 telemetry token 은 거기 둘 수 없다**(§4.5). 그래서
+`enable` 이 벤더 설정 파일에서 그 값을 읽어 `credential.AccountTelemetry` 로 옮기고, `disable` 이
+꺼내 되돌린 뒤 대피본을 지운다.
+
+목적은 하나다 — **탈출구가 네트워크에 묶이지 않게 하는 것.** 대피본이 없으면 `disable` 은
+`telemetryctl reconnect` 로 서버에서 토큰을 재발급받아야 하고, 그러면 회사 서버가 죽어 있는 동안
+사용자가 로컬 재배선에서 빠져나올 수 없다.
+
+안전장치 두 겹:
+
+- 대피는 **아직 꺼져 있을 때만**(`!state.Local.Enabled`) 일어난다. 이미 켜져 있으면 벤더 설정에
+  적힌 것은 로컬 ingest 토큰이고, 그것을 대피본으로 덮으면 `disable` 이 로컬 토큰을 회사 설정에
+  써 넣는다.
+- 읽은 값이 ingest 토큰과 **다를 때만** 대피한다.
+
+토큰은 원래 벤더 설정 파일에 평문으로 있던 값이므로, 키링으로 옮기면 노출 면적은 오히려 좁아진다.
+`LocalReport.TelemetryTokenStashed` 가 `false` 면 CLI 가 경고한다.
+
+로컬 ingest 토큰은 `disable` 후에도 **키링에 남긴다.** 데몬은 재배선 여부와 무관하게 그 토큰으로
+인증하므로 지우면 돌고 있는 데몬이 자기 토큰을 잃는다. 완전 삭제는 `uninstall` 의 몫이다.
+
+`enable` 은 데몬이 떠 있지 않으면 **경고한다.** 그 상태는 텔레메트리가 로컬에도 회사에도 남지 않는
+상태다(9절 첫 줄). 자동 실행 등록이 후속 티켓이므로 지금은 알리는 것이 최선이다.
+
+### 7.3 로컬 endpoint 표기 — `localhost` 이지 `127.0.0.1` 이 아니다
+
+`internal/contract/manifest.go` 의 `validOTLPEndpoint` 와 `contracts/enrollment-manifest.schema.json`
+은 `http://` 를 **리터럴 호스트 `localhost`** 에만 허용한다. 따라서:
+
+- **벤더 설정에 적히는 주소는 언제나 `http://localhost:<port>`** 다(`installer.LocalEndpoint`).
+  `http://127.0.0.1:4318`·`http://[::1]:4318`·`http://localhost.evil.com` 은 전부 거부되고,
+  그 거부를 못박는 회귀 테스트가 `internal/contract/manifest_test.go` 에 있다.
+- **수신기가 실제로 듣는 주소는 `127.0.0.1` 과 `[::1]` 두 개**다. 두 리스너를 각각 `net.Listen` 으로
+  잡아 하나의 `*http.Server` 에 문다. `net.Listen("tcp", "localhost:port")` 는 한쪽만 바인딩해
+  절반의 사용자가 조용히 깨진다. 기동 시 전 리스너의 loopback 여부와 포트 일치를 단언한다.
+- IPv6 한쪽 실패는 `[::1]:0` 시험 바인딩으로 원인을 가른다. IPv6 loopback 자체가 없는 머신이면
+  IPv4 단독으로 충분하고, 그 포트의 `[::1]` 을 남이 점유한 것이면 진행할 때 `::1` 로 푸는
+  클라이언트의 텔레메트리가 통째로 남의 프로세스로 간다. errno 로 추측하지 않는 이유는 errno
+  상수가 Windows 에서 값이 다르기 때문이다.
+
+> `docs/installation-architecture.md` §4.5 의 「제품화 이후」 절은 로컬 endpoint 예시를
+> `http://127.0.0.1:4318` 로 적어 두었다. 그 주소는 위 검증을 통과하지 못한다. 해당 절에 각주를
+> 달아 두었으니 그 예시를 그대로 복사하지 말 것.
+
+`validOTLPEndpoint` 와 스키마를 넓히는 것은 서버 저장소와의 공유 계약이라 별도 티켓이다(10절).
+
+### 7.4 `runtime.json` 의 역할
+
+`<data-dir>/runtime.json`. `status` 명령과 GUI 가 "데몬이 지금 어디서 듣고 있는가" 를 알아내는
+유일한 수단이다.
+
+```json
+{ "schema_version": 1, "pid": 0, "started_at": "", "endpoint": "http://localhost:4318",
+  "listen_port": 4318, "listen_addrs": ["127.0.0.1:4318", "[::1]:4318"],
+  "data_dir": "", "database_path": "", "version": "" }
+```
+
+- **비밀이 들어가지 않는다.** loopback ingest 토큰은 키링에만 있다. 필드 allowlist 테스트가 있어
+  누가 `Token` 필드를 더하면 컴파일은 통과해도 테스트가 깨진다.
+- `config.AtomicWriteFile`(임시 파일 → fsync → rename)로 쓴다. 독자는 항상 온전한 이전 버전이나
+  온전한 새 버전 중 하나만 본다.
+- 낡은 파일 판별은 pid 생존으로 한다. **pid 는 재사용되므로 `Stale=true` 만 확정이고
+  `Stale=false` 는 "아마 살아 있음" 이다.** 확정이 필요하면 `endpoint` 에 인증 없는
+  `GET /healthz` 를 한 번 더 던진다 — `status` 와 `local enable` 이 그렇게 한다.
+- `state.Local` 과 역할이 다르다. `state.Local` 은 **설정된 의도**("사용자가 이렇게 돌기를 원했다"),
+  `runtime.json` 은 **현실**("실제로 이렇게 돌고 있다")이다. 포트 폴백이 일어나면 둘이 갈리는데,
+  재병합이 필요한지 판단하는 근거는 `state.Local` 이다(벤더 설정에 적힌 주소가 거기서 나왔다).
+  그래서 데몬은 실제 바인딩 포트를 `state.Local.ListenPort` 에 덮어쓰지 않는다.
+
+### 7.5 포트 폴백 시 재병합 절차
+
+4318 이 사용 중이면(`--listen` 미지정 시) 데몬이 임의 포트로 폴백한다. 이때 벤더 설정은 여전히
+옛 포트를 가리키므로 텔레메트리가 아무 데도 도달하지 않는다.
+
+```text
+1. 데몬이 경고를 남긴다:
+   "요청 포트 4318 를 잡지 못해 <N> 로 폴백했다. ... telemetryctl local enable 을 다시 실행하라"
+   실제 포트는 runtime.json 의 listen_port 에 있다.
+
+2. telemetryctl local enable        # --port 없이
+
+3. --port 를 주지 않으면 resolveEnablePort 가 runtime.json 을 읽어
+   "데몬이 실제로 듣고 있는 포트" 를 채택하고, 무엇을 왜 골랐는지 출력한다.
+   설정값을 강제하고 싶으면 --port 4318 을 명시한다.
+```
+
+데몬은 벤더 설정을 절대 직접 고치지 않는다. 재병합은 `local enable` 의 몫이다.
+
+포트를 고정하고 싶으면 `--listen localhost:4318` 을 명시한다. 그러면 폴백 없이 하드 실패한다.
+
+### 7.6 조회·정리 명령
+
+```text
+telemetryctl stats    [--since 7d] [--group vendor|model|tool|project|day] [--limit 20] [--json]
+telemetryctl sessions [--since 7d] [--status running|completed|abandoned|handoff] [--limit 50] [--json]
+telemetryctl purge    --content [--before 2026-07-01] [--yes]
+telemetryctl status
+```
+
+- 셋 다 `internal/dashboard` 를 쓴다. CLI 와 GUI 가 같은 함수로 같은 숫자를 낸다.
+- **DB 없음·데몬 꺼짐에서 세 명령 모두 종료 코드 0 이다.** `status` 는 진단 명령이라 어떤
+  상태에서도 동작해야 한다. `--json` 은 `available:false` + 빈 배열(`null` 아님)을 준다.
+- `--since` 는 `7d`·`24h`·`90m` 형식이고 상한이 400일(세션 보존 상한)이다.
+- `stats` 의 합계 행은 `dim=total` 을 따로 질의해 만든다. 표시된 행의 합으로 계산하면 `--limit`
+  으로 잘렸을 때 조용히 틀린 숫자가 된다.
+- 사람용 출력과 `--json` 이 한 구조체에서 나오고, 표 셀은 그 구조체 필드에서만 만든다 — 표는 JSON
+  의 부분집합이다. JSON 시각은 UTC unix 초로 통일하되 `timezone`·`utc_offset_seconds` 를 함께 실어
+  기계가 로컬 시각을 복원할 수 있게 한다.
+- `purge --content` 는 지우기 전에 대상 행 수와 되돌릴 수 없음을 알린다. 구간 제한 없는 전체 삭제만
+  확인을 요구하고, 비대화 실행에서는 프롬프트로 멈추지 않고 `--yes`·`--before` 를 안내하며 거부한다.
+  DB 파일이 없으면 `store.Open` 을 부르지 않는다 — 부르면 빈 DB 를 만들어 다음 `status` 가
+  "설정 안 됨" 대신 "0건" 을 보고한다.
+- `status` 의 로컬 블록은 `printCredentialStatus` 와 같은 규칙으로 **존재 여부만** 출력한다. ingest
+  토큰 값은 절대 찍지 않는다.
+
+---
+
+## 8. 엔드투엔드 수동 검증
+
+계획서 「검증」을 실제 명령으로 고친 것이다. 4.3절의 정정이 5번에 반영돼 있다.
+
+```sh
+# 0. 자동 검증
+go build ./... && go vet ./... && go test -race -cover ./...
+
+# 1. 상위 Collector 대역 — 받은 본문을 덤프하는 간이 서버를 띄운다.
+#    (state.json 의 manifest.otlp.endpoint 가 그곳을 가리키게 하거나, --no-forward 로 이 단계를 건너뛴다)
+
+# 2. 데몬 기동 (별도 터미널). enroll 이 선행돼야 한다.
+go run ./cmd/telemetryctl daemon --listen localhost:4318 --data-dir /tmp/pm-test
+
+# 3. loopback ingest 토큰을 키링에서 꺼낸다 (macOS. 키링 서비스명은 "pulsemetry")
+#    go-keyring 은 값을 "go-keyring-base64:<base64>" 로 감싸 저장한다. 래퍼를 벗기지 않으면
+#    토큰이 아니라 래퍼 문자열을 보내게 되어 401 이 나오고, 마치 재배선이 깨진 것처럼 보인다.
+INGEST_TOKEN="$(security find-generic-password -s pulsemetry -a local-ingest -w \
+  | sed 's/^go-keyring-base64://' | base64 -d)"
+
+# 4. 픽스처를 수신기로 직접 전송
+curl -sS -X POST http://localhost:4318/v1/logs \
+  -H 'Content-Type: application/json' \
+  -H 'X-Pulsemetry-Local: 1' \
+  -H "Authorization: Bearer $INGEST_TOKEN" \
+  --data @internal/otlpdecode/testdata/logs_session_walkthrough.json
+
+curl -sS -X POST http://localhost:4318/v1/metrics \
+  -H 'Content-Type: application/json' \
+  -H 'X-Pulsemetry-Local: 1' \
+  -H "Authorization: Bearer $INGEST_TOKEN" \
+  --data @internal/otlpdecode/testdata/metrics_lines_of_code.json
+
+# 인증 실패가 401 인지도 확인한다. 세 가지를 각각 본다 — 데몬 로그에 사유가 다르게 찍혀야 한다.
+#   토큰 없이            → 401 "토큰 불일치 + 로컬 헤더 없음"
+#   토큰만, 헤더 없이    → 401 "로컬 헤더 없음"
+#   헤더만, 틀린 토큰    → 401 "토큰 불일치"
+# 연속으로 보내면 로그는 분당 한 줄로 접히고 접힌 건수를 함께 보고한다 (§7.1).
+
+# 5. 세션이 조립됐는지 — 화면 요소별로. flush 는 2초, 세션 스냅샷은 30초 주기다.
+DB=/tmp/pm-test/pulsemetry.db
+sqlite3 "$DB" "SELECT session_id, title, title_source, status, tool_calls, cost_usd FROM sessions;"
+sqlite3 "$DB" "SELECT file_name, lines_added, lines_removed FROM session_files;"
+sqlite3 "$DB" "SELECT ts, tool_name, target_name, success FROM tool_events ORDER BY ts;"
+sqlite3 "$DB" "SELECT vendor, last_seen FROM vendors;"
+sqlite3 "$DB" "SELECT hour, dim, key, cost_usd, prompts, tool_calls FROM rollup_hourly ORDER BY hour;"
+
+# 6. 프라이버시 회귀 — 4.3절의 (1)~(4)를 그대로 실행한다.
+#    events 는 0, event_content 의 tool_input 은 0 이 아니어야 한다.
+
+# 7. 상위로 전달된 본문에 원문·tool details 가 없는지 1번 덤프에서 확인한다.
+#    동시에 남아야 할 속성(model·session.id 등)이 살아 있는지도 함께 본다.
+
+# 8. 조회
+go run ./cmd/telemetryctl sessions --since 1d
+go run ./cmd/telemetryctl stats --since 1d --group vendor
+go run ./cmd/telemetryctl status
+```
+
+**실제 Claude Code 연동**: `telemetryctl local enable` 후 한 세션 작업하고, `sessions` 에 제목·파일
+변경·툴 타임라인이 잡히는지, 회사 Collector 대역에는 원문 없이 도착하는지 확인한다. `local disable`
+후 두 벤더 설정이 재배선 전과 바이트 단위로 같은지도 확인한다.
+
+**GUI 연동**: `cd gui && wails3 generate bindings` 후 JS 에서 `DashboardService.Today("Asia/Seoul")`
+과 `Session(id)` 가 정상 반환하는지 확인한다(6.5절의 모듈 경로 제약을 먼저 만족시켜야 한다).
+
+---
+
+## 9. 알려진 한계
+
+**데몬이 실행 중이 아닌데 재배선돼 있으면 텔레메트리가 로컬에도 회사에도 남지 않는다.**
+가장 큰 한계다. 그래서 `local enable` 이 기본 OFF 이고, 켤 때 데몬 생존을 확인해 경고한다. 자동 실행
+등록(launchd / systemd user unit / 작업 스케줄러)이 기본 ON 의 필수 선행 조건이며 후속 티켓이다.
+
+| 한계 | 내용·완화 |
+|---|---|
+| **파일별 라인 배분이 근사** | `claude_code.lines_of_code.count` 메트릭에는 파일명이 없다. `tool_result` 의 `tool_input` 에서 파일을 얻고 같은 시각의 증분을 귀속시키므로, 한 응답에서 여러 파일을 고치면 배분이 근사가 된다. **세션 합계(`sessions.lines_added`)는 메트릭에서 직접 받아 정확하고 파일별 배분만 근사다.** PROJ-35 는 `session_files` 의 수치에 툴팁으로 이 사실을 표기해야 한다. 코드 형태로 보장된 것은 `Σ배분 ≤ total` 하나다(`fileState` 에 라인 필드가 아예 없고 배분이 `unassigned → assigned` 이동이다) |
+| **제목 품질** | `prompt_head`(첫 프롬프트 첫 문장 60자) → `files` → `fallback` 3단계 휴리스틱이다. 화면 예시(`인증 토큰 검증 및 Collector 전달 프록시 구현`) 수준은 나오지 않는다. `title_source` 컬럼이 출처를 남기므로 후속 교체가 스키마 변경 없이 가능하고, `SessionRow.TitleSource` 로 화면이 출처를 표시할 수 있다 |
+| **`abandoned` 오판 가능** | "마지막 툴 이벤트가 실패이고 이후 성공 없음" 이라는 휴리스틱이다. **화면 필터로만 쓰고 지표로 쓰지 않는다.** 판정 근거는 세션 마감 로그(`s.Diag.StatusReason`)에 남는다 |
+| **데몬 미실행 중 유실** | 위 첫 문단 |
+| **크래시 손실 창** | flush 주기(2초, 또는 512 이벤트)만큼의 미저장 이벤트를 잃는다. 세션 스냅샷은 30초 주기지만 세션 수치는 마감 전에는 어차피 확정값이 아니다 |
+| **조립기 TTL 이후 같은 `session.id` 재등장** | 마감된 세션은 2시간(`sessionMemoryTTL`) 뒤 조립기 메모리에서 지워진다. 그 뒤 같은 `session.id` 가 다시 등장하면 조립기가 **새 세션으로 시작**하고 `sessions` UPSERT 가 기존 행을 덮는다 — 앞 구간의 수치를 잃는다. TTL 이 유휴 임계값(10분)의 12배인 이유이자, 보존 기간(30일)이 아닌 몇 시간짜리 값을 쓰는 이유(`store.Prune` 이 지운 타임라인을 다음 스냅샷이 되살리지 못하게)다 |
+| **Windows + WSL 이중 설정** | 두 환경이 각각 설정을 갖고 같은 이벤트를 두 번 보낼 수 있다. `dedup_key` UNIQUE 와 배선 창이 잡지만 두 환경의 `installation_id` 가 다르면 다른 이벤트로 취급된다 |
+| **경로 정규화의 한계** | `NormalizePath` 는 구분자 통일 → `path.Clean` → 드라이브 문자 대문자화까지만 한다. `~/a.go` 와 `/Users/jy/a.go` 는 다른 해시가 되고, POSIX 파일명에 들어간 리터럴 백슬래시는 구분자로 취급된다. 홈 확장·심볼릭 링크 해석은 파일시스템을 읽어야 하므로 하지 않는다(순수 함수 유지) |
+| **cumulative 콜드 스타트 과소 집계** | 계열의 첫 관측은 기준선으로만 기록하고 값을 더하지 않는다. "조용히 2배 집계되느니 폐기" 와 같은 방향이며 `rollup.Stats.Baselines` 로 보인다 |
+| **`UNSPECIFIED` temporality 폐기** | `Sum.aggregation_temporality` 가 `UNSPECIFIED` 면 폐기하고 카운트만 올린다(`Stats.DroppedTemporality`, `status` 에 노출). `Sum` 이 아닌 메트릭 타입도 폐기한다 — `events.value` 한 칸에 Gauge 의 last-value 의미를 담을 자리가 없다 |
+| **Codex 시그널 매핑 없음** | `rollup/mapping.go` 의 표에 Claude Code 시그널만 있다. Codex 이름을 추측으로 넣지 않았다(틀린 컬럼에 조용히 쌓인다). 표에 없는 이름은 `Unmapped` 로 세고 집계하지 않는다 |
+| **트레이스는 저장하지 않는다** | `/v1/traces` 는 받아서 상위로 전달만 한다. `events` 스키마에 스팬을 담을 자리가 없다 |
+| **시간대 근사** | 6.4절 — UTC+5:30 같은 오프셋에서 하루 경계에 최대 한 시간 버킷의 근사가 남는다 |
+| **원문 평문 저장** | `event_content` 는 평문이고 디스크 암호화에 의존한다. 완화는 16KB 캡 + 30일 보존 + `--no-store-content` + `purge --content` + `status` 사용량 표시다 |
+| **로컬 ingest 토큰이 `settings.json` 에 평문** | loopback 전용이고 권한은 "이 PC 에 텔레메트리 쓰기" 뿐이다. 회사 토큰이 같은 자리에 있던 것보다 낫다 |
+| **키링 불가 환경(WSL·헤드리스)** | `enroll` 이 이미 키링에 의존하므로 기존 제약이다. 데몬은 `Options.IngestToken` 으로 우회할 수 있으나 CLI 플래그는 없다 |
+| **Windows 에서 GUI 가 파일을 연 채 prune** | prune 실패는 로깅 후 다음 틱 재시도다. 치명적으로 다루지 않는다 |
+| **`manifest` 가 `grpc`** | `local enable` 과 데몬 기동이 모두 명확한 에러로 거부한다. 기존 회사 Collector 직결은 그대로 동작한다 |
+
+---
+
+## 10. 범위 밖 · 후속 티켓
+
+1. **데몬 자동 실행 등록** (launchd / systemd user unit / 작업 스케줄러) — `local enable` 기본 ON 의
+   선행 조건이자 Settings 「시작 프로그램」 토글의 구현
+2. **세션 단계 분류 + 작업 유형 분포** — `sessions.phase_json`·`work_type` 컬럼을 채운다. 지금은 두
+   컬럼이 NULL 이고 `session.Session` 에는 대응 필드가 **아예 없다**(없으면 실수로 채울 수 없다).
+   `sessions` UPSERT 가 두 컬럼을 제외하므로 후속 티켓이 채운 값을 다음 스냅샷이 덮지 않는다
+3. **Insights 경고 카드·제안** — 반복 실패 감지, 유사 프롬프트 탐지, 벤더 전환 분석
+4. **제목·요약 품질 개선** (`title_source='llm'`) — 프롬프트를 외부로 보내는 문제라 **별도 프라이버시
+   검토가 선행**되어야 한다. ADR 0003 은 원문이 로컬을 떠나지 않는다는 전제 위에 서 있고, 그 전제를
+   깨는 결정은 새 ADR 을 요구한다
+5. **Gemini CLI · Cursor 연동** — OTLP 지원 여부 조사부터. 스키마의 `vendor` 는 제약이 없어 받을 수는
+   있으나 자동 설정과 시그널 매핑이 없다
+6. **Settings 의 Cloud 탭** — 회사 서버 조회. 로컬 DB 가 아니라 회사 API 를 읽으므로 별도 경로다
+7. **`contracts/enrollment-manifest.schema.json` 에 `127.0.0.1` 허용** — 서버 저장소와 협의 필요.
+   지금은 `localhost` 표기로 우회한다(7.3절)
+8. **gRPC 상위 전달** — 현재는 `forward.ErrGRPCUnsupported` 로 거부한다
+9. **`resource_attributes` → `OTEL_RESOURCE_ATTRIBUTES` 배선** (회사 단위 태깅)
+10. **`gui/` CI 스텝** — 6.7절
+11. **`wails3 generate bindings` 생성물 최신성 CI 검증** — GUI 티켓에서 정한다
+12. **툴 출력 본문 파싱** — 「테스트 실행 (2 실패)」의 실패 건수 같은 것. 지금은 성공/실패 여부만
+    저장한다

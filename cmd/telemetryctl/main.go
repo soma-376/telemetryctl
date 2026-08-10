@@ -85,7 +85,7 @@ daemon 옵션:
   --no-forward                회사 Collector 전달 없이 수신·로컬 집계만
   --no-store-content          프롬프트·툴 원문을 로컬에 저장하지 않음
   --retention-days <일>       이벤트·원문·툴 타임라인 보존일 (기본 30)
-  --interval <30s>            세션 마감·롤업 저장 주기
+  --interval <30s>            세션 마감·스냅샷 저장 주기
 
 stats 옵션:
   --since <7d>                조회 구간. 지금부터 거슬러 올라간다 (7d·24h·90m, 최대 400d)
@@ -122,7 +122,7 @@ stats·sessions·purge·local·status 공통:
 
 func cmdDaemon(args []string) int {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
-	interval := fs.Duration("interval", daemon.DefaultInterval, "세션 마감·롤업 저장 주기")
+	interval := fs.Duration("interval", daemon.DefaultInterval, "세션 마감·스냅샷 저장 주기")
 	statePath := fs.String("state", "", "설치 상태 파일 경로")
 	listen := fs.String("listen", "", "수신기 주소 (localhost:4318 또는 4318). 명시하면 포트 폴백 없이 실패한다")
 	dataDir := fs.String("data-dir", "", "데이터 디렉터리 (미지정 시 상태 파일 설정 → ~/.pulsemetry)")
