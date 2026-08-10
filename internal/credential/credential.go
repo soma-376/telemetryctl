@@ -30,12 +30,24 @@ const (
 	// AccountLocalIngest 는 로컬 수신기의 loopback ingest 토큰이다. 토큰 생성과 사용은
 	// 수신기가 들어올 때 붙고, 여기서는 계정 이름만 확정한다 (PROJ-36).
 	AccountLocalIngest Account = "local-ingest"
+
+	// AccountTelemetry 는 회사 telemetry token 의 **대피소**다 (PROJ-36 12단계).
+	//
+	// 평소에는 비어 있다. `local enable` 이 벤더 설정의 Authorization 을 로컬 ingest
+	// 토큰으로 바꾸기 직전에 원래 값을 여기로 옮기고, `local disable` 이 그대로
+	// 되돌린 뒤 지운다. 이 항목이 있어야 재배선 해제가 네트워크 없이 정확히 원상복구된다 —
+	// 탈출구가 회사 서버의 가용성에 묶이면 안 되기 때문이다.
+	//
+	// 이 토큰은 원래 벤더 설정 파일에 평문으로 있던 값이다. 키링으로 옮기는 것은
+	// 노출 면적을 넓히는 것이 아니라 좁히는 쪽이다.
+	AccountTelemetry Account = "telemetry"
 )
 
 // knownAccounts 는 Set/Get/Delete 가 허용하는 계정 전체다.
 var knownAccounts = map[Account]struct{}{
 	AccountInstallation: {},
 	AccountLocalIngest:  {},
+	AccountTelemetry:    {},
 }
 
 // resolve 는 Account 를 키링 조회 좌표로 바꾼다. Account 는 string 기반이라

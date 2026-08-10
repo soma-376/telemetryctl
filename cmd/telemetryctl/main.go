@@ -51,6 +51,8 @@ func main() {
 		os.Exit(cmdSessions(os.Args[2:]))
 	case "purge":
 		os.Exit(cmdPurge(os.Args[2:]))
+	case "local":
+		os.Exit(cmdLocal(os.Args[2:]))
 	case "version", "--version", "-v":
 		fmt.Println("pulsemetry", installer.Version)
 	case "help", "-h", "--help":
@@ -73,6 +75,7 @@ func usage() {
   pulsemetry stats [옵션]                                        로컬 집계 조회
   pulsemetry sessions [옵션]                                     로컬 세션 목록 조회
   pulsemetry purge --content [옵션]                              보관된 프롬프트·툴 원문 삭제
+  pulsemetry local enable|disable [옵션]                         벤더 설정을 로컬 수신기로 재배선/해제
   pulsemetry version                                             버전 출력
 
 daemon 옵션:
@@ -101,7 +104,15 @@ purge 옵션:
   --before <2026-07-01>       이 시각(로컬) 이전 원문만 지운다. 없으면 전체
   --yes                       전체 삭제 확인을 건너뛴다 (스크립트용)
 
-stats·sessions·purge·status 공통:
+local 옵션:
+  --port <4318>               enable 전용. 재배선이 가리킬 로컬 수신 포트
+                              (미지정 시 상태 파일 설정 → 데몬이 실제로 듣는 포트 → 4318)
+
+  local enable 은 Claude Code·Codex 설정의 endpoint 를 http://localhost:<포트> 로 돌리고
+  프롬프트·tool details 수집을 강제로 켭니다. 회사로 나가는 데이터는 그대로입니다 —
+  데몬이 manifest Privacy 기준으로 제거한 뒤 전달합니다. local disable 로 정확히 되돌립니다.
+
+stats·sessions·purge·local·status 공통:
   --data-dir <경로>           데이터 디렉터리 (미지정 시 상태 파일 설정 → ~/.pulsemetry)
   --state <경로>              설치 상태 파일 경로
 
