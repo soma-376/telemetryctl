@@ -388,6 +388,8 @@ func TestCountersComeFromOneSourceEach(t *testing.T) {
 	}
 }
 
+// 누적 판정은 event.CumulativeState.Step 이 소유하고 rollup 도 같은 것을 쓴다.
+// 여기서는 세션 쪽 배선(기준점 주입·계열 키·폐기 카운트)이 그 규칙을 그대로 통과시키는지 본다.
 func TestTemporalityHandling(t *testing.T) {
 	const start = 1_700_000_000
 
@@ -395,19 +397,35 @@ func TestTemporalityHandling(t *testing.T) {
 		name      string
 		values    []float64
 		temp      event.Temporality
+		mods      []func(*Input)
 		want      float64
 		discarded int64
 	}{
-		{"delta 는 합산", []float64{0.1, 0.2, 0.3}, event.TemporalityDelta, 0.6, 0},
-		{"cumulative 는 차분", []float64{0.1, 0.3, 0.6}, event.TemporalityCumulative, 0.6, 0},
-		{"cumulative 리셋", []float64{0.5, 0.2}, event.TemporalityCumulative, 0.7, 0},
-		{"unspecified 는 폐기", []float64{0.1, 0.2}, event.TemporalityUnspecified, 0, 2},
+		{name: "delta 는 합산", values: []float64{0.1, 0.2, 0.3},
+			temp: event.TemporalityDelta, want: 0.6},
+
+		// start_time 이 없으면 이 계열이 데몬보다 먼저 쌓이고 있었는지 알 수 없다.
+		// 이미 저장된 구간을 다시 더하느니 첫 관측을 기준선으로만 잡는다 — rollup 과 같은 판정.
+		{name: "cumulative + start_time 없음 → 첫 관측은 기준선", values: []float64{0.1, 0.3, 0.6},
+			temp: event.TemporalityCumulative, want: 0.5},
+
+		// 계열이 조립기가 보기 시작한 뒤에 시작했으면 이전 포인트가 존재하지 않았다.
+		// 값 전체가 이 세션 것이다.
+		{name: "cumulative + 관측 시작 이후 계열 → 첫 관측도 전부", values: []float64{0.1, 0.3, 0.6},
+			temp: event.TemporalityCumulative, mods: []func(*Input){startedAt(start)}, want: 0.6},
+
+		{name: "cumulative 리셋(start_time 없음)", values: []float64{0.5, 0.2},
+			temp: event.TemporalityCumulative, want: 0.2},
+
+		{name: "unspecified 는 폐기", values: []float64{0.1, 0.2},
+			temp: event.TemporalityUnspecified, discarded: 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := New()
 			for i, v := range tt.values {
-				a.Add(metricEv("s1", "claude_code.cost.usage", start+int64(i), v, temporality(tt.temp)))
+				mods := append([]func(*Input){temporality(tt.temp)}, tt.mods...)
+				a.Add(metricEv("s1", "claude_code.cost.usage", start+int64(i), v, mods...))
 			}
 			s, _ := a.Session("s1")
 			if diff := s.CostUSD - tt.want; diff > 1e-9 || diff < -1e-9 {
@@ -417,6 +435,69 @@ func TestTemporalityHandling(t *testing.T) {
 				t.Fatalf("DiscardedPoints = %d, want %d", s.Diag.DiscardedPoints, tt.discarded)
 			}
 		})
+	}
+}
+
+// 수집 구간이 바뀌면 값이 줄지 않아도 리셋이다 — 벤더가 재시작한 뒤 다음 내보내기까지
+// 직전 값을 이미 넘어선 경우. 값의 증감만 보던 예전 규칙은 이걸 차분으로 읽어
+// 재시작 이후 누적분을 통째로 잃었다.
+func TestCumulativeResetDetectedByStartTime(t *testing.T) {
+	const start = 1_700_000_000
+
+	a := New()
+	a.Add(metricEv("s1", "claude_code.cost.usage", start, 1.0,
+		temporality(event.TemporalityCumulative), startedAt(start)))
+	a.Add(metricEv("s1", "claude_code.cost.usage", start+60, 1.5,
+		temporality(event.TemporalityCumulative), startedAt(start)))
+	a.Add(metricEv("s1", "claude_code.cost.usage", start+120, 1.8,
+		temporality(event.TemporalityCumulative), startedAt(start+90)))
+
+	s, _ := a.Session("s1")
+	// 1.0(첫 관측 전부) + 0.5(차이) + 1.8(재시작 후 누적 전부)
+	if diff := s.CostUSD - 3.3; diff > 1e-9 || diff < -1e-9 {
+		t.Fatalf("cost = %v, want 3.3 — start_time 변화를 리셋으로 못 잡았다", s.CostUSD)
+	}
+}
+
+// 구간이 그대로인데 값이 줄면 리셋이 아니다. 값 전체를 더하면 그 양이 두 번 들어간다.
+func TestCumulativeDecreaseWithinSameStartIsNotReset(t *testing.T) {
+	const start = 1_700_000_000
+
+	a := New()
+	for i, v := range []float64{1.0, 1.5, 1.2, 2.0} { // 세 번째가 순서 뒤집힘
+		a.Add(metricEv("s1", "claude_code.cost.usage", start+int64(i)*60, v,
+			temporality(event.TemporalityCumulative), startedAt(start)))
+	}
+
+	s, _ := a.Session("s1")
+	// 1.0 + 0.5 + 0 + 0.5 = 2.0 — 마지막 누적값과 정확히 같다.
+	if diff := s.CostUSD - 2.0; diff > 1e-9 || diff < -1e-9 {
+		t.Fatalf("cost = %v, want 2.0 (마지막 누적값)", s.CostUSD)
+	}
+}
+
+// 속성만 다른 두 계열이 섞이면 서로의 직전값을 덮어써 차이가 번갈아 음수가 되고
+// 매 포인트가 리셋으로 오판된다. rollup 은 속성 전체로 계열을 가르므로 세션도 같아야 한다.
+func TestCumulativeSeriesAreKeyedByAttributes(t *testing.T) {
+	const start = 1_700_000_000
+
+	a := New()
+	for i, tc := range []struct {
+		model string
+		value float64
+	}{
+		{"opus", 1.0}, {"haiku", 0.1}, {"opus", 1.6}, {"haiku", 0.3},
+	} {
+		in := metricEv("s1", "claude_code.cost.usage", start+int64(i), tc.value,
+			temporality(event.TemporalityCumulative), startedAt(start))
+		in.Event.Attr.Model = tc.model
+		a.Add(in)
+	}
+
+	s, _ := a.Session("s1")
+	// opus 1.0 + 0.6, haiku 0.1 + 0.2 = 1.9. 계열이 섞이면 이 값이 나오지 않는다.
+	if diff := s.CostUSD - 1.9; diff > 1e-9 || diff < -1e-9 {
+		t.Fatalf("cost = %v, want 1.9 — 계열이 섞였다", s.CostUSD)
 	}
 }
 

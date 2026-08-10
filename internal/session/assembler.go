@@ -28,6 +28,14 @@ type Assembler struct {
 	idle     time.Duration
 	handoff  time.Duration
 	sessions map[string]*state
+
+	// watchFrom 은 이 조립기가 처음 이벤트를 받은 시각이다. cumulative 첫 관측을 값 전체로
+	// 셀지 기준선으로만 잡을지를 가른다 (event.CumulativePoint.WatchFrom).
+	//
+	// rollup.Aggregator 가 같은 방식으로 같은 값을 잡는다. 데몬이 같은 스트림을 두 곳에
+	// 먹이므로 기준점이 어긋나면 sessions 와 rollup_hourly 의 비용이 달라진다.
+	watchFrom event.UnixNano
+	watching  bool
 }
 
 type Option func(*Assembler)
@@ -69,12 +77,21 @@ func New(opts ...Option) *Assembler {
 // 테이블의 몫이다.
 func (a *Assembler) Add(in Input) bool {
 	e := in.Event
-	if e.SessionID == "" || e.Validate() != nil {
+	if e.Validate() != nil {
+		return false
+	}
+	// 관측 기준점은 session.id 검사보다 **먼저** 찍는다. session.id 없는 이벤트도 우리가
+	// 그때부터 보고 있었다는 증거이고, rollup 의 집계기는 그런 이벤트도 받아 기준점을 잡는다.
+	// 여기서만 세션 있는 이벤트를 기다리면 두 기준점이 어긋나 누적 집계가 갈린다.
+	if !a.watching {
+		a.watching, a.watchFrom = true, e.TS
+	}
+	if e.SessionID == "" {
 		return false
 	}
 	s := a.sessions[e.SessionID]
 	if s == nil {
-		s = newState(e)
+		s = newState(e, a.watchFrom)
 		a.sessions[e.SessionID] = s
 	}
 	s.observe(e)

@@ -150,7 +150,7 @@ func TestStructuredContentIsSerialized(t *testing.T) {
 			Values: []*commonpb.KeyValue{kv("file_path", "/tmp/a.go")},
 		}},
 	})
-	body := c.content[ContentToolInput.ordinal()]
+	body := c.content[contentOrdinal(event.ContentToolInput)]
 	if !body.set || body.body == "" {
 		t.Fatal("구조화된 tool_input 이 버려졌다")
 	}

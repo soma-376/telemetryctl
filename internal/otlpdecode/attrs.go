@@ -138,19 +138,19 @@ func sanitizeErrorType(v string) string {
 	return v
 }
 
-// contentAttrs 는 원문을 담고 오는 속성이다. 값은 Event 가 아니라 Content 로 빠지고
+// contentAttrs 는 원문을 담고 오는 속성이다. 값은 Event 가 아니라 event.Content 로 빠지고
 // events 에는 길이·바이트 수만 남는다.
-var contentAttrs = map[string]ContentKind{
-	"prompt":             ContentPrompt,
-	"user_prompt":        ContentPrompt,
-	"response":           ContentResponse,
-	"assistant_response": ContentResponse,
-	"tool_input":         ContentToolInput,
-	"tool_parameters":    ContentToolInput,
-	"tool_arguments":     ContentToolInput,
-	"tool_result":        ContentToolResult,
-	"tool_output":        ContentToolResult,
-	"tool_response":      ContentToolResult,
+var contentAttrs = map[string]event.ContentKind{
+	"prompt":             event.ContentPrompt,
+	"user_prompt":        event.ContentPrompt,
+	"response":           event.ContentResponse,
+	"assistant_response": event.ContentResponse,
+	"tool_input":         event.ContentToolInput,
+	"tool_parameters":    event.ContentToolInput,
+	"tool_arguments":     event.ContentToolInput,
+	"tool_result":        event.ContentToolResult,
+	"tool_output":        event.ContentToolResult,
+	"tool_response":      event.ContentToolResult,
 }
 
 // carrier 는 리소스→스코프→데이터포인트 순으로 겹쳐 쌓는 조립 중 상태다.
@@ -167,6 +167,11 @@ type carrier struct {
 	tsFallback  event.UnixNano
 
 	content [contentKindCount]rawContent
+
+	// target 은 tool_input 에서 뽑아 정규화한 대상 파일이다. 원본 경로 문자열은 여기 남지
+	// 않는다 — carrier 는 여러 데이터포인트에 복사되므로 전체 경로가 여기 실리면 그 복사본
+	// 전부가 경로를 들고 다니게 된다.
+	target event.Path
 }
 
 type rawContent struct {
@@ -254,7 +259,14 @@ func (c *carrier) apply(key string, v *commonpb.AnyValue) {
 	}
 	if kind, ok := contentAttrs[key]; ok {
 		if s := anyText(v); s != "" {
-			c.content[kind.ordinal()] = rawContent{body: s, set: true}
+			c.content[contentOrdinal(kind)] = rawContent{body: s, set: true}
+		}
+		// tool_input 은 원문이자 파일 경로의 유일한 출처다. 원문은 event_content 로,
+		// 경로는 정규화해 Target 으로 간다 — 같은 값이 두 규칙을 따로 통과한다 (ADR 0003).
+		if kind == event.ContentToolInput {
+			if p := toolInputTarget(v); p.Hash != "" {
+				c.target = p
+			}
 		}
 	}
 }

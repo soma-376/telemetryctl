@@ -53,7 +53,11 @@ type state struct {
 	// accept 결정은 뒤따르는 tool_result 에 붙인다. reject 는 결과가 없어 즉시 행이 된다.
 	pendingAccept map[string]string
 
-	cumulative map[seriesKey]float64
+	cumulative map[seriesKey]event.CumulativeState
+	// watchFrom 은 조립기가 이벤트를 보기 시작한 시각이다 (Assembler.watchFrom).
+	// 세션이 아니라 조립기의 기준점이라는 점이 중요하다 — rollup 의 집계기와 같은 값이어야
+	// 같은 스트림에서 sessions 와 rollup_hourly 의 누적 집계가 갈리지 않는다.
+	watchFrom event.UnixNano
 
 	statusReason string
 	reopens      int
@@ -70,7 +74,7 @@ type fileState struct {
 	lastTS event.UnixSec
 }
 
-func newState(e event.Event) *state {
+func newState(e event.Event, watchFrom event.UnixNano) *state {
 	ts := e.TS.Sec()
 	return &state{
 		id:            e.SessionID,
@@ -81,7 +85,8 @@ func newState(e event.Event) *state {
 		files:         make(map[string]*fileState),
 		mcp:           make(map[string]*MCPUsage),
 		pendingAccept: make(map[string]string),
-		cumulative:    make(map[seriesKey]float64),
+		cumulative:    make(map[seriesKey]event.CumulativeState),
+		watchFrom:     watchFrom,
 	}
 }
 
@@ -127,8 +132,8 @@ func (s *state) observe(e event.Event) {
 func (s *state) apply(in Input) {
 	e := in.Event
 
-	if in.Kind == ContentPrompt && s.promptTitle == "" {
-		if t, sum := deriveFromPrompt(in.Body); t != "" {
+	if in.Content.Kind == event.ContentPrompt && s.promptTitle == "" {
+		if t, sum := deriveFromPrompt(in.Content.Body); t != "" {
 			s.promptTitle, s.promptSummary = t, sum
 		}
 	}

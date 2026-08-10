@@ -15,6 +15,7 @@ import (
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 
 	"github.com/your-org/pulsemetry/internal/contract"
+	"github.com/your-org/pulsemetry/internal/event"
 )
 
 // defaultPrivacy 는 회사 manifest 의 기본값이다 — §4.6 대로 전부 false.
@@ -157,31 +158,31 @@ func TestScrubHonorsManifest(t *testing.T) {
 	tests := []struct {
 		name        string
 		privacy     contract.Privacy
-		wantKinds   []ContentKind
-		wantAbsent  []ContentKind
+		wantKinds   []event.ContentKind
+		wantAbsent  []event.ContentKind
 		wantRemoved int
 	}{
 		{
 			name:       "전부 금지",
 			privacy:    defaultPrivacy(),
-			wantAbsent: []ContentKind{ContentPrompt, ContentToolInput, ContentToolResult},
+			wantAbsent: []event.ContentKind{event.ContentPrompt, event.ContentToolInput, event.ContentToolResult},
 		},
 		{
 			name:       "프롬프트만 허용",
 			privacy:    contract.Privacy{CollectUserPrompts: true},
-			wantKinds:  []ContentKind{ContentPrompt},
-			wantAbsent: []ContentKind{ContentToolInput, ContentToolResult},
+			wantKinds:  []event.ContentKind{event.ContentPrompt},
+			wantAbsent: []event.ContentKind{event.ContentToolInput, event.ContentToolResult},
 		},
 		{
 			name:       "tool details 와 tool content 허용",
 			privacy:    contract.Privacy{CollectToolDetails: true, CollectToolContent: true},
-			wantKinds:  []ContentKind{ContentToolInput, ContentToolResult},
-			wantAbsent: []ContentKind{ContentPrompt},
+			wantKinds:  []event.ContentKind{event.ContentToolInput, event.ContentToolResult},
+			wantAbsent: []event.ContentKind{event.ContentPrompt},
 		},
 		{
 			name:      "전부 허용이면 아무것도 안 지운다",
 			privacy:   allowAllPrivacy(),
-			wantKinds: []ContentKind{ContentPrompt, ContentToolInput, ContentToolResult},
+			wantKinds: []event.ContentKind{event.ContentPrompt, event.ContentToolInput, event.ContentToolResult},
 		},
 	}
 
@@ -195,7 +196,7 @@ func TestScrubHonorsManifest(t *testing.T) {
 			if err != nil {
 				t.Fatalf("디코드: %v", err)
 			}
-			present := map[ContentKind]bool{}
+			present := map[event.ContentKind]bool{}
 			for _, c := range res.Contents {
 				present[c.Kind] = true
 			}

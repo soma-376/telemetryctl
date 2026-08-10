@@ -63,11 +63,17 @@ func (r Rejected) add(o Rejected) Rejected {
 }
 
 // Result 는 페이로드 하나의 디코드 결과다.
+//
+// Contents 와 Targets 는 Events 와 나란히 놓인 희소 슬라이스다 — 이벤트마다 있지도 않고
+// events 테이블에 자리도 없어서 Event 안에 넣지 않았다. 둘 다 EventIndex 로 이벤트를 가리킨다.
 type Result struct {
 	Events []event.Event
 	// Contents 는 원문이다. Events 와 분리돼 있고 event_content 로만 간다 —
 	// 상위 Collector 로는 절대 나가지 않는다 (ADR 0003).
 	Contents []Content
+	// Targets 는 이벤트가 건드린 파일이다. session_files 와 tool_events.target_* 의 원천이고
+	// 값은 정규화된 해시+basename 뿐이다.
+	Targets  []Target
 	Rejected Rejected
 }
 
@@ -156,6 +162,7 @@ type decoder struct {
 	opt      Options
 	events   []event.Event
 	contents []Content
+	targets  []Target
 	rejected Rejected
 	seq      map[seqKey]int
 }
@@ -165,7 +172,7 @@ func newDecoder(opt Options) *decoder {
 }
 
 func (d *decoder) result() Result {
-	return Result{Events: d.events, Contents: d.contents, Rejected: d.rejected}
+	return Result{Events: d.events, Contents: d.contents, Targets: d.targets, Rejected: d.rejected}
 }
 
 // metric 은 메트릭 하나의 데이터포인트를 이벤트로 옮긴다.
@@ -202,6 +209,7 @@ func (d *decoder) metric(base carrier, m *metricspb.Metric) {
 			SessionID:   c.sessionID,
 			EventID:     c.eventID,
 			Temporality: temporality,
+			StartTS:     startTimestamp(dp),
 			Attr:        c.attr,
 			Measure:     c.measure,
 		}
@@ -229,8 +237,8 @@ func (d *decoder) logRecord(base carrier, rec *logspb.LogRecord) {
 		name = c.eventName
 	}
 	if kind, ok := bodyContentKind(name); ok {
-		if body := anyText(rec.GetBody()); body != "" && !c.content[kind.ordinal()].set {
-			c.content[kind.ordinal()] = rawContent{body: body, set: true}
+		if body := anyText(rec.GetBody()); body != "" && !c.content[contentOrdinal(kind)].set {
+			c.content[contentOrdinal(kind)] = rawContent{body: body, set: true}
 		}
 	}
 
@@ -265,7 +273,9 @@ func (d *decoder) emit(ev event.Event, c *carrier) bool {
 
 	index := len(d.events)
 	d.events = append(d.events, ev)
-	d.appendContents(index, ev.DedupKey(), c)
+	dedupKey := ev.DedupKey()
+	d.appendContents(index, dedupKey, c)
+	d.appendTarget(index, dedupKey, c)
 	return true
 }
 
@@ -279,11 +289,22 @@ func (d *decoder) appendContents(index int, dedupKey string, c *carrier) {
 		d.contents = append(d.contents, Content{
 			EventIndex: index,
 			DedupKey:   dedupKey,
-			Kind:       contentKindByOrdinal[i],
-			Body:       body,
-			Truncated:  truncated,
+			Content: event.Content{
+				Kind:      contentKindByOrdinal[i],
+				Body:      body,
+				Truncated: truncated,
+			},
 		})
 	}
+}
+
+// appendTarget 은 대상 파일이 있는 이벤트에만 행을 만든다. 파일을 건드리지 않은 이벤트
+// (프롬프트·API 요청·명령 실행)는 Targets 에 나타나지 않는다.
+func (d *decoder) appendTarget(index int, dedupKey string, c *carrier) {
+	if c.target.Hash == "" {
+		return
+	}
+	d.targets = append(d.targets, Target{EventIndex: index, DedupKey: dedupKey, Path: c.target})
 }
 
 // temporalityOf 는 proto 의 aggregation_temporality 를 실제로 읽어 옮긴다.
@@ -319,6 +340,15 @@ func metricTimestamp(dp *metricspb.NumberDataPoint, c *carrier) event.UnixNano {
 		return event.UnixNano(ts)
 	}
 	return c.tsFallback
+}
+
+// startTimestamp 는 NumberDataPoint.start_time_unix_nano 를 event.Event.StartTS 로 옮긴다.
+// rollup 이 cumulative 리셋과 콜드 스타트를 판정하는 유일한 근거다 — 값의 증감만으로는
+// "카운터가 다시 시작했다" 와 "값이 줄었다" 를 구분할 수 없다.
+//
+// 로그에는 대응 필드가 없다. Sum 데이터포인트에만 채워진다.
+func startTimestamp(dp *metricspb.NumberDataPoint) event.UnixNano {
+	return event.UnixNano(dp.GetStartTimeUnixNano())
 }
 
 func logTimestamp(rec *logspb.LogRecord, c *carrier) event.UnixNano {

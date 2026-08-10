@@ -129,8 +129,8 @@ func eventByID(t *testing.T, events []event.Event, id string) event.Event {
 	return event.Event{}
 }
 
-func contentsOf(res Result, index int) map[ContentKind]Content {
-	out := map[ContentKind]Content{}
+func contentsOf(res Result, index int) map[event.ContentKind]Content {
+	out := map[event.ContentKind]Content{}
 	for _, c := range res.Contents {
 		if c.EventIndex == index {
 			out[c.Kind] = c

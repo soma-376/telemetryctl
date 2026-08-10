@@ -21,6 +21,7 @@ func baseEvent() Event {
 		SpanID:         "span-1",
 		Sequence:       0,
 		Temporality:    TemporalityDelta,
+		StartTS:        1_754_799_940_000_000_000,
 		Attr: Attributes{
 			Model:          "claude-opus-5",
 			Type:           "input",
@@ -167,7 +168,11 @@ func TestDedupKeyDistinguishesMetricDataPointsWithoutEventID(t *testing.T) {
 }
 
 // 재전송된 같은 이벤트는 값이 같다. 수치를 키에 넣지 않기로 한 결정을 고정한다.
-func TestDedupKeyIgnoresMeasuresAndTemporality(t *testing.T) {
+//
+// start_ts 도 같은 이유로 뺀다. 재전송된 포인트의 start_time 은 같아서 변별력이 없고,
+// 상위 Collector 가 배치를 다시 자르며 이 필드를 채우거나 비우면 같은 이벤트가 서로 다른
+// 키를 갖게 되어 UNIQUE 제약이 중복을 못 잡는다.
+func TestDedupKeyIgnoresMeasuresTemporalityAndStartTS(t *testing.T) {
 	base := baseEvent()
 	other := baseEvent()
 	other.Measure = Measures{
@@ -178,8 +183,16 @@ func TestDedupKeyIgnoresMeasuresAndTemporality(t *testing.T) {
 		ErrorType:  "timeout",
 	}
 	other.Temporality = TemporalityCumulative
+	other.StartTS = base.StartTS - 3_600_000_000_000
 	if base.DedupKey() != other.DedupKey() {
-		t.Fatal("수치·temporality 가 키에 섞여 들어감")
+		t.Fatal("수치·temporality·start_ts 가 키에 섞여 들어감")
+	}
+
+	// start_ts 가 아예 없는 쪽과도 같아야 한다 — 상위가 필드를 떨어뜨린 경우다.
+	missing := baseEvent()
+	missing.StartTS = 0
+	if base.DedupKey() != missing.DedupKey() {
+		t.Fatal("start_ts 부재가 키를 바꾼다 — 필드를 떨어뜨린 재전송이 중복으로 안 잡힌다")
 	}
 }
 

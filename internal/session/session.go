@@ -51,34 +51,28 @@ const (
 	ActionSearch Action = "search"
 )
 
-// ContentKind 는 event_content.kind 다. 조립기는 prompt 만 소비하고 나머지는 무시한다.
-type ContentKind string
-
-const (
-	ContentPrompt     ContentKind = "prompt"
-	ContentResponse   ContentKind = "response"
-	ContentToolInput  ContentKind = "tool_input"
-	ContentToolResult ContentKind = "tool_result"
-)
-
 // Input 은 조립기 입력 한 건이다. Event 만으로는 세션을 만들 수 없어서 두 가지를 더 받는다.
 //
-//   - Body: events 스키마에는 길이만 있고 본문은 event_content 로 따로 간다. 제목·요약
+//   - Content: events 스키마에는 길이만 있고 본문은 event_content 로 따로 간다. 제목·요약
 //     휴리스틱은 본문이 있어야 하므로 디코더가 여기에 실어 준다. 조립기는 첫 프롬프트에서
 //     제목·요약 문자열만 뽑고 본문은 즉시 버린다 — 원문을 들고 있는 것은 store 의 몫이다.
-//   - Target: tool_result 의 tool_input 에서 얻은 파일 경로(또는 명령 첫 토큰)다.
-//     Attributes 에 파일 자리가 없어 events 로는 전달되지 않는다.
+//     원문이 없는 이벤트는 제로값(Kind == "")이다.
+//   - Target: tool_input 에서 얻은 대상 파일이다. events 테이블에 파일 컬럼이 없어
+//     Event 로는 전달되지 않고 디코더가 따로 실어 준다 (otlpdecode.Target).
 //
-// Target 은 **이미 NormalizePath 를 거친 값**만 받는다. 전체 경로 문자열이 이 패키지를
-// 지나갈 일 자체를 없애 ADR 0003 위반이 구조적으로 불가능해진다.
+// 어휘는 event 패키지가 소유한다. 조립기가 보는 kind 문자열과 store 가 event_content.kind
+// 에 쓰는 값이 같은 타입이어야 둘이 어긋날 때 컴파일러가 잡는다.
 //
-// 게이트(OTEL_LOG_USER_PROMPTS·OTEL_LOG_TOOL_DETAILS)가 꺼져 있으면 Body 와 Target 이
+// Target 은 **이미 NormalizePath 를 거친 값**만 받는다. event.Path 에는 해시·basename·
+// 확장자 자리밖에 없으므로 전체 경로 문자열이 이 패키지를 지나갈 방법이 타입 수준에서 없다
+// (ADR 0003).
+//
+// 게이트(OTEL_LOG_USER_PROMPTS·OTEL_LOG_TOOL_DETAILS)가 꺼져 있으면 Content 와 Target 이
 // 비어서 들어온다. 그 경우 제목은 files·fallback 으로 떨어지고 파일 변경 목록은 비어 있다.
 type Input struct {
-	Event  event.Event
-	Kind   ContentKind
-	Body   string
-	Target event.Path
+	Event   event.Event
+	Content event.Content
+	Target  event.Path
 }
 
 // Session 은 sessions 한 행과 거기 매달린 종속 테이블 내용을 합친 조립 결과다.

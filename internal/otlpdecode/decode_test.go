@@ -88,7 +88,7 @@ func TestDecodeSessionWalkthrough(t *testing.T) {
 		}
 
 		contents := contentsOf(res, indexOfEventID(res, "evt_prompt_0001"))
-		prompt, ok := contents[ContentPrompt]
+		prompt, ok := contents[event.ContentPrompt]
 		if !ok {
 			t.Fatalf("prompt 원문이 빠졌다")
 		}
@@ -116,7 +116,7 @@ func TestDecodeSessionWalkthrough(t *testing.T) {
 			t.Errorf("duration_ms = (%d, %v)", got, ok)
 		}
 		contents := contentsOf(res, indexOfEventID(res, "evt_tool_0002"))
-		input, ok := contents[ContentToolInput]
+		input, ok := contents[event.ContentToolInput]
 		if !ok {
 			t.Fatalf("tool_input 원문이 빠졌다")
 		}
@@ -173,11 +173,11 @@ func TestDecodeSessionWalkthrough(t *testing.T) {
 		if got, want := len(res.Contents), 4; got != want {
 			t.Fatalf("Content 수 = %d, want %d", got, want)
 		}
-		kinds := map[ContentKind]int{}
+		kinds := map[event.ContentKind]int{}
 		for _, c := range res.Contents {
 			kinds[c.Kind]++
 		}
-		if kinds[ContentPrompt] != 1 || kinds[ContentToolInput] != 2 || kinds[ContentToolResult] != 1 {
+		if kinds[event.ContentPrompt] != 1 || kinds[event.ContentToolInput] != 2 || kinds[event.ContentToolResult] != 1 {
 			t.Errorf("kind 분포 = %v", kinds)
 		}
 	})

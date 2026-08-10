@@ -24,6 +24,16 @@ func afterSec(n int) eventOpt      { return at(hourStart.Add(time.Duration(n) * 
 func inSession(id string) eventOpt { return func(e *event.Event) { e.SessionID = id } }
 func withSeq(n int) eventOpt       { return func(e *event.Event) { e.Sequence = n } }
 
+// since 는 cumulative 계열의 start_time_unix_nano 를 정한다.
+// hourStart 기준이라 since(0) 이면 계열이 hourStart 부터 값을 쌓기 시작했다는 뜻이다.
+// 집계기의 관측 시작점(첫 이벤트의 TS)이 보통 hourStart 이므로 since(0) 은 "우리가 보기
+// 시작한 뒤에 시작한 계열" = 첫 관측을 통째로 세는 경우다.
+func since(n int) eventOpt {
+	return func(e *event.Event) {
+		e.StartTS = event.NanoFromTime(hourStart.Add(time.Duration(n) * time.Second))
+	}
+}
+
 func withAttr(f func(*event.Attributes)) eventOpt {
 	return func(e *event.Event) { f(&e.Attr) }
 }
@@ -194,7 +204,7 @@ func TestCumulativeAddsOnlyTheDifference(t *testing.T) {
 		newMetric("claude_code.cost.usage", event.TemporalityCumulative, 400, afterSec(120)),
 	}
 
-	t.Run("기본 정책은 첫 관측을 기준선으로만 기록", func(t *testing.T) {
+	t.Run("start_time 이 없으면 첫 관측을 기준선으로만 기록", func(t *testing.T) {
 		rows, stats := Aggregate(events)
 		if got := totalRow(t, rows).CostUSD; got != 300 {
 			t.Errorf("cost = %v, want 300 (150+150)", got)
@@ -207,8 +217,13 @@ func TestCumulativeAddsOnlyTheDifference(t *testing.T) {
 		}
 	})
 
-	t.Run("ColdStartFull 은 첫 관측도 전부 더한다", func(t *testing.T) {
-		rows, stats := Aggregate(events, WithCumulativeColdStart(ColdStartFull))
+	t.Run("관측 시작 이후에 시작한 계열은 첫 관측도 전부 더한다", func(t *testing.T) {
+		fresh := make([]event.Event, len(events))
+		for i, e := range events {
+			since(0)(&e)
+			fresh[i] = e
+		}
+		rows, stats := Aggregate(fresh)
 		if got := totalRow(t, rows).CostUSD; got != 400 {
 			t.Errorf("cost = %v, want 400", got)
 		}
@@ -216,33 +231,98 @@ func TestCumulativeAddsOnlyTheDifference(t *testing.T) {
 			t.Errorf("Baselines = %d, want 0", stats.Baselines)
 		}
 	})
+
+	// 데몬 재시작 시나리오. 계열이 우리보다 먼저 시작했으면 앞 구간은 이전 인스턴스가 이미
+	// 저장했을 수 있으므로 기준선만 잡는다 — 여기서 값을 통째로 더하면 비용이 배로 잡힌다.
+	t.Run("관측 시작 전부터 쌓이던 계열은 기준선만 잡는다", func(t *testing.T) {
+		old := make([]event.Event, len(events))
+		for i, e := range events {
+			since(-3600)(&e)
+			old[i] = e
+		}
+		rows, stats := Aggregate(old)
+		if got := totalRow(t, rows).CostUSD; got != 300 {
+			t.Errorf("cost = %v, want 300 — 데몬 재시작 구간이 이중 집계됐다", got)
+		}
+		if stats.Baselines != 1 {
+			t.Errorf("Baselines = %d, want 1", stats.Baselines)
+		}
+	})
+}
+
+// start_time 이 바뀌면 값이 줄지 않아도 리셋이다. 값의 증감만 보던 규칙으로는 못 잡는
+// 경우 — 벤더가 재시작한 뒤 다음 내보내기까지 직전 값을 이미 넘어선 상황이다.
+func TestCumulativeResetDetectedByStartTime(t *testing.T) {
+	events := []event.Event{
+		newMetric("claude_code.cost.usage", event.TemporalityCumulative, 100, since(0), afterSec(0)),
+		newMetric("claude_code.cost.usage", event.TemporalityCumulative, 150, since(0), afterSec(60)),
+		// 벤더 재시작: 새 수집 구간에서 이미 180 까지 쌓였다. 값은 오히려 커졌다.
+		newMetric("claude_code.cost.usage", event.TemporalityCumulative, 180, since(90), afterSec(120)),
+	}
+	rows, stats := Aggregate(events)
+
+	// 100(첫 관측 전부) + 50(차이) + 180(재시작 후 누적 전부) = 330
+	if got := totalRow(t, rows).CostUSD; got != 330 {
+		t.Errorf("cost = %v, want 330 — start_time 변화를 리셋으로 못 잡았다", got)
+	}
+	if stats.CumulativeResets != 1 {
+		t.Errorf("CumulativeResets = %d, want 1", stats.CumulativeResets)
+	}
+}
+
+// 수집 구간이 그대로인데 값이 줄었다면 리셋이 아니다. 순서가 뒤집힌 포인트를 리셋으로 보고
+// 값 전체를 더하면 그 양이 두 번 들어간다.
+func TestCumulativeDecreaseWithinSameStartIsNotReset(t *testing.T) {
+	events := []event.Event{
+		newMetric("claude_code.cost.usage", event.TemporalityCumulative, 100, since(0), afterSec(0)),
+		newMetric("claude_code.cost.usage", event.TemporalityCumulative, 150, since(0), afterSec(60)),
+		newMetric("claude_code.cost.usage", event.TemporalityCumulative, 120, since(0), afterSec(90)), // 순서 뒤집힘
+		newMetric("claude_code.cost.usage", event.TemporalityCumulative, 200, since(0), afterSec(120)),
+	}
+	rows, stats := Aggregate(events)
+
+	// 100 + 50 + 0 + 50 = 200 — 마지막 누적값과 정확히 같다.
+	if got := totalRow(t, rows).CostUSD; got != 200 {
+		t.Errorf("cost = %v, want 200 (마지막 누적값)", got)
+	}
+	if stats.CumulativeResets != 0 {
+		t.Errorf("CumulativeResets = %d, want 0 — 순서 뒤집힘을 리셋으로 오판했다", stats.CumulativeResets)
+	}
 }
 
 // 계획서 리스크 표 "cumulative 이중 집계 → 비용 10배" 를 직접 겨냥한다.
 // cumulative 계열을 delta 로 오인하면 매 포인트의 누적값이 통째로 더해져 합계가 폭증한다.
 func TestCumulativeIsNeverSummedLikeDelta(t *testing.T) {
 	const points = 10
-	var events []event.Event
+	build := func(mods ...eventOpt) []event.Event {
+		var out []event.Event
+		for i := 1; i <= points; i++ {
+			v := float64(i) // 누적값: 1, 2, ... 10
+			out = append(out, newMetric("claude_code.cost.usage", event.TemporalityCumulative, v,
+				append([]eventOpt{afterSec(i * 60)}, mods...)...))
+		}
+		return out
+	}
 	naiveSum := 0.0
 	for i := 1; i <= points; i++ {
-		v := float64(i) // 누적값: 1, 2, ... 10
-		naiveSum += v
-		events = append(events, newMetric("claude_code.cost.usage", event.TemporalityCumulative, v, afterSec(i*60)))
+		naiveSum += float64(i)
 	}
 	if naiveSum != 55 {
 		t.Fatalf("테스트 전제가 깨짐: naiveSum = %v", naiveSum)
 	}
 
 	for _, tc := range []struct {
-		name string
-		opts []Option
-		want float64
+		name   string
+		events []event.Event
+		want   float64
 	}{
-		{"기본(baseline)", nil, 9},
-		{"ColdStartFull", []Option{WithCumulativeColdStart(ColdStartFull)}, 10},
+		{"start_time 없음(기준선)", build(), 9},
+		// 첫 포인트가 afterSec(60) 이라 관측 시작점도 거기다. 계열이 그 시각부터 쌓였으면
+		// 첫 관측이 통째로 우리 것이다.
+		{"관측 시작 이후에 시작한 계열", build(since(60)), 10},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rows, _ := Aggregate(events, tc.opts...)
+			rows, _ := Aggregate(tc.events)
 			got := totalRow(t, rows).CostUSD
 			if got != tc.want {
 				t.Errorf("cost = %v, want %v", got, tc.want)
@@ -258,12 +338,13 @@ func TestCumulativeIsNeverSummedLikeDelta(t *testing.T) {
 	}
 }
 
-// 프로세스 재시작으로 카운터가 뒤로 가면 음수를 더하지 않고 새 값 전체를 더한다.
+// start_time 을 못 받았을 때의 폴백 규칙이다. 카운터가 뒤로 가면 음수를 더하지 않고
+// 새 값 전체를 더한다. 이 픽스처에는 start_time 이 없으므로 첫 관측은 기준선이다.
 func TestCumulativeReset(t *testing.T) {
 	tests := []struct {
 		name       string
 		values     []float64
-		want       float64 // ColdStartBaseline 기준
+		want       float64 // 첫 관측을 기준선으로 잡은 값
 		wantResets int64
 	}{
 		{"리셋 없음", []float64{10, 20, 30}, 20, 0},
@@ -296,12 +377,12 @@ func TestCumulativeReset(t *testing.T) {
 // 차이가 번갈아 음수가 되고 리셋 판정이 폭주한다.
 func TestCumulativeSeriesAreKeyedByAttributes(t *testing.T) {
 	events := []event.Event{
-		newMetric("claude_code.token.usage", event.TemporalityCumulative, 100, typed("input"), afterSec(0)),
-		newMetric("claude_code.token.usage", event.TemporalityCumulative, 10, typed("output"), afterSec(0)),
-		newMetric("claude_code.token.usage", event.TemporalityCumulative, 300, typed("input"), afterSec(60)),
-		newMetric("claude_code.token.usage", event.TemporalityCumulative, 25, typed("output"), afterSec(60)),
+		newMetric("claude_code.token.usage", event.TemporalityCumulative, 100, typed("input"), since(0), afterSec(0)),
+		newMetric("claude_code.token.usage", event.TemporalityCumulative, 10, typed("output"), since(0), afterSec(0)),
+		newMetric("claude_code.token.usage", event.TemporalityCumulative, 300, typed("input"), since(0), afterSec(60)),
+		newMetric("claude_code.token.usage", event.TemporalityCumulative, 25, typed("output"), since(0), afterSec(60)),
 	}
-	rows, stats := Aggregate(events, WithCumulativeColdStart(ColdStartFull))
+	rows, stats := Aggregate(events)
 
 	total := totalRow(t, rows).Bucket
 	if total.InputTokens != 300 || total.OutputTokens != 25 {
@@ -316,12 +397,12 @@ func TestCumulativeSeriesAreKeyedByAttributes(t *testing.T) {
 // 리셋으로 오판된다.
 func TestCumulativeSeriesAreKeyedBySession(t *testing.T) {
 	events := []event.Event{
-		newMetric("claude_code.cost.usage", event.TemporalityCumulative, 100, inSession("a"), afterSec(0)),
-		newMetric("claude_code.cost.usage", event.TemporalityCumulative, 5, inSession("b"), afterSec(1)),
-		newMetric("claude_code.cost.usage", event.TemporalityCumulative, 130, inSession("a"), afterSec(60)),
-		newMetric("claude_code.cost.usage", event.TemporalityCumulative, 9, inSession("b"), afterSec(61)),
+		newMetric("claude_code.cost.usage", event.TemporalityCumulative, 100, inSession("a"), since(0), afterSec(0)),
+		newMetric("claude_code.cost.usage", event.TemporalityCumulative, 5, inSession("b"), since(0), afterSec(1)),
+		newMetric("claude_code.cost.usage", event.TemporalityCumulative, 130, inSession("a"), since(0), afterSec(60)),
+		newMetric("claude_code.cost.usage", event.TemporalityCumulative, 9, inSession("b"), since(0), afterSec(61)),
 	}
-	rows, stats := Aggregate(events, WithCumulativeColdStart(ColdStartFull))
+	rows, stats := Aggregate(events)
 	if got := totalRow(t, rows).CostUSD; got != 139 {
 		t.Errorf("cost = %v, want 139 (130+9)", got)
 	}
@@ -469,16 +550,16 @@ func TestDedupDoesNotFoldDistinctEvents(t *testing.T) {
 // 재전송된 cumulative 포인트가 계열의 직전 값을 갱신하면 그 다음 진짜 포인트의 차이가
 // 0 이 돼 조용히 누락된다. 중복 판정이 계열 갱신보다 먼저여야 한다.
 func TestDedupRunsBeforeSeriesUpdate(t *testing.T) {
-	first := newMetric("claude_code.cost.usage", event.TemporalityCumulative, 100, afterSec(0))
-	second := newMetric("claude_code.cost.usage", event.TemporalityCumulative, 150, afterSec(60))
+	first := newMetric("claude_code.cost.usage", event.TemporalityCumulative, 100, since(0), afterSec(0))
+	second := newMetric("claude_code.cost.usage", event.TemporalityCumulative, 150, since(0), afterSec(60))
 
-	a := New(WithCumulativeColdStart(ColdStartFull))
+	a := New()
 	a.Add(first)
 	a.Add(second)
 	if got := a.Add(second); got != Duplicate {
 		t.Fatalf("재전송 처리 = %v, want %v", got, Duplicate)
 	}
-	a.Add(newMetric("claude_code.cost.usage", event.TemporalityCumulative, 170, afterSec(120)))
+	a.Add(newMetric("claude_code.cost.usage", event.TemporalityCumulative, 170, since(0), afterSec(120)))
 
 	if got := totalRow(t, a.Rows()).CostUSD; got != 170 {
 		t.Errorf("cost = %v, want 170", got)
@@ -726,8 +807,8 @@ func TestLogDoesNotDuplicateMetricColumns(t *testing.T) {
 // Flush 는 버킷만 비운다. 계열 상태와 중복 창을 같이 버리면 다음 cumulative 포인트가
 // 콜드 스타트로 잡히고 플러시 직후 재전송된 이벤트가 두 번 집계된다.
 func TestFlushClearsBucketsButKeepsState(t *testing.T) {
-	a := New(WithCumulativeColdStart(ColdStartFull))
-	first := newMetric("claude_code.cost.usage", event.TemporalityCumulative, 100, afterSec(0))
+	a := New()
+	first := newMetric("claude_code.cost.usage", event.TemporalityCumulative, 100, since(0), afterSec(0))
 	a.Add(first)
 
 	if got := totalRow(t, a.Flush()).CostUSD; got != 100 {
@@ -738,7 +819,7 @@ func TestFlushClearsBucketsButKeepsState(t *testing.T) {
 	}
 
 	// 계열 상태 유지: 150 은 50 만 더해져야 한다.
-	a.Add(newMetric("claude_code.cost.usage", event.TemporalityCumulative, 150, afterSec(60)))
+	a.Add(newMetric("claude_code.cost.usage", event.TemporalityCumulative, 150, since(0), afterSec(60)))
 	if got := totalRow(t, a.Rows()).CostUSD; got != 50 {
 		t.Errorf("Flush 후 cost = %v, want 50 — 계열 상태가 사라졌다", got)
 	}
@@ -783,10 +864,10 @@ func TestRowsAreSortedDeterministically(t *testing.T) {
 // 계열 상태는 유계다. 밀려난 계열이 다시 오면 콜드 스타트로 잡힌다 —
 // 기본 정책에서는 과소 집계이고 과대 집계는 아니다.
 func TestSeriesStateIsBounded(t *testing.T) {
-	a := New(WithSeriesCapacity(1), WithCumulativeColdStart(ColdStartFull))
-	a.Add(newMetric("claude_code.token.usage", event.TemporalityCumulative, 100, typed("input"), afterSec(0)))
-	a.Add(newMetric("claude_code.token.usage", event.TemporalityCumulative, 10, typed("output"), afterSec(1)))
-	a.Add(newMetric("claude_code.token.usage", event.TemporalityCumulative, 300, typed("input"), afterSec(60)))
+	a := New(WithSeriesCapacity(1))
+	a.Add(newMetric("claude_code.token.usage", event.TemporalityCumulative, 100, typed("input"), since(0), afterSec(0)))
+	a.Add(newMetric("claude_code.token.usage", event.TemporalityCumulative, 10, typed("output"), since(0), afterSec(1)))
+	a.Add(newMetric("claude_code.token.usage", event.TemporalityCumulative, 300, typed("input"), since(0), afterSec(60)))
 
 	if got := a.Stats().SeriesEvicted; got == 0 {
 		t.Fatal("계열이 하나도 밀려나지 않음 — 용량이 적용되지 않았다")

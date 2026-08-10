@@ -65,8 +65,22 @@ type Event struct {
 	Sequence int
 
 	Temporality Temporality // metric 시그널에만 의미가 있다
-	Attr        Attributes
-	Measure     Measures
+
+	// StartTS 는 OTLP NumberDataPoint.start_time_unix_nano 다 — 이 누적 계열이 값을 쌓기
+	// 시작한 시각(UTC unix **나노초**). TS 와 같은 단위라 같은 타입으로 둔다.
+	// 0 이하는 "모름" 이다(벤더 미전송·이상값). Validate 가 검사하지 않는 것도 그래서다 —
+	// 저장되지 않는 메타데이터 하나 때문에 실제 수치 데이터포인트를 버릴 이유가 없다.
+	//
+	// Sequence 와 마찬가지로 events 테이블에 대응 컬럼이 없다. 저장하지 않고 파이프라인
+	// 안에서만 쓰는 값이다 — rollup 이 cumulative 리셋과 콜드 스타트를 판정하는 데 쓴다.
+	// 수집 구간이 새로 시작됐는지는 값의 증감이 아니라 이 값으로만 확실히 알 수 있다.
+	//
+	// DedupKey 에는 넣지 않는다. 같은 포인트가 재전송되면 이 값도 같으므로 변별력이 없고,
+	// 상위가 배치를 다시 자르며 이 필드를 채우거나 비우면 같은 이벤트가 두 행이 된다.
+	// Measures·Temporality 를 키에서 뺀 것과 같은 이유다 (dedup.go).
+	StartTS UnixNano
+	Attr    Attributes
+	Measure Measures
 }
 
 // Attributes 는 events 테이블의 속성 allowlist 컬럼이다. 필드를 늘리려면 스키마를 같이 늘린다.

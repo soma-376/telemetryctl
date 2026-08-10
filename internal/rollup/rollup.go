@@ -32,30 +32,9 @@ const (
 	defaultSeriesCapacity = 4096
 )
 
-// ColdStartPolicy 는 직전 값이 없는 cumulative 포인트를 어떻게 다룰지 정한다.
-//
-// 계획서가 명시하지 않은 지점이다. cumulative 의 첫 관측은 두 가지로 해석된다 —
-// (a) 프로세스가 방금 시작해 0 부터 쌓인 값이므로 전부 우리 것이거나,
-// (b) 데몬이 재시작해 이미 저장된 구간을 다시 보고 있거나.
-// (b) 에서 값을 통째로 더하면 계획서 리스크 표의 "cumulative 이중 집계 → 비용 10배" 가 그대로
-// 일어난다. OTLP 의 start_time_unix_nano 를 보면 둘을 구분할 수 있지만 event.Event 에는
-// 그 필드가 없다. 구분할 수 없으므로 기본값은 과소 집계 쪽(ColdStartBaseline)을 고른다 —
-// UNSPECIFIED 를 폐기하는 §4 의 원칙("조용히 2배 집계되느니 폐기")과 같은 방향이다.
-type ColdStartPolicy uint8
-
-const (
-	// ColdStartBaseline 은 첫 관측을 기준선으로만 기록하고 0 을 더한다. 기본값.
-	// 계열 식별에 session_id 가 들어가므로 손실은 세션·메트릭당 최초 1회 내보내기 구간뿐이다.
-	ColdStartBaseline ColdStartPolicy = iota
-	// ColdStartFull 은 첫 관측 값을 전부 더한다. 데몬이 항상 벤더 프로세스보다 먼저 떠 있고
-	// 재시작하지 않는다고 보장할 수 있을 때만 쓴다.
-	ColdStartFull
-)
-
 type options struct {
 	dedupCapacity  int
 	seriesCapacity int
-	coldStart      ColdStartPolicy
 }
 
 // Option 은 Aggregator 생성 옵션이다. 용량 값이 0 이하면 기본값을 쓴다 —
@@ -78,10 +57,6 @@ func WithSeriesCapacity(n int) Option {
 	}
 }
 
-func WithCumulativeColdStart(p ColdStartPolicy) Option {
-	return func(o *options) { o.coldStart = p }
-}
-
 // Disposition 은 이벤트 하나의 처리 결과다. 집계에 들어간 것과 버려진 것을 호출자가 구분할 수
 // 있어야 한다 — 조용히 버리면 화면의 숫자가 왜 작은지 아무도 설명하지 못한다.
 type Disposition uint8
@@ -100,7 +75,8 @@ const (
 	UnusableValue
 	// DroppedTemporality 는 §4 가 폐기하라고 한 UNSPECIFIED 메트릭이다.
 	DroppedTemporality
-	// Baseline 은 cumulative 첫 관측을 기준선으로만 기록한 경우다 (ColdStartBaseline).
+	// Baseline 은 cumulative 첫 관측을 기준선으로만 기록한 경우다 — 그 계열이 우리가 보기
+	// 시작하기 전부터 쌓이고 있었다는 뜻이다 (seriesStore.observe).
 	Baseline
 )
 
@@ -151,13 +127,21 @@ type Aggregator struct {
 	dedup   *dedupSet
 	series  *seriesStore
 	stats   Stats
+
+	// watchFrom 은 이 집계기가 처음 이벤트를 받은 시각이다. cumulative 첫 관측을 판정하는
+	// 기준점이다 (event.CumulativePoint.WatchFrom). 시계를 읽지 않고 이벤트 타임스탬프에서만
+	// 파생하므로 같은 입력이면 결과도 같다.
+	//
+	// session.Assembler 도 같은 방식으로 기준점을 잡는다. 같은 스트림을 두 패키지에 먹였을 때
+	// 총량이 일치하려면 기준점이 같아야 하기 때문이다.
+	watchFrom event.UnixNano
+	watching  bool
 }
 
 func New(opts ...Option) *Aggregator {
 	cfg := options{
 		dedupCapacity:  defaultDedupCapacity,
 		seriesCapacity: defaultSeriesCapacity,
-		coldStart:      ColdStartBaseline,
 	}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -165,7 +149,7 @@ func New(opts ...Option) *Aggregator {
 	return &Aggregator{
 		buckets: make(map[rowKey]*Bucket),
 		dedup:   newDedupSet(cfg.dedupCapacity),
-		series:  newSeriesStore(cfg.seriesCapacity, cfg.coldStart),
+		series:  newSeriesStore(cfg.seriesCapacity),
 	}
 }
 
@@ -175,6 +159,11 @@ func (a *Aggregator) Add(e event.Event) Disposition {
 	if err := e.Validate(); err != nil {
 		a.stats.Invalid++
 		return Invalid
+	}
+	// 첫 유효 이벤트가 "여기서부터 보고 있었다" 는 기준점이다. 중복 판정보다 먼저 찍는다 —
+	// 첫 이벤트가 마침 재전송이더라도 우리가 그때부터 보고 있었다는 사실은 같다.
+	if !a.watching {
+		a.watching, a.watchFrom = true, e.TS
 	}
 	// 중복 판정이 가장 먼저다. 뒤로 미루면 재전송된 cumulative 포인트가 계열의 직전 값을
 	// 갱신해 버려 그 다음 진짜 포인트의 차이가 0 이 된다.
@@ -300,7 +289,9 @@ func (a *Aggregator) resolve(e event.Event) (float64, Disposition) {
 		}
 		return raw, Counted
 	case event.TemporalityCumulative:
-		return a.series.observe(seriesIDOf(e), raw)
+		return a.series.observe(seriesIDOf(e), event.CumulativePoint{
+			Value: raw, Start: e.StartTS, WatchFrom: a.watchFrom,
+		})
 	default:
 		// §4: UNSPECIFIED 는 조용히 2배 집계되느니 폐기하고 카운트만 올린다.
 		return 0, DroppedTemporality

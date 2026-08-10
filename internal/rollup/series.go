@@ -32,70 +32,66 @@ func seriesIDOf(e event.Event) seriesID {
 }
 
 type seriesState struct {
-	last float64
+	// cum 은 이 계열의 직전 관측이다. 증분 판정 규칙 자체는 event 패키지가 소유한다 —
+	// session 이 세션 합계에 같은 규칙을 써야 rollup_hourly 와 sessions 가 갈리지 않는다.
+	cum event.CumulativeState
 	// used 는 마지막으로 관측된 순번이다. 용량 초과 시 가장 오래 안 쓴 계열을 고르는 데 쓴다.
+	// 계열 저장·축출은 이 패키지에만 있다 — 집계기가 데몬 수명 내내 모든 세션의 계열을
+	// 보기 때문이고, 세션 상태는 마감되면 Prune 으로 통째로 사라져 이 문제가 없다.
 	used uint64
 }
 
 // seriesStore 는 cumulative 계열의 직전 값을 유계로 들고 있는다.
 type seriesStore struct {
-	state     map[seriesID]seriesState
-	capacity  int
-	tick      uint64
-	coldStart ColdStartPolicy
+	state    map[seriesID]seriesState
+	capacity int
+	tick     uint64
 
 	resets    int64
 	baselines int64
 	evicted   int64
 }
 
-func newSeriesStore(capacity int, coldStart ColdStartPolicy) *seriesStore {
+func newSeriesStore(capacity int) *seriesStore {
 	return &seriesStore{
-		state:     make(map[seriesID]seriesState),
-		capacity:  capacity,
-		coldStart: coldStart,
+		state:    make(map[seriesID]seriesState),
+		capacity: capacity,
 	}
 }
 
 // observe 는 cumulative 데이터포인트를 받아 이번에 더할 양을 돌려준다.
 //
-// 판정 규칙:
-//   - 직전 값이 있고 새 값이 그보다 크거나 같으면 → 차이만 더한다.
-//   - 새 값이 직전 값보다 **작으면** 리셋이다. 벤더 프로세스가 재시작해 카운터가 0 부터 다시
-//     시작한 경우라 차이는 음수가 된다. 음수를 더하면 집계가 깎이므로 새 값 전체를 더한다.
-//   - 직전 값이 없으면 ColdStartPolicy 를 따른다.
-func (s *seriesStore) observe(id seriesID, raw float64) (float64, Disposition) {
-	prev, known := s.state[id]
-	switch {
-	case !known:
-		s.put(id, raw)
-		if s.coldStart == ColdStartFull {
-			return raw, Counted
-		}
+// 판정은 event.CumulativeState.Step 이 한다 — 여기서는 계열을 찾아 상태를 넣고 빼고,
+// 결과를 이 패키지의 Disposition·통계 어휘로 옮기는 것만 한다.
+func (s *seriesStore) observe(id seriesID, p event.CumulativePoint) (float64, Disposition) {
+	prev := s.state[id] // 없으면 제로값 = CumulativeState.Known false
+	delta, next, kind := prev.cum.Step(p)
+	s.put(id, next)
+
+	switch kind {
+	case event.CumulativeBaseline:
 		s.baselines++
 		return 0, Baseline
-	case raw < prev.last:
-		s.put(id, raw)
+	case event.CumulativeReset:
 		s.resets++
-		return raw, Counted
-	default:
-		s.put(id, raw)
-		return raw - prev.last, Counted
 	}
+	return delta, Counted
 }
 
-func (s *seriesStore) put(id seriesID, v float64) {
+func (s *seriesStore) put(id seriesID, cum event.CumulativeState) {
 	if _, known := s.state[id]; !known && len(s.state) >= s.capacity {
 		s.evictLeastUsed()
 	}
 	s.tick++
-	s.state[id] = seriesState{last: v, used: s.tick}
+	s.state[id] = seriesState{cum: cum, used: s.tick}
 }
 
 // evictLeastUsed 는 가장 오래 관측되지 않은 계열 하나를 버린다.
 // 세션이 끝나면 그 계열은 다시 오지 않으므로 유휴 계열이 영원히 쌓이는 것을 막는다.
-// 버린 계열이 나중에 다시 오면 콜드 스타트로 잡힌다 — 기본 정책에서는 과소 집계이고
-// 과대 집계는 아니다. 용량은 O(n) 스캔이 문제되지 않을 규모(수천)를 전제로 한다.
+// 버린 계열이 나중에 다시 오면 콜드 스타트로 잡힌다 — start_time 이 없으면 기준선만 잡아
+// 과소 집계되고, 있으면 값 전체를 다시 더해 밀려나기 전 구간이 두 번 들어간다.
+// 그래서 용량은 넉넉해야 한다(Stats.SeriesEvicted 가 계속 늘면 모자라다는 뜻이다).
+// 용량은 O(n) 스캔이 문제되지 않을 규모(수천)를 전제로 한다.
 func (s *seriesStore) evictLeastUsed() {
 	var victim seriesID
 	var oldest uint64

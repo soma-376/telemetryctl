@@ -80,6 +80,11 @@ func TestEventValidate(t *testing.T) {
 		{"ts 0", func(e *Event) { e.TS = 0 }, true},
 		{"ts 음수", func(e *Event) { e.TS = -1 }, true},
 		{"sequence 음수", func(e *Event) { e.Sequence = -1 }, true},
+		// start_ts 는 검증하지 않는다. events 에 컬럼이 없고 값이 이상해도 rollup 이
+		// "모름"으로 다루면 그만이라, 메타데이터 하나 때문에 실제 비용 데이터포인트를
+		// 통째로 버리는 쪽이 더 나쁘다.
+		{"start_ts 미설정은 허용", func(e *Event) { e.StartTS = 0 }, false},
+		{"start_ts 이상값도 이벤트를 죽이지 않는다", func(e *Event) { e.StartTS = -1 }, false},
 		{"session_id 없음은 허용", func(e *Event) { e.SessionID = "" }, false},
 		{"수치 전부 미설정은 허용", func(e *Event) { e.Measure = Measures{} }, false},
 	}
