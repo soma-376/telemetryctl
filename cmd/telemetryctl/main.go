@@ -7,6 +7,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -44,6 +45,12 @@ func main() {
 		os.Exit(cmdReconnect(os.Args[2:]))
 	case "daemon":
 		os.Exit(cmdDaemon(os.Args[2:]))
+	case "stats":
+		os.Exit(cmdStats(os.Args[2:]))
+	case "sessions":
+		os.Exit(cmdSessions(os.Args[2:]))
+	case "purge":
+		os.Exit(cmdPurge(os.Args[2:]))
 	case "version", "--version", "-v":
 		fmt.Println("pulsemetry", installer.Version)
 	case "help", "-h", "--help":
@@ -61,18 +68,42 @@ func usage() {
 사용법:
   pulsemetry enroll --invite <code> [--server <url>] [--force]   초대 코드로 등록 후 설정 적용
   pulsemetry reconnect [--server <url>]                          저장된 설치 자격증명으로 텔레메트리 토큰 재발급
-  pulsemetry status                                             현재 설치 상태 표시
+  pulsemetry status                                              현재 설치·로컬 파이프라인 상태 표시
   pulsemetry daemon [옵션]                                       foreground 데몬 실행
-  pulsemetry version                                            버전 출력
+  pulsemetry stats [옵션]                                        로컬 집계 조회
+  pulsemetry sessions [옵션]                                     로컬 세션 목록 조회
+  pulsemetry purge --content [옵션]                              보관된 프롬프트·툴 원문 삭제
+  pulsemetry version                                             버전 출력
 
 daemon 옵션:
   --listen <localhost:4318>   수신기 주소. 명시하면 포트 폴백 없이 하드 실패
-  --data-dir <경로>            SQLite·runtime.json 위치 (기본 ~/.pulsemetry)
+  --data-dir <경로>           SQLite·runtime.json 위치 (기본 ~/.pulsemetry)
   --no-receiver               로컬 OTLP 수신기를 띄우지 않음
   --no-forward                회사 Collector 전달 없이 수신·로컬 집계만
   --no-store-content          프롬프트·툴 원문을 로컬에 저장하지 않음
-  --retention-days <일>        이벤트·원문·툴 타임라인 보존일 (기본 30)
+  --retention-days <일>       이벤트·원문·툴 타임라인 보존일 (기본 30)
   --interval <30s>            세션 마감·롤업 저장 주기
+
+stats 옵션:
+  --since <7d>                조회 구간. 지금부터 거슬러 올라간다 (7d·24h·90m, 최대 400d)
+  --group <vendor>            집계 축 (vendor|model|tool|project|day)
+  --limit <20>                표시할 행 수 (1~500). --group day 에는 적용되지 않음
+  --json                      기계 판독용 JSON. 시각은 전부 UTC unix 초
+
+sessions 옵션:
+  --since <7d>                조회 구간 (started_at 기준)
+  --status <값>               running|completed|abandoned|handoff (쉼표로 여러 개)
+  --limit <50>                표시할 세션 수 (1~1000)
+  --json                      기계 판독용 JSON. 시각은 전부 UTC unix 초
+
+purge 옵션:
+  --content                   보관된 프롬프트·툴 원문을 지운다 (필수)
+  --before <2026-07-01>       이 시각(로컬) 이전 원문만 지운다. 없으면 전체
+  --yes                       전체 삭제 확인을 건너뛴다 (스크립트용)
+
+stats·sessions·purge·status 공통:
+  --data-dir <경로>           데이터 디렉터리 (미지정 시 상태 파일 설정 → ~/.pulsemetry)
+  --state <경로>              설치 상태 파일 경로
 
 보통은 한 줄 설치로 실행됩니다:  irm <server>/windows | iex
 `)
@@ -280,40 +311,56 @@ func printBackups(rep *installer.Report) {
 	}
 }
 
-func cmdStatus(_ []string) int {
-	path, err := installer.DefaultStatePath()
+func cmdStatus(args []string) int { return runStatus(os.Stdout, os.Stderr, args) }
+
+// runStatus 는 설치 상태와 로컬 파이프라인 상태를 함께 보여 준다 (PROJ-36 11단계).
+//
+// status 는 진단 명령이라 어떤 상태에서도 동작해야 한다. 미설치여도 로컬 블록은 출력한다 —
+// enroll 전에 데몬만 띄워 본 사용자에게 "미설치" 한 줄만 주면 아무것도 진단할 수 없다.
+func runStatus(stdout, stderr io.Writer, args []string) int {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dataDir := fs.String("data-dir", "", "데이터 디렉터리 (미지정 시 상태 파일 설정 → ~/.pulsemetry)")
+	statePath := fs.String("state", "", "설치 상태 파일 경로")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	target, err := resolveLocalTarget(*dataDir, *statePath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "오류:", err)
+		fmt.Fprintln(stderr, "오류:", err)
 		return 1
 	}
-	st, err := installer.LoadState(path)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "오류:", err)
+	// 상태 파일 파싱 실패는 설치가 깨졌다는 뜻이라 조용히 넘기지 않는다.
+	if target.StateErr != nil {
+		fmt.Fprintln(stderr, "오류:", target.StateErr)
 		return 1
 	}
-	if st == nil {
-		fmt.Printf("미설치 (상태 파일 없음: %s)\n", path)
-		return 0
+
+	if st := target.State; st == nil {
+		fmt.Fprintf(stdout, "미설치 (상태 파일 없음: %s)\n", target.StatePath)
+	} else {
+		fmt.Fprintf(stdout, "installation_id=%s · config_revision=%d · installer=%s · installed_at=%s\n",
+			st.InstallationID, st.ConfigRevision, st.InstallerVersion, st.InstalledAt)
+		for _, t := range st.Targets {
+			fmt.Fprintf(stdout, "  - [%s] %s (관리 키 %d개)\n", t.Tool, t.Path, len(t.ManagedKeys))
+		}
+		printCredentialStatus(stdout)
 	}
-	fmt.Printf("installation_id=%s · config_revision=%d · installer=%s · installed_at=%s\n",
-		st.InstallationID, st.ConfigRevision, st.InstallerVersion, st.InstalledAt)
-	for _, t := range st.Targets {
-		fmt.Printf("  - [%s] %s (관리 키 %d개)\n", t.Tool, t.Path, len(t.ManagedKeys))
-	}
-	printCredentialStatus()
+	printLocalStatus(stdout, target)
 	return 0
 }
 
 // printCredentialStatus 는 키링에 저장된 자격증명의 존재·조회 가능 여부만 표시한다.
 // 토큰 값은 출력하지 않는다 (§4.5).
-func printCredentialStatus() {
+func printCredentialStatus(w io.Writer) {
 	cred, err := credential.LoadInstallation()
 	switch {
 	case err != nil:
-		fmt.Printf("  자격증명: 읽기 실패 (%v)\n", err)
+		fmt.Fprintf(w, "  자격증명: 읽기 실패 (%v)\n", err)
 	case cred == nil:
-		fmt.Printf("  자격증명: 없음 (OS 키링) — 구버전 설치이거나 유실됨, 재enroll 필요\n")
+		fmt.Fprintf(w, "  자격증명: 없음 (OS 키링) — 구버전 설치이거나 유실됨, 재enroll 필요\n")
 	default:
-		fmt.Printf("  자격증명: 정상 (OS 키링)\n")
+		fmt.Fprintf(w, "  자격증명: 정상 (OS 키링)\n")
 	}
 }
