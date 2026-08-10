@@ -194,3 +194,106 @@ func TestLoadStateRejectsCorruptJSON(t *testing.T) {
 		t.Fatal("깨진 state.json 파싱이 성공했음")
 	}
 }
+
+// 스키마 3 → 4 마이그레이션. 이미 설치된 사용자가 바이너리만 갈아도 재enroll 없이
+// 동작해야 하고, 없던 Local 블록은 제로값이 아니라 **명시적 기본값**으로 채워져야 한다.
+// 제로값을 그대로 두면 StoreContent 가 false 가 되어 업그레이드만으로 원문 보관이 꺼진다.
+func TestMigrateV3AddsLocalDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	v3 := `{
+  "state_schema_version": 3,
+  "installation_id": "inst_legacy",
+  "server_url": "https://enroll.example.com",
+  "config_revision": 5,
+  "installer_version": "0.0.9",
+  "installed_at": "2026-01-02T03:04:05Z",
+  "targets": [{"tool":"claude","path":"/x","managed_keys":["k"]}]
+}`
+	if err := os.WriteFile(path, []byte(v3), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, migrated, err := LoadStateMigrated(path)
+	if err != nil {
+		t.Fatalf("LoadStateMigrated: %v", err)
+	}
+	if !migrated {
+		t.Fatal("migrated = false, want true")
+	}
+	if got.StateSchemaVersion != StateSchemaVersion {
+		t.Errorf("state_schema_version = %d, want %d", got.StateSchemaVersion, StateSchemaVersion)
+	}
+	if got.InstallationID != "inst_legacy" || got.ConfigRevision != 5 || len(got.Targets) != 1 {
+		t.Errorf("기존 필드를 잃었다: %+v", got)
+	}
+	if want := DefaultLocal(); got.Local != want {
+		t.Errorf("Local = %+v, want %+v", got.Local, want)
+	}
+	if !got.Local.StoreContent {
+		t.Error("Local.StoreContent = false — 업그레이드만으로 원문 보관이 꺼졌다")
+	}
+	if got.Local.Enabled {
+		t.Error("Local.Enabled = true — 재배선은 opt-in 이어야 한다")
+	}
+}
+
+// 이미 4 인 파일은 손대지 않는다. 특히 사용자가 끈 StoreContent 를 되켜면 안 된다.
+func TestMigrateLeavesCurrentSchemaAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	optedOut := State{
+		StateSchemaVersion: StateSchemaVersion,
+		InstallationID:     "inst_1",
+		Local:              Local{Enabled: true, ListenPort: 4319, RetentionDays: 7, StoreContent: false},
+	}
+	if err := SaveState(path, &optedOut); err != nil {
+		t.Fatal(err)
+	}
+	got, migrated, err := LoadStateMigrated(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated {
+		t.Error("migrated = true, want false")
+	}
+	if got.Local != optedOut.Local {
+		t.Errorf("Local = %+v, want %+v (사용자 설정이 덮였다)", got.Local, optedOut.Local)
+	}
+}
+
+// 신버전이 쓴 파일을 구버전이 열었을 때 필드를 지우고 되쓰면 안 된다.
+func TestMigrateIgnoresFutureSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	future := State{StateSchemaVersion: StateSchemaVersion + 3, InstallationID: "inst_future"}
+	if err := SaveState(path, &future); err != nil {
+		t.Fatal(err)
+	}
+	got, migrated, err := LoadStateMigrated(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated {
+		t.Error("미래 버전을 마이그레이션했다")
+	}
+	if got.StateSchemaVersion != StateSchemaVersion+3 {
+		t.Errorf("state_schema_version = %d, want 그대로 유지", got.StateSchemaVersion)
+	}
+}
+
+// LoadState 는 읽기 명령(status)도 쓰므로 디스크를 건드리면 안 된다.
+func TestLoadStateDoesNotWriteBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	raw := []byte(`{"state_schema_version":3,"installation_id":"inst_1"}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadState(path); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(raw) {
+		t.Errorf("LoadState 가 파일을 바꿨다:\n got = %s\nwant = %s", after, raw)
+	}
+}

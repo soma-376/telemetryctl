@@ -50,6 +50,9 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 		InstallerVersion:   Version,
 		InstalledAt:        time.Now().UTC().Format(time.RFC3339),
 		Manifest:           *manifest,
+		// 새 설치도 Local 블록을 명시적 기본값으로 갖는다. 3→4 마이그레이션과 같은
+		// 값이라야 "새로 깐 사람"과 "업그레이드한 사람"이 같은 동작을 본다.
+		Local: DefaultLocal(),
 	}
 
 	steps := []applyStep{

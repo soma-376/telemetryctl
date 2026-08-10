@@ -8,11 +8,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"runtime"
+	"strconv"
+	"strings"
 	"syscall"
-	"time"
 
 	"github.com/your-org/pulsemetry/internal/contract"
 	"github.com/your-org/pulsemetry/internal/credential"
@@ -60,8 +62,17 @@ func usage() {
   pulsemetry enroll --invite <code> [--server <url>] [--force]   초대 코드로 등록 후 설정 적용
   pulsemetry reconnect [--server <url>]                          저장된 설치 자격증명으로 텔레메트리 토큰 재발급
   pulsemetry status                                             현재 설치 상태 표시
-  pulsemetry daemon [--interval 30s]                            foreground 데몬 실행
+  pulsemetry daemon [옵션]                                       foreground 데몬 실행
   pulsemetry version                                            버전 출력
+
+daemon 옵션:
+  --listen <localhost:4318>   수신기 주소. 명시하면 포트 폴백 없이 하드 실패
+  --data-dir <경로>            SQLite·runtime.json 위치 (기본 ~/.pulsemetry)
+  --no-receiver               로컬 OTLP 수신기를 띄우지 않음
+  --no-forward                회사 Collector 전달 없이 수신·로컬 집계만
+  --no-store-content          프롬프트·툴 원문을 로컬에 저장하지 않음
+  --retention-days <일>        이벤트·원문·툴 타임라인 보존일 (기본 30)
+  --interval <30s>            세션 마감·롤업 저장 주기
 
 보통은 한 줄 설치로 실행됩니다:  irm <server>/windows | iex
 `)
@@ -69,9 +80,21 @@ func usage() {
 
 func cmdDaemon(args []string) int {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
-	interval := fs.Duration("interval", 30*time.Second, "주기 작업 실행 간격")
+	interval := fs.Duration("interval", daemon.DefaultInterval, "세션 마감·롤업 저장 주기")
 	statePath := fs.String("state", "", "설치 상태 파일 경로")
+	listen := fs.String("listen", "", "수신기 주소 (localhost:4318 또는 4318). 명시하면 포트 폴백 없이 실패한다")
+	dataDir := fs.String("data-dir", "", "데이터 디렉터리 (미지정 시 상태 파일 설정 → ~/.pulsemetry)")
+	noReceiver := fs.Bool("no-receiver", false, "로컬 OTLP 수신기를 띄우지 않는다")
+	noForward := fs.Bool("no-forward", false, "회사 Collector 전달을 하지 않는다 (수신·로컬 집계만)")
+	noStoreContent := fs.Bool("no-store-content", false, "프롬프트·툴 원문을 로컬에 저장하지 않는다")
+	retentionDays := fs.Int("retention-days", 0, "이벤트·원문·툴 타임라인 보존일 (미지정 시 상태 파일 설정 → 30)")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	port, fixed, err := parseListen(*listen)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "오류:", err)
 		return 2
 	}
 
@@ -88,11 +111,51 @@ func cmdDaemon(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	logger := log.New(os.Stdout, "pulsemetry: ", log.LstdFlags|log.LUTC)
-	if err := daemon.Run(ctx, daemon.Options{StatePath: path, Interval: *interval, Logger: logger}); err != nil {
+	if err := daemon.Run(ctx, daemon.Options{
+		StatePath:       path,
+		Logger:          logger,
+		Interval:        *interval,
+		DataDir:         *dataDir,
+		ListenPort:      port,
+		FixedPort:       fixed,
+		DisableReceiver: *noReceiver,
+		DisableForward:  *noForward,
+		NoStoreContent:  *noStoreContent,
+		RetentionDays:   *retentionDays,
+	}); err != nil {
 		fmt.Fprintln(os.Stderr, "daemon 실패:", err)
 		return 1
 	}
 	return 0
+}
+
+// parseListen 은 --listen 값을 포트로 옮긴다. 값이 있으면 fixed=true 이고, 그때는
+// 그 포트를 잡지 못해도 임의 포트로 폴백하지 않는다 (계획서 「리스크」).
+//
+// loopback 이 아닌 호스트는 여기서 거부한다. 수신기는 어차피 127.0.0.1 과 [::1] 만
+// 바인딩하므로, 다른 호스트를 받아 조용히 무시하면 사용자가 왜 안 되는지 알 수 없다.
+func parseListen(v string) (port int, fixed bool, err error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0, false, nil
+	}
+	hostPart, portPart := "", v
+	if strings.Contains(v, ":") {
+		hostPart, portPart, err = net.SplitHostPort(v)
+		if err != nil {
+			return 0, false, fmt.Errorf("--listen 값을 해석할 수 없습니다 %q: %w", v, err)
+		}
+	}
+	switch hostPart {
+	case "", "localhost", "127.0.0.1", "::1":
+	default:
+		return 0, false, fmt.Errorf("--listen 은 loopback 만 받습니다 (localhost·127.0.0.1·[::1]): %q", hostPart)
+	}
+	port, err = strconv.Atoi(portPart)
+	if err != nil || port <= 0 || port > 65535 {
+		return 0, false, fmt.Errorf("--listen 포트가 올바르지 않습니다: %q", portPart)
+	}
+	return port, true, nil
 }
 
 func cmdEnroll(args []string) int {
