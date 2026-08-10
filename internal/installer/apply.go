@@ -105,7 +105,7 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 
 	// 장기 설치 자격증명은 OS 키링에만 저장한다. 벤더 설정에는 enrollment 응답의
 	// 교체 가능한 telemetry_token만 기록되어 있다.
-	if err := credential.SaveInstallationToken(&credential.Credential{
+	if err := credential.SaveInstallation(&credential.Credential{
 		InstallationID:    enrollment.InstallationID,
 		InstallationToken: enrollment.InstallationToken,
 	}); err != nil {
@@ -116,7 +116,7 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 	}
 
 	if err := SaveState(opts.StatePath, state); err != nil {
-		_ = credential.DeleteInstallationToken()
+		_ = credential.DeleteInstallation()
 		if rollbackErr := rollback(); rollbackErr != nil {
 			return report, fmt.Errorf("save state: %v; rollback failed: %w", err, rollbackErr)
 		}

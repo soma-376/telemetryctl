@@ -244,7 +244,7 @@ func cmdStatus(_ []string) int {
 // printCredentialStatus 는 키링에 저장된 자격증명의 존재·조회 가능 여부만 표시한다.
 // 토큰 값은 출력하지 않는다 (§4.5).
 func printCredentialStatus() {
-	cred, err := credential.LoadInstallationToken()
+	cred, err := credential.LoadInstallation()
 	switch {
 	case err != nil:
 		fmt.Printf("  자격증명: 읽기 실패 (%v)\n", err)

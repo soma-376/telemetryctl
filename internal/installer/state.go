@@ -8,8 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
+	"github.com/your-org/pulsemetry/internal/config"
 	"github.com/your-org/pulsemetry/internal/contract"
 )
 
@@ -43,16 +43,17 @@ type Target struct {
 }
 
 // SaveState 는 상태를 path 에 0600 으로 기록한다. 상위 디렉터리는 0700 으로 생성한다.
+//
+// 쓰기는 config.AtomicWriteFile 에 맡긴다(임시 파일 → fsync → rename). 데몬이 상태를
+// 자주 갱신하게 되므로, 중간에 죽어도 부분 기록된 state.json 이 남아 설치가 깨지는 일이
+// 없어야 한다. 상위 디렉터리 0700 생성도 AtomicWriteFile 이 함께 처리한다.
 func SaveState(path string, s *State) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
 	b = append(b, '\n')
-	if err := os.WriteFile(path, b, 0o600); err != nil {
+	if err := config.AtomicWriteFile(path, b, 0o600); err != nil {
 		return fmt.Errorf("상태 저장 실패 %s: %w", path, err)
 	}
 	return nil

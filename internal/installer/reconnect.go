@@ -34,7 +34,7 @@ func Reconnect(statePath, serverOverride string) (*Report, error) {
 		return nil, fmt.Errorf("enrollment server URL is missing; pass --server")
 	}
 
-	cred, err := credential.LoadInstallationToken()
+	cred, err := credential.LoadInstallation()
 	if err != nil {
 		return nil, err
 	}
