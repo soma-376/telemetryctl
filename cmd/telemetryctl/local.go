@@ -108,7 +108,7 @@ func runLocalEnable(stdout, stderr io.Writer, target localTarget, portFlag int) 
 		fmt.Fprintln(stdout, "  경고: 기존 설정에서 회사 telemetry token 을 찾지 못했습니다."+
 			" `local disable` 이 되돌리지 못하면 `telemetryctl reconnect` 를 실행하세요.")
 	}
-	warnDaemonNotRunning(stdout, target)
+	warnDaemonNotRunning(stdout, target.DataDir)
 	return 0
 }
 
@@ -172,8 +172,12 @@ func resolveEnablePort(target localTarget, portFlag int) (port int, note string)
 //
 // 이 상태는 텔레메트리가 로컬에도 회사에도 남지 않는 상태다. 계획서 「리스크」 표 1행이
 // 지목한 바로 그 위험이고, 자동 실행 등록이 후속 티켓인 이상 알리는 것이 최선이다.
-func warnDaemonNotRunning(w io.Writer, target localTarget) {
-	running, detail := daemonRunning(target.DataDir)
+//
+// PROJ-45 로 배선이 opt-out 이 되면서 이 경고의 청중이 늘었다 — 이제 `local enable` 을
+// 실행한 사람뿐 아니라 **enroll 한 모든 사람**이 이 상태를 지나간다. 그래서 localTarget
+// 이 아니라 dataDir 만 받는다. enroll 직후에는 아직 localTarget 을 만들 수 없다.
+func warnDaemonNotRunning(w io.Writer, dataDir string) {
+	running, detail := daemonRunning(dataDir)
 	if running {
 		fmt.Fprintln(w, "  데몬: 실행 중 (헬스체크 응답 확인)")
 		return

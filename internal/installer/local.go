@@ -333,6 +333,14 @@ func DisableLocal(opts LocalOptions) (*LocalReport, error) {
 	return report, nil
 }
 
+// localPortOrDefault 는 상태에 적힌 로컬 수신 포트를 돌려준다. 0 이면 기본값이다.
+func localPortOrDefault(state *State) int {
+	if state != nil && state.Local.ListenPort > 0 {
+		return state.Local.ListenPort
+	}
+	return DefaultLocalPort
+}
+
 // loadInstalledState 는 상태 파일을 읽고 재배선이 가능한 설치인지 확인한다.
 func loadInstalledState(statePath string) (*State, error) {
 	if statePath == "" {

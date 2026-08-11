@@ -22,6 +22,7 @@ import (
 	"github.com/your-org/pulsemetry/internal/daemon"
 	"github.com/your-org/pulsemetry/internal/enrollment"
 	"github.com/your-org/pulsemetry/internal/installer"
+	"github.com/your-org/pulsemetry/internal/receiver"
 )
 
 // defaultServer 는 enrollment 서버 URL 의 빌드 기본값이다. 릴리스 빌드에서 주입한다:
@@ -68,7 +69,7 @@ func usage() {
 	fmt.Fprint(os.Stderr, `pulsemetry — Codex·Claude Code OTel 설정 도구
 
 사용법:
-  pulsemetry enroll --invite <code> [--server <url>] [--force]   초대 코드로 등록 후 설정 적용
+  pulsemetry enroll --invite <code> [--server <url>] [--force]   초대 코드로 등록 후 설정 적용 (로컬 파이프라인 자동 배선)
   pulsemetry reconnect [--server <url>]                          저장된 설치 자격증명으로 텔레메트리 토큰 재발급
   pulsemetry status                                              현재 설치·로컬 파이프라인 상태 표시
   pulsemetry daemon [옵션]                                       foreground 데몬 실행
@@ -108,9 +109,17 @@ local 옵션:
   --port <4318>               enable 전용. 재배선이 가리킬 로컬 수신 포트
                               (미지정 시 상태 파일 설정 → 데몬이 실제로 듣는 포트 → 4318)
 
-  local enable 은 Claude Code·Codex 설정의 endpoint 를 http://localhost:<포트> 로 돌리고
-  프롬프트·tool details 수집을 강제로 켭니다. 회사로 나가는 데이터는 그대로입니다 —
-  데몬이 manifest Privacy 기준으로 제거한 뒤 전달합니다. local disable 로 정확히 되돌립니다.
+  로컬 파이프라인은 enroll 시 자동으로 배선됩니다 (기본 켜짐). 끄려면 local disable 입니다.
+
+  배선되면 Claude Code·Codex 설정의 endpoint 가 http://localhost:<포트> 로 바뀌고 수집이
+  전부 켜집니다 (응답 원문 제외). 회사로 나가는 데이터는 그대로입니다 — 데몬이 manifest 의
+  signals·privacy 기준으로 걸러서 전달합니다.
+
+  local enable 은 이미 켜진 설치를 다시 배선할 때 씁니다 — 데몬이 포트 폴백을 했거나,
+  예전에 disable 한 설치를 되돌릴 때입니다.
+
+  주의: 배선된 상태에서 데몬이 떠 있지 않으면 텔레메트리가 로컬에도 회사에도 남지 않습니다.
+        pulsemetry daemon 을 실행하세요 (자동 실행 등록은 후속 티켓입니다).
 
 stats·sessions·purge·local·status 공통:
   --data-dir <경로>           데이터 디렉터리 (미지정 시 상태 파일 설정 → ~/.pulsemetry)
@@ -242,6 +251,19 @@ func cmdEnroll(args []string) int {
 		return 1
 	}
 	opts.ServerURL = srv
+
+	// 로컬 파이프라인은 기본으로 배선된다 (PROJ-45, ADR 0006). 토큰을 얻지 못해도 enroll 을
+	// 실패시키지 않는다 — 이것은 한 줄 설치 부트스트랩이 타는 경로라, 키링을 못 여는 환경
+	// (헤드리스 CI·잠긴 키링)에서 설치 자체가 막히는 편이 훨씬 나쁘다. 회사 직결로
+	// 강등하고 사실을 알린다.
+	opts.IngestToken, err = receiver.EnsureToken()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "경고: 로컬 ingest 토큰을 얻지 못했습니다:", err)
+		fmt.Fprintln(os.Stderr, "      회사 Collector 직결로 설치합니다."+
+			" 나중에 `telemetryctl local enable` 로 로컬 파이프라인을 켤 수 있습니다.")
+		opts.IngestToken = ""
+	}
+
 	rep, err := installer.Apply(enr, opts)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "설정 적용 실패:", err)
@@ -252,7 +274,40 @@ func cmdEnroll(args []string) int {
 	} else {
 		printReport(rep)
 	}
+	printEnrollLocalStatus(os.Stdout, rep, enr)
 	return 0
+}
+
+// printEnrollLocalStatus 는 enroll 이 로컬로 배선했는지와 지금 무엇이 필요한지를 알린다.
+//
+// **데몬이 떠 있지 않은 채 배선된 상태는 텔레메트리가 통째로 사라지는 상태다.** opt-in
+// 시절에는 `local enable` 을 친 사람만 그 상태를 지나갔지만, 이제는 enroll 한 모든 사람이
+// 지나간다. 자동 실행 등록이 후속 티켓인 이상 크게 알리는 것이 지금 할 수 있는 최선이다.
+func printEnrollLocalStatus(w io.Writer, rep *installer.Report, enr *contract.Enrollment) {
+	if !rep.LocalEnabled {
+		if enr.Manifest.OTLP.Protocol == "grpc" {
+			fmt.Fprintln(w, "  로컬 파이프라인: 배선하지 않음 —"+
+				" 회사 manifest 가 grpc 라 상위 전달을 아직 지원하지 않습니다.")
+			fmt.Fprintf(w, "                   회사 Collector 직결로 설치했습니다 (%s).\n", rep.Endpoint)
+		}
+		return
+	}
+
+	fmt.Fprintf(w, "  로컬 파이프라인: 켜짐 · endpoint=%s\n", rep.Endpoint)
+	fmt.Fprintln(w, "  원문·tool details 는 로컬 수집을 위해 켰습니다."+
+		" 회사로는 manifest 의 signals·privacy 기준으로 걸러서 전달합니다.")
+	fmt.Fprintln(w, "  Authorization: 로컬 ingest 토큰 (OS 키링) —"+
+		" 회사 telemetry token 은 키링으로 대피시켰습니다.")
+	fmt.Fprintln(w, "  되돌리려면 `telemetryctl local disable` 입니다.")
+
+	// 방금 Apply 가 쓴 상태 파일에서 데이터 디렉터리를 얻는다.
+	target, err := resolveLocalTarget("", "")
+	if err != nil {
+		fmt.Fprintln(w, "  경고: 데몬 상태를 확인하지 못했습니다:", err)
+		fmt.Fprintln(w, "        `telemetryctl daemon` 을 실행하세요.")
+		return
+	}
+	warnDaemonNotRunning(w, target.DataDir)
 }
 
 func cmdReconnect(args []string) int {
@@ -280,6 +335,14 @@ func cmdReconnect(args []string) int {
 		return 1
 	}
 	fmt.Printf("재연결 완료 · installation_id=%s\n", rep.InstallationID)
+	if rep.LocalEnabled {
+		// 벤더 설정을 건드리지 않은 것이 정상이다. 목록이 비어 있는 이유를 말하지 않으면
+		// 사용자는 재연결이 절반만 됐다고 오해한다.
+		fmt.Printf("  로컬 파이프라인이 켜져 있어 벤더 설정은 그대로 둡니다 (%s).\n", rep.Endpoint)
+		fmt.Println("  새 회사 telemetry token 은 키링 대피본에만 갱신했습니다 —" +
+			" `telemetryctl local disable` 이 그 값으로 되돌립니다.")
+		return 0
+	}
 	for _, target := range rep.Targets {
 		fmt.Printf("  - %s\n", target.Path)
 	}
