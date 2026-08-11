@@ -1,0 +1,47 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "claude-code" } },
+          { "key": "session.id", "value": { "stringValue": "5f3a9c21-8e44-4bb0-9d1e-2a7c6b0f1234" } }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": { "name": "com.anthropic.claude_code.events" },
+          "logRecords": [
+            {
+              "timeUnixNano": "1786353300000000000",
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "claude_code.user_prompt" } },
+                { "key": "prompt_length", "value": { "intValue": "12" } }
+              ]
+            },
+            {
+              "timeUnixNano": "1786353301000000000",
+              "severityText": "INFO",
+              "attributes": [
+                { "key": "prompt_length", "value": { "intValue": "12" } }
+              ]
+            },
+            {
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "claude_code.tool_result" } },
+                { "key": "tool_name", "value": { "stringValue": "Read" } }
+              ]
+            },
+            {
+              "timeUnixNano": "1786353303000000000",
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "claude_code.tool_result" } },
+                { "key": "tool_name", "value": { "stringValue": "Read" } },
+                { "key": "success", "value": { "boolValue": true } }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

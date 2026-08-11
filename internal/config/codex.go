@@ -24,12 +24,19 @@ func codexOTelTable(m *contract.Manifest, token string) (map[string]any, error) 
 		environment = value
 	}
 
+	// 로컬 수신기는 bearer 토큰만으로 통과시키지 않는다 — localheader.go 참고.
+	// TOML 은 헤더가 원래 표라서 claude 쪽처럼 문자열을 조립할 필요가 없다.
+	headers := map[string]any{
+		"Authorization": "Bearer " + token,
+	}
+	if isLocalEndpoint(m.OTLP.Endpoint) {
+		headers[LocalIngestHeader] = LocalIngestHeaderValue
+	}
+
 	exporterID := ""
 	exporter := map[string]any{
 		"endpoint": m.OTLP.Endpoint,
-		"headers": map[string]any{
-			"Authorization": "Bearer " + token,
-		},
+		"headers":  headers,
 	}
 	switch m.OTLP.Protocol {
 	case "http/protobuf":

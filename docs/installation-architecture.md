@@ -477,10 +477,21 @@ Codex / Claude Code
 이 구조에서는 Codex와 Claude Code 설정에 장기 토큰 대신 로컬 endpoint만 들어간다.
 
 ```text
-http://127.0.0.1:4318
+http://localhost:4318
 ```
 
+> **주의 (PROJ-36).** 이 절의 초안은 위 주소를 `http://127.0.0.1:4318` 로 적었으나 **그 표기는 쓸 수 없다.**
+> `internal/contract/manifest.go` 의 `validOTLPEndpoint` 와 `contracts/enrollment-manifest.schema.json`
+> 은 `http://` 를 리터럴 호스트 `localhost` 에만 허용하므로 `127.0.0.1` 은 manifest 검증에서 거부된다.
+> 실제 구현은 벤더 설정에 `http://localhost:<port>` 를 쓰고, 수신기가 `127.0.0.1` 과 `[::1]` 두 리스너를
+> 하나의 서버에 문다(`localhost` 가 `::1` 로 풀리는 환경이 있기 때문). 자세한 내용은
+> [로컬 파이프라인 문서](local-pipeline.md) 7.3절과 [ADR 0001](adr/0001-로컬-OTLP-수신기-인라인-프록시-토폴로지.md)을 보라.
+
 다만 로컬 agent는 설치, 업데이트, 자동 실행, 장애 복구, 보안 관리가 추가되므로 MVP에는 과할 수 있다.
+
+> **PROJ-36 이후.** 이 「제품화 이후」 항목은 더 이상 미래형이 아니다. `telemetryctl daemon` 이 로컬
+> 수신기를 띄우고 `telemetryctl local enable` 이 opt-in 으로 재배선한다(기본 OFF). 자동 실행 등록만
+> 후속 티켓으로 남아 있다.
 
 ---
 

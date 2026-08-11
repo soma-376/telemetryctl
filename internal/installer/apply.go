@@ -50,6 +50,9 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 		InstallerVersion:   Version,
 		InstalledAt:        time.Now().UTC().Format(time.RFC3339),
 		Manifest:           *manifest,
+		// 새 설치도 Local 블록을 명시적 기본값으로 갖는다. 3→4 마이그레이션과 같은
+		// 값이라야 "새로 깐 사람"과 "업그레이드한 사람"이 같은 동작을 본다.
+		Local: DefaultLocal(),
 	}
 
 	steps := []applyStep{
@@ -105,7 +108,7 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 
 	// 장기 설치 자격증명은 OS 키링에만 저장한다. 벤더 설정에는 enrollment 응답의
 	// 교체 가능한 telemetry_token만 기록되어 있다.
-	if err := credential.SaveInstallationToken(&credential.Credential{
+	if err := credential.SaveInstallation(&credential.Credential{
 		InstallationID:    enrollment.InstallationID,
 		InstallationToken: enrollment.InstallationToken,
 	}); err != nil {
@@ -116,7 +119,7 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 	}
 
 	if err := SaveState(opts.StatePath, state); err != nil {
-		_ = credential.DeleteInstallationToken()
+		_ = credential.DeleteInstallation()
 		if rollbackErr := rollback(); rollbackErr != nil {
 			return report, fmt.Errorf("save state: %v; rollback failed: %w", err, rollbackErr)
 		}

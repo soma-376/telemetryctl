@@ -1,0 +1,49 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "claude-code" } },
+          { "key": "session.id", "value": { "stringValue": "5f3a9c21-8e44-4bb0-9d1e-2a7c6b0f1234" } }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": { "name": "com.anthropic.claude_code" },
+          "metrics": [
+            {
+              "name": "claude_code.lines_of_code.count",
+              "unit": "count",
+              "sum": {
+                "aggregationTemporality": "AGGREGATION_TEMPORALITY_DELTA",
+                "isMonotonic": true,
+                "dataPoints": [
+                  {
+                    "timeUnixNano": "1786353300000000000",
+                    "asInt": "42",
+                    "attributes": [{ "key": "type", "value": { "stringValue": "added" } }]
+                  },
+                  {
+                    "asInt": "17",
+                    "attributes": [{ "key": "type", "value": { "stringValue": "removed" } }]
+                  }
+                ]
+              }
+            },
+            {
+              "name": "",
+              "unit": "count",
+              "sum": {
+                "aggregationTemporality": "AGGREGATION_TEMPORALITY_DELTA",
+                "isMonotonic": true,
+                "dataPoints": [
+                  { "timeUnixNano": "1786353300000000000", "asInt": "9", "attributes": [] }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
