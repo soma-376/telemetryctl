@@ -48,6 +48,7 @@ type upstream struct {
 	bodies [][]byte
 	types  []string
 	auth   []string
+	paths  []string
 }
 
 func newUpstream(t *testing.T) *upstream {
@@ -59,6 +60,7 @@ func newUpstream(t *testing.T) *upstream {
 		u.bodies = append(u.bodies, body)
 		u.types = append(u.types, r.Header.Get("Content-Type"))
 		u.auth = append(u.auth, r.Header.Get("Authorization"))
+		u.paths = append(u.paths, r.URL.Path)
 		u.mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -82,6 +84,14 @@ func (u *upstream) authHeaders() []string {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return append([]string(nil), u.auth...)
+}
+
+// receivedPaths 는 상위가 실제로 받은 경로들이다. 시그널 게이팅을 볼 때 쓴다 —
+// 본문만 보면 "전달되지 않았다" 와 "전달됐는데 내용이 비었다" 를 구분할 수 없다.
+func (u *upstream) receivedPaths() []string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return append([]string(nil), u.paths...)
 }
 
 // syncBuffer 는 로거 출력을 테스트에서 안전하게 읽기 위한 버퍼다.
