@@ -2,12 +2,14 @@ package installer
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/BurntSushi/toml"
 	"github.com/zalando/go-keyring"
 
 	"github.com/your-org/pulsemetry/internal/contract"
@@ -39,22 +41,25 @@ func httpManifest() contract.Manifest {
 }
 
 // ---------------------------------------------------------------------------
-// localManifest — 이 단계의 가장 중요한 불변식
+// localProfile — 이 단계의 가장 중요한 불변식
 // ---------------------------------------------------------------------------
 
-// TestLocalManifestDoesNotMutateCompany 는 로컬 사본을 만든 뒤 회사 manifest 원본이
+// TestLocalManifestDoesNotMutateCompany 는 고정 프로필을 만든 뒤 회사 manifest 원본이
 // 한 글자도 바뀌지 않았음을 단언한다.
 //
-// 이것이 이 티켓 전체에서 가장 중요한 테스트다. 회사 manifest 는 포워더가 "무엇을 지우고
-// 보낼지" 판단하는 진실원이라, 여기서 Privacy 플래그가 켜지면 포워더가 프롬프트 원문을
-// 그대로 회사로 보낸다 (ADR 0003 위반).
+// 이것이 이 티켓 전체에서 가장 중요한 테스트다. 회사 manifest 는 포워더가 "무엇을 보내고
+// 무엇을 지울지" 판단하는 진실원이라, 여기서 Privacy 플래그나 Signals 가 켜지면 포워더가
+// 프롬프트 원문과 회사가 끈 시그널을 그대로 회사로 보낸다 (ADR 0003 위반).
+//
+// PROJ-45 로 프로필이 회사 값을 거의 다 덮게 되면서 오염 위험이 오히려 커졌다 —
+// 예전에는 두 필드만 건드렸지만 지금은 Signals·Privacy 를 통째로 대입한다.
 func TestLocalManifestDoesNotMutateCompany(t *testing.T) {
 	company := httpManifest()
 	before := httpManifest()
 
-	local, err := localManifest(&company, 4318)
+	local, err := localProfile(&company, 4318)
 	if err != nil {
-		t.Fatalf("localManifest: %v", err)
+		t.Fatalf("localProfile: %v", err)
 	}
 
 	if company.Privacy != before.Privacy {
@@ -79,30 +84,93 @@ func TestLocalManifestDoesNotMutateCompany(t *testing.T) {
 	}
 }
 
-// TestLocalManifestForcesContentGates 는 계획서 §2 의 강제를 못박는다.
+// TestLocalManifestForcesContentGates 는 로컬 수집 강제를 못박는다 (PROJ-45 참고 자료).
+//
+// 상위로 나가는 데이터가 늘지 않는 것은 이제 여기서 보장하지 않는다 — forward 의
+// signals 게이팅과 Scrub 이 보장하고, 그쪽 테스트가 그것을 지킨다.
 func TestLocalManifestForcesContentGates(t *testing.T) {
 	company := httpManifest()
-	local, err := localManifest(&company, 4319)
+	local, err := localProfile(&company, 4319)
 	if err != nil {
-		t.Fatalf("localManifest: %v", err)
+		t.Fatalf("localProfile: %v", err)
 	}
 
-	if !local.Privacy.CollectUserPrompts {
-		t.Error("collect_user_prompts 가 강제되지 않았다 — 작업 제목·요약을 만들 수 없다")
+	wantPrivacy := contract.Privacy{
+		CollectUserPrompts:        true,
+		CollectAssistantResponses: false,
+		CollectToolDetails:        true,
+		CollectToolContent:        true,
+		CollectRawAPIBodies:       true,
+		CollectUserEmail:          company.Privacy.CollectUserEmail,
 	}
-	if !local.Privacy.CollectToolDetails {
-		t.Error("collect_tool_details 가 강제되지 않았다 — 파일 변경 목록·툴 타임라인을 만들 수 없다")
+	if local.Privacy != wantPrivacy {
+		t.Errorf("Privacy = %+v, want %+v", local.Privacy, wantPrivacy)
 	}
 
-	// 강제 대상이 아닌 것은 회사 값을 그대로 따라야 한다. 여기서 하나라도 켜지면
-	// 회사로 나가는 데이터가 재배선 전후로 달라진다.
-	if local.Privacy.CollectAssistantResponses || local.Privacy.CollectToolContent ||
-		local.Privacy.CollectRawAPIBodies || local.Privacy.CollectUserEmail {
-		t.Errorf("강제 대상이 아닌 Privacy 항목이 켜졌다: %+v", local.Privacy)
+	// 시그널은 회사 값과 무관하게 전부 켠다. 회사가 traces 를 껐어도 로컬은 받아야
+	// 툴 타임라인이 만들어진다 — 상위로 새 나가지 않는 것은 forward 가 책임진다.
+	wantSignals := contract.Signals{Logs: true, Metrics: true, Traces: true}
+	if local.Signals != wantSignals {
+		t.Errorf("Signals = %+v, want %+v", local.Signals, wantSignals)
 	}
-	if local.Signals != company.Signals {
-		t.Errorf("Signals 가 바뀌었다: %+v, want %+v — 회사가 끈 시그널을 새로 보내면 안 된다",
-			local.Signals, company.Signals)
+	if company.Signals.Traces {
+		t.Fatal("픽스처 전제가 깨졌다: 회사 manifest 의 traces 가 꺼져 있어야 이 테스트가 의미가 있다")
+	}
+}
+
+// TestLocalProfile은회사manifest와무관하게고정이다 는 PROJ-45 의 핵심 주장을 검증한다.
+//
+// 전혀 다른 두 회사 manifest 에서 출발해도 벤더 설정에 닿는 필드가 전부 같아야 한다.
+// 하나라도 회사 값이 새어 나오면 "회사가 수집 범위를 좁히면 로컬 기능도 함께 죽는다"는
+// 옛 동작이 그 필드를 통해 되살아난다.
+func TestLocalProfile은회사manifest와무관하게고정이다(t *testing.T) {
+	narrow := httpManifest()
+	narrow.OTLP.Protocol = "http/json"
+	narrow.OTLP.Compression = "zstd"
+	narrow.OTLP.TimeoutMS = 100
+	narrow.Signals = contract.Signals{}
+	narrow.Privacy = contract.Privacy{}
+
+	wide := httpManifest()
+	wide.OTLP.Endpoint = "https://other.example.com"
+	wide.OTLP.Compression = ""
+	wide.Signals = contract.Signals{Logs: true, Metrics: true, Traces: true}
+	wide.Privacy = contract.Privacy{
+		CollectUserPrompts:        true,
+		CollectAssistantResponses: true,
+		CollectToolDetails:        true,
+		CollectToolContent:        true,
+		CollectRawAPIBodies:       true,
+	}
+
+	a, err := localProfile(&narrow, DefaultLocalPort)
+	if err != nil {
+		t.Fatalf("localProfile(narrow): %v", err)
+	}
+	b, err := localProfile(&wide, DefaultLocalPort)
+	if err != nil {
+		t.Fatalf("localProfile(wide): %v", err)
+	}
+
+	// TimeoutMS 는 비교하지 않는다 — 어느 벤더 설정에도 쓰이지 않으므로 회사 값이
+	// 남아 있어도 settings.json 에 나타날 자리가 없다 (CollectUserEmail 과 같은 부류).
+	if a.OTLP.Endpoint != b.OTLP.Endpoint ||
+		a.OTLP.Protocol != b.OTLP.Protocol ||
+		a.OTLP.Compression != b.OTLP.Compression {
+		t.Errorf("OTLP 가 회사 manifest 에 따라 달라졌다: %+v vs %+v", a.OTLP, b.OTLP)
+	}
+	if a.Signals != b.Signals {
+		t.Errorf("Signals 가 회사 manifest 에 따라 달라졌다: %+v vs %+v", a.Signals, b.Signals)
+	}
+	// CollectUserEmail 만 회사 값을 따른다 (어느 벤더 설정에도 쓰이지 않는다).
+	// 나머지 다섯 항목은 반드시 같아야 한다.
+	if a.Privacy.CollectUserEmail != narrow.Privacy.CollectUserEmail {
+		t.Errorf("CollectUserEmail 은 회사 값을 따라야 한다: %v", a.Privacy.CollectUserEmail)
+	}
+	a.Privacy.CollectUserEmail = false
+	b.Privacy.CollectUserEmail = false
+	if a.Privacy != b.Privacy {
+		t.Errorf("Privacy 가 회사 manifest 에 따라 달라졌다: %+v vs %+v", a.Privacy, b.Privacy)
 	}
 }
 
@@ -123,7 +191,7 @@ func TestLocalManifestEndpoint(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			company := httpManifest()
-			local, err := localManifest(&company, tt.port)
+			local, err := localProfile(&company, tt.port)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("포트 %d 가 통과했다", tt.port)
@@ -131,7 +199,7 @@ func TestLocalManifestEndpoint(t *testing.T) {
 				return
 			}
 			if err != nil {
-				t.Fatalf("localManifest: %v", err)
+				t.Fatalf("localProfile: %v", err)
 			}
 			if local.OTLP.Endpoint != tt.endpoint {
 				t.Errorf("endpoint = %q, want %q", local.OTLP.Endpoint, tt.endpoint)
@@ -151,36 +219,51 @@ func TestLocalManifestEndpoint(t *testing.T) {
 func TestLocalManifestRejectsGRPC(t *testing.T) {
 	company := httpManifest()
 	company.OTLP.Protocol = "grpc"
-	if _, err := localManifest(&company, DefaultLocalPort); !errors.Is(err, ErrGRPCUnsupported) {
+	if _, err := localProfile(&company, DefaultLocalPort); !errors.Is(err, ErrGRPCUnsupported) {
 		t.Fatalf("오류 = %v, want ErrGRPCUnsupported", err)
 	}
 }
 
-// TestLocalManifestClearsUnsupportedCompression 은 수신기가 풀 수 없는 압축을 로컬
-// 구간에서만 끄는지 본다. 그대로 두면 모든 배치가 415 로 조용히 사라진다.
+// TestLocalManifestClearsUnsupportedCompression 은 압축을 **언제나** 끄는지 본다.
+//
+// 참고 자료의 고정 설정에 OTEL_EXPORTER_OTLP_COMPRESSION 키가 없다 (PROJ-45). 회사가
+// 무엇을 지정했든 로컬 구간은 압축 없이 보낸다 — 수신기가 푸는 것은 identity 와 gzip 뿐이라
+// 그 밖의 값을 그대로 두면 모든 배치가 415 로 조용히 사라진다. gzip 까지 끄는 것은 loopback
+// 구간에서 압축이 벌어 주는 것이 없기 때문이다.
 func TestLocalManifestClearsUnsupportedCompression(t *testing.T) {
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{name: "gzip 은 유지", in: "gzip", want: "gzip"},
-		{name: "빈 값은 유지", in: "", want: ""},
-		{name: "zstd 는 로컬에서 끔", in: "zstd", want: ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, in := range []string{"gzip", "", "zstd"} {
+		t.Run("회사 압축 "+in, func(t *testing.T) {
 			company := httpManifest()
-			company.OTLP.Compression = tt.in
-			local, err := localManifest(&company, DefaultLocalPort)
+			company.OTLP.Compression = in
+			local, err := localProfile(&company, DefaultLocalPort)
 			if err != nil {
-				t.Fatalf("localManifest: %v", err)
+				t.Fatalf("localProfile: %v", err)
 			}
-			if local.OTLP.Compression != tt.want {
-				t.Errorf("compression = %q, want %q", local.OTLP.Compression, tt.want)
+			if local.OTLP.Compression != "" {
+				t.Errorf("compression = %q, want 빈 값", local.OTLP.Compression)
 			}
-			if company.OTLP.Compression != tt.in {
+			if company.OTLP.Compression != in {
 				t.Errorf("회사 manifest 의 compression 이 바뀌었다: %q", company.OTLP.Compression)
+			}
+		})
+	}
+}
+
+// TestLocalProfile은프로토콜을고정한다 — 회사가 http/json 이어도 로컬은 protobuf 다.
+func TestLocalProfile은프로토콜을고정한다(t *testing.T) {
+	for _, in := range []string{"http/protobuf", "http/json"} {
+		t.Run("회사 프로토콜 "+in, func(t *testing.T) {
+			company := httpManifest()
+			company.OTLP.Protocol = in
+			local, err := localProfile(&company, DefaultLocalPort)
+			if err != nil {
+				t.Fatalf("localProfile: %v", err)
+			}
+			if local.OTLP.Protocol != "http/protobuf" {
+				t.Errorf("protocol = %q, want http/protobuf", local.OTLP.Protocol)
+			}
+			if company.OTLP.Protocol != in {
+				t.Errorf("회사 manifest 의 protocol 이 바뀌었다: %q", company.OTLP.Protocol)
 			}
 		})
 	}
@@ -302,6 +385,135 @@ func TestEnableDisableRoundTripRestoresConfigs(t *testing.T) {
 	}
 }
 
+// TestEnable이쓴Claude설정이참고자료와정확히일치한다 는 PROJ-45 의 완료 판정 기준이다.
+//
+// 부분 문자열이 아니라 **키 집합 전체**를 비교한다. 누락도 초과도 실패다 — 티켓 참고 자료가
+// "고정되는 OTel 설정 값" 이라고 말한 이상, 우리가 하나를 더 넣는 것도 명세 위반이다.
+// 회사 manifest 는 픽스처대로 Privacy 전부 false·traces 꺼짐인데도 아래 표와 같아야 한다.
+func TestEnable이쓴Claude설정이참고자료와정확히일치한다(t *testing.T) {
+	f := newLocalFixture(t, httpManifest())
+	if _, err := EnableLocal(f.options()); err != nil {
+		t.Fatalf("EnableLocal: %v", err)
+	}
+
+	var root struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(mustRead(t, f.claudePath), &root); err != nil {
+		t.Fatalf("settings.json 파싱: %v", err)
+	}
+
+	want := map[string]string{
+		"CLAUDE_CODE_ENABLE_TELEMETRY":                      "1",
+		"CLAUDE_CODE_ENHANCED_TELEMETRY_BETA":               "1",
+		"OTEL_EXPORTER_OTLP_ENDPOINT":                       "http://localhost:4318",
+		"OTEL_EXPORTER_OTLP_HEADERS":                        "Authorization=Bearer " + ingestToken + ",X-Pulsemetry-Local=1",
+		"OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": "delta",
+		"OTEL_EXPORTER_OTLP_PROTOCOL":                       "http/protobuf",
+		"OTEL_LOGS_EXPORTER":                                "otlp",
+		"OTEL_LOGS_EXPORT_INTERVAL":                         "5000",
+		"OTEL_LOG_ASSISTANT_RESPONSES":                      "0",
+		"OTEL_LOG_RAW_API_BODIES":                           "1",
+		"OTEL_LOG_TOOL_CONTENT":                             "1",
+		"OTEL_LOG_TOOL_DETAILS":                             "1",
+		"OTEL_LOG_USER_PROMPTS":                             "1",
+		"OTEL_METRICS_EXPORTER":                             "otlp",
+		"OTEL_METRIC_EXPORT_INTERVAL":                       "60000",
+		"OTEL_TRACES_EXPORTER":                              "otlp",
+		"OTEL_TRACES_EXPORT_INTERVAL":                       "5000",
+	}
+
+	// 사용자가 직접 넣은 키는 우리 소관이 아니므로 비교에서 뺀다 (픽스처가 심어 둔다).
+	got := make(map[string]string, len(root.Env))
+	for k, v := range root.Env {
+		if k == "MY_OWN_KEY" {
+			continue
+		}
+		got[k] = v
+	}
+
+	for k, wantV := range want {
+		gotV, ok := got[k]
+		if !ok {
+			t.Errorf("참고 자료의 %s 가 없다", k)
+			continue
+		}
+		if gotV != wantV {
+			t.Errorf("%s = %q, want %q", k, gotV, wantV)
+		}
+		delete(got, k)
+	}
+	for k, v := range got {
+		t.Errorf("참고 자료에 없는 키를 썼다: %s = %q", k, v)
+	}
+
+	// 압축 키는 참고 자료에 없다. localProfile 이 압축을 비우므로 자동으로 빠져야 한다.
+	if _, ok := root.Env["OTEL_EXPORTER_OTLP_COMPRESSION"]; ok {
+		t.Error("OTEL_EXPORTER_OTLP_COMPRESSION 이 로컬 설정에 있다 — 참고 자료에는 없다")
+	}
+}
+
+// TestEnable이쓴Codex설정이참고자료와정확히일치한다 는 exporter 3종과 시그널별 경로를 본다.
+//
+// Codex 는 base endpoint 를 주면 경로를 스스로 붙이지 않는다. exporter 하나만 두면
+// 메트릭·트레이스가 /v1/logs 로 가고 수신기가 전부 거부한다.
+func TestEnable이쓴Codex설정이참고자료와정확히일치한다(t *testing.T) {
+	f := newLocalFixture(t, httpManifest())
+	if _, err := EnableLocal(f.options()); err != nil {
+		t.Fatalf("EnableLocal: %v", err)
+	}
+
+	var root map[string]any
+	if err := toml.Unmarshal(mustRead(t, f.codexPath), &root); err != nil {
+		t.Fatalf("config.toml 파싱: %v", err)
+	}
+	otel, _ := root["otel"].(map[string]any)
+	if otel == nil {
+		t.Fatal("[otel] 표가 없다")
+	}
+
+	// 로컬에서도 environment 는 회사 manifest 의 resource_attributes 에서 파생한다
+	// (PROJ-45 결정). 벤더 출력에서 회사 값이 살아남는 유일한 자리다.
+	if got := otel["environment"]; got != "production" {
+		t.Errorf("environment = %v, want production (manifest 파생)", got)
+	}
+	// 로컬 프로필이 프롬프트 수집을 켜므로 Claude 의 OTEL_LOG_USER_PROMPTS=1 과 대칭이다.
+	if got := otel["log_user_prompt"]; got != true {
+		t.Errorf("log_user_prompt = %v, want true", got)
+	}
+
+	for _, tc := range []struct{ table, path string }{
+		{"exporter", "/v1/logs"},
+		{"metrics_exporter", "/v1/metrics"},
+		{"trace_exporter", "/v1/traces"},
+	} {
+		t.Run(tc.table, func(t *testing.T) {
+			outer, _ := otel[tc.table].(map[string]any)
+			if outer == nil {
+				t.Fatalf("[otel.%s] 표가 없다 — 이 시그널은 수신기에 닿지 못한다", tc.table)
+			}
+			exporter, _ := outer["otlp-http"].(map[string]any)
+			if exporter == nil {
+				t.Fatalf("[otel.%s.otlp-http] 표가 없다", tc.table)
+			}
+			if got, want := exporter["endpoint"], "http://localhost:4318"+tc.path; got != want {
+				t.Errorf("endpoint = %v, want %v", got, want)
+			}
+			if got := exporter["protocol"]; got != "binary" {
+				t.Errorf("protocol = %v, want binary", got)
+			}
+			headers, _ := exporter["headers"].(map[string]any)
+			if got := headers["Authorization"]; got != "Bearer "+ingestToken {
+				t.Errorf("Authorization = %v", got)
+			}
+			// 이 헤더가 빠지면 수신기의 3중 인증에서 전량 401 이다 (receiver/auth.go).
+			if got := headers["X-Pulsemetry-Local"]; got != "1" {
+				t.Errorf("X-Pulsemetry-Local = %v, want 1", got)
+			}
+		})
+	}
+}
+
 // TestEnableRewiresVendorConfigs 는 벤더 설정에 실제로 무엇이 적히는지 확인한다.
 func TestEnableRewiresVendorConfigs(t *testing.T) {
 	f := newLocalFixture(t, httpManifest())
@@ -322,11 +534,19 @@ func TestEnableRewiresVendorConfigs(t *testing.T) {
 		// 로컬 수신기의 3중 인증은 토큰과 X-Pulsemetry-Local 을 AND 로 묶는다
 		// (receiver/auth.go). 둘째 쌍이 빠지면 모든 배치가 401 로 사라진다.
 		`"OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer ` + ingestToken + `,X-Pulsemetry-Local=1"`,
+		// 로컬 수집은 회사 Privacy 와 무관하게 고정이다 (PROJ-45 참고 자료).
+		// 픽스처의 회사 manifest 는 Privacy 가 전부 false 인데도 아래 넷이 1 이어야 한다 —
+		// 회사로 나가는 것은 forward 가 다시 거른다.
 		`"OTEL_LOG_USER_PROMPTS": "1"`,
 		`"OTEL_LOG_TOOL_DETAILS": "1"`,
+		`"OTEL_LOG_TOOL_CONTENT": "1"`,
+		`"OTEL_LOG_RAW_API_BODIES": "1"`,
+		// 응답 원문만 끈다. 로컬 파이프라인이 쓰지 않으면서 배치만 키운다.
 		`"OTEL_LOG_ASSISTANT_RESPONSES": "0"`,
-		`"OTEL_LOG_TOOL_CONTENT": "0"`,
-		`"OTEL_LOG_RAW_API_BODIES": "0"`,
+		// 회사가 traces 를 껐어도 로컬은 받는다.
+		`"OTEL_TRACES_EXPORTER": "otlp"`,
+		`"OTEL_TRACES_EXPORT_INTERVAL": "5000"`,
+		`"CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1"`,
 		`"OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": "delta"`,
 		`"OTEL_METRIC_EXPORT_INTERVAL"`,
 		`"OTEL_LOGS_EXPORT_INTERVAL"`,

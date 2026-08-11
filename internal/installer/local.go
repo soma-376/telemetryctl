@@ -1,18 +1,26 @@
 package installer
 
-// 로컬 endpoint 재배선 opt-in (PROJ-36 12단계).
+// 로컬 endpoint 재배선 (PROJ-36 12단계, PROJ-45 로 opt-out 전환).
 //
 // 이 파일은 이 저장소에서 **처음으로 기존 사용자 설정을 바꾸는 코드**다. 0~11단계는
 // 한 글자도 건드리지 않았다. 그래서 여기서 지키는 불변식이 유난히 많다.
 //
 // # 불변식 1 — 회사로 나가는 데이터는 재배선 전후로 동일하다
 //
-// 재배선은 벤더 설정에서 OTEL_LOG_USER_PROMPTS·OTEL_LOG_TOOL_DETAILS 를 1 로 강제한다
-// (ADR 0003). 그러지 않으면 작업 제목·파일 변경 목록·툴 타임라인이 만들어지지 않는다.
-// 이 강제가 안전한 이유는 오직 하나 — **포워더가 회사 manifest 의 Privacy 기준으로
-// 제거한 뒤 상위로 보내기 때문**이다 (internal/forward). 그 전제가 성립하려면 회사
-// manifest 원본이 절대 오염되지 않아야 한다. localManifest 가 깊은 사본을 만드는 것도,
-// 이 파일이 state.Manifest 를 포인터로 넘기지 않는 것도 전부 그 하나 때문이다.
+// 재배선은 벤더 설정을 회사 manifest 와 무관한 **고정 프로필**로 덮는다 (PROJ-45,
+// ADR 0006). 시그널 셋을 전부 켜고 원문·tool details·raw API body 수집도 켠다. 그러지
+// 않으면 작업 제목·파일 변경 목록·툴 타임라인이 만들어지지 않고, 회사가 수집 범위를
+// 좁히는 순간 로컬 기능까지 함께 죽는다 (ADR 0003).
+//
+// 이 강제가 안전한 이유는 오직 하나 — **포워더가 회사 manifest 기준으로 걸러 상위로
+// 보내기 때문**이다 (internal/forward). 거기서 두 축이 함께 집행된다.
+//
+//	Signals — 회사가 끈 시그널은 Enqueue 가 큐에 넣지 않는다.
+//	Privacy — 회사가 금지한 원문은 Scrub 이 지운 뒤 보낸다.
+//
+// 그 전제가 성립하려면 회사 manifest 원본이 절대 오염되지 않아야 한다. localProfile 이
+// 깊은 사본을 만드는 것도, 이 파일이 state.Manifest 를 포인터로 넘기지 않는 것도 전부
+// 그 하나 때문이다. 포워더에 고정 프로필을 넘기면 두 집행이 통째로 무력화된다.
 //
 // # 불변식 2 — 127.0.0.1 은 쓰지 않는다
 //
@@ -25,7 +33,14 @@ package installer
 // MergeClaude·MergeCodex 는 관리 키를 전부 지우고 (manifest, token) 으로 다시 쓰는
 // 권위적 병합이다. 따라서 같은 (회사 manifest, 회사 token) 을 다시 넣으면 결과는
 // 재배선 전과 바이트 단위로 같다. 회사 manifest 는 state.json 에 있고, 회사 token 은
-// enable 이 키링(credential.AccountTelemetry)으로 대피시켜 둔다.
+// 키링(credential.AccountTelemetry)에 대피해 둔다 — enroll 이 응답에서 직접 넣거나
+// (apply.go), 회사 직결 설치에서 켤 때 stashTelemetryToken 이 벤더 파일에서 되읽는다.
+//
+// 여기서 말하는 "같다"는 **결정론**이지 버전 간 동일성이 아니다. 관리 키 목록이 늘면
+// 되돌린 파일에 그 키가 새로 나타난다 (PROJ-45 의 OTEL_TRACES_EXPORT_INTERVAL 이 그렇다).
+// 불변식이 요구하는 것은 "같은 입력 → 같은 출력" 이지 "구버전 바이너리의 출력과 동일"이
+// 아니다. 반대로 로컬 전용 키는 반드시 관리 키 목록에 있어야 한다 — 없으면 disable 후에도
+// 남아 회사 직결 상태에 로컬 흔적이 섞인다.
 
 import (
 	"errors"
@@ -98,48 +113,75 @@ func LocalEndpoint(port int) string {
 	return "http://localhost:" + strconv.Itoa(port)
 }
 
-// localManifest 는 회사 manifest 의 **깊은 사본**을 만들어 로컬 수신기용으로 고친 것이다.
+// localProfile 은 벤더 설정에 쓸 **고정 로컬 프로필**이다 (PROJ-45).
 //
-// 원본은 절대 건드리지 않는다. 회사 manifest 는 포워더가 "무엇을 지우고 보낼지" 판단하는
-// 진실원이라, 여기서 Privacy 플래그를 켜면 포워더가 원문을 그대로 상위로 흘려보낸다 —
-// ADR 0003 위반이자 이 티켓 전체를 무의미하게 만드는 버그다. Manifest 는 슬라이스와 맵
-// 필드를 가지므로 값 복사만으로는 부족하고, cloneManifest 가 그 둘을 따로 복제한다.
+// 이름은 Manifest 지만 회사 manifest 가 아니다. 벤더 설정 생성기(config.MergeClaude·
+// MergeCodex)가 manifest 모양을 입력으로 받기 때문에 그 타입을 재사용할 뿐이고, 의미는
+// "로컬 수신기가 원하는 수집 설정" 이다. 상위로 무엇을 보낼지와는 아무 관계가 없다.
 //
-// 바꾸는 것은 셋뿐이다.
+// # 왜 회사 manifest 에서 파생하지 않는가
 //
-//	otlp.endpoint                 → http://localhost:<port>
-//	privacy.collect_user_prompts  → true   (작업 제목·요약의 원천)
-//	privacy.collect_tool_details  → true   (파일 변경 목록·툴 타임라인의 원천)
+// PROJ-36 까지는 endpoint 와 privacy 두 항목만 고치고 나머지를 회사 값 그대로 뒀다.
+// 그러면 회사가 수집 범위를 좁히는 순간 **로컬 기능이 함께 죽는다** — signals.traces 가
+// false 면 툴 타임라인이 비고, collect_tool_content 가 false 면 원문 보관이 껍데기가 된다.
+// 로컬은 전부 받아 두고 상위 전달에서만 거르는 것이 ADR 0003 의 원래 의도였고, PROJ-45 가
+// 그 나머지 절반을 채운다 (ADR 0006).
 //
-// 나머지는 손대지 않는다. 특히 signals 를 켜지 않는다 — 회사가 끄기로 한 시그널을 로컬에서
-// 켜면 포워더가 그 시그널을 상위로 새로 보내게 되고, 그것은 "회사로 나가는 데이터가
-// 재배선 전후로 동일하다" 는 불변식 1 을 깬다. Privacy 의 나머지 네 항목도 같은 이유로
-// 회사 값을 그대로 따른다.
-func localManifest(company *contract.Manifest, port int) (contract.Manifest, error) {
+// 고정하는 값은 티켓 참고 자료 그대로다.
+//
+//	otlp.endpoint     → http://localhost:<port>   (불변식 2 — 언제나 localhost 표기)
+//	otlp.protocol     → http/protobuf
+//	otlp.compression  → 없음                       (수신기는 identity·gzip 만 푼다)
+//	signals           → 셋 다 true
+//	privacy           → assistant_responses 만 false, 나머지 true
+//
+// assistant_responses 만 끄는 이유는 로컬 파이프라인이 그것을 쓰지 않기 때문이다.
+// 세션 제목·요약은 프롬프트에서, 툴 타임라인은 tool details 에서 나온다. 응답 원문은
+// 어디에도 쓰이지 않으면서 배치 크기만 키운다.
+//
+// # 원본은 절대 건드리지 않는다
+//
+// 회사 manifest 는 포워더가 "무엇을 보내고 무엇을 지울지" 판단하는 진실원이다. 여기서
+// 원본을 오염시키면 포워더가 고정 프로필 기준으로 판단하게 되고, 그 순간 원문도 회사가
+// 끈 시그널도 전부 상위로 흘러간다 — ADR 0003 위반이자 이 티켓 전체를 무의미하게 만드는
+// 버그다. Manifest 는 슬라이스와 맵 필드를 가지므로 값 복사만으로는 부족하고,
+// cloneManifest 가 그 둘을 따로 복제한다.
+//
+// 회사 값을 그대로 두는 것은 벤더 설정에 나타나지 않는 필드들뿐이다 — collect_user_email
+// (어느 벤더 설정에도 쓰이지 않는다), repository_allowlist, resource_attributes
+// (Codex 의 environment 만 여기서 파생한다), timeout_ms, config_revision.
+func localProfile(company *contract.Manifest, port int) (contract.Manifest, error) {
 	if company == nil {
-		return contract.Manifest{}, errors.New("로컬 manifest: 회사 manifest 가 없다")
+		return contract.Manifest{}, errors.New("로컬 프로필: 회사 manifest 가 없다")
 	}
 	if port <= 0 || port > 65535 {
 		return contract.Manifest{}, fmt.Errorf("로컬 수신 포트가 올바르지 않다: %d", port)
 	}
+	// 로컬 구간은 언제나 http/protobuf 라 회사 프로토콜과 무관하지만, grpc 테넌트는 여전히
+	// 거부한다 — 포워더가 grpc 상위 전달을 못 하므로(forward.ErrGRPCUnsupported) 재배선하면
+	// 로컬에는 쌓이고 회사에는 아무것도 가지 않는 상태가 된다.
 	if company.OTLP.Protocol == "grpc" {
 		return contract.Manifest{}, ErrGRPCUnsupported
 	}
 
 	local := cloneManifest(*company)
 	local.OTLP.Endpoint = LocalEndpoint(port)
-	// 수신기가 푸는 것은 identity 와 gzip 뿐이다 (receiver/body.go). 회사가 그 밖의
-	// 압축을 지정했다면 로컬 구간에서만 끈다. 그대로 두면 모든 배치가 415 로 떨어져
-	// 텔레메트리가 통째로 사라지는데, 그 실패는 사용자에게 보이지 않는다.
-	if local.OTLP.Compression != "" && local.OTLP.Compression != "gzip" {
-		local.OTLP.Compression = ""
+	local.OTLP.Protocol = "http/protobuf"
+	local.OTLP.Compression = ""
+	local.Signals = contract.Signals{Logs: true, Metrics: true, Traces: true}
+	local.Privacy = contract.Privacy{
+		CollectUserPrompts:        true,
+		CollectAssistantResponses: false,
+		CollectToolDetails:        true,
+		CollectToolContent:        true,
+		CollectRawAPIBodies:       true,
+		// 벤더 설정에 나타나지 않는 유일한 Privacy 항목이라 회사 값을 그대로 둔다.
+		CollectUserEmail: company.Privacy.CollectUserEmail,
 	}
-	local.Privacy.CollectUserPrompts = true
-	local.Privacy.CollectToolDetails = true
 
-	// 로컬 사본도 계약 검증을 통과해야 한다. localhost 표기를 쓰는지 여기서 확정된다.
+	// 고정 프로필도 계약 검증을 통과해야 한다. localhost 표기를 쓰는지 여기서 확정된다.
 	if err := local.Validate(); err != nil {
-		return contract.Manifest{}, fmt.Errorf("로컬 manifest 검증 실패: %w", err)
+		return contract.Manifest{}, fmt.Errorf("로컬 프로필 검증 실패: %w", err)
 	}
 	return local, nil
 }
@@ -186,7 +228,7 @@ func EnableLocal(opts LocalOptions) (*LocalReport, error) {
 		port = DefaultLocalPort
 	}
 
-	local, err := localManifest(&state.Manifest, port)
+	local, err := localProfile(&state.Manifest, port)
 	if err != nil {
 		return nil, err
 	}
