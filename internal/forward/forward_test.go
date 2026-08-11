@@ -646,6 +646,121 @@ func TestEnqueueRejectsEmptyBody(t *testing.T) {
 	}
 }
 
+// 회사 manifest 가 끈 시그널은 큐에 들어가지도 않는다 (PROJ-45).
+//
+// 로컬 배선은 시그널 셋을 전부 켜 놓고 받으므로(installer.localProfile), 회사가 받기로 하지
+// 않은 시그널을 여기서 멈추지 않으면 재배선만으로 상위로 나가는 데이터가 늘어난다 —
+// installer/local.go 의 불변식 1 위반이다. 이 테스트가 그 불변식의 forward 쪽 절반이다.
+func TestEnqueue는꺼진시그널을버린다(t *testing.T) {
+	t.Parallel()
+
+	kinds := []struct {
+		name string
+		kind otlpdecode.PayloadKind
+	}{
+		{"metrics", otlpdecode.PayloadMetrics},
+		{"logs", otlpdecode.PayloadLogs},
+		{"traces", otlpdecode.PayloadTraces},
+	}
+
+	tests := []struct {
+		name    string
+		signals contract.Signals
+	}{
+		{"traces 만 끔", contract.Signals{Logs: true, Metrics: true}},
+		{"traces 만 켬", contract.Signals{Traces: true}},
+		{"전부 끔", contract.Signals{}},
+		{"전부 켬", contract.Signals{Logs: true, Metrics: true, Traces: true}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			up := newUpstream(t, nil)
+			fwd, err := New(Options{
+				Manifest: testManifestSignals(up.srv.URL, blockAll(), tt.signals),
+				Tokens:   StaticToken("test-token"),
+				Logger:   log.New(&syncBuffer{}, "", 0),
+			})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+
+			enabled := map[otlpdecode.PayloadKind]bool{
+				otlpdecode.PayloadMetrics: tt.signals.Metrics,
+				otlpdecode.PayloadLogs:    tt.signals.Logs,
+				otlpdecode.PayloadTraces:  tt.signals.Traces,
+			}
+
+			var wantDropped, wantQueued int64
+			for _, k := range kinds {
+				body := []byte("payload-" + k.name)
+				if got := fwd.Enqueue(k.kind, otlpdecode.EncodingProtobuf, body); got != enabled[k.kind] {
+					t.Errorf("Enqueue(%s) = %v, want %v (signals=%+v)", k.name, got, enabled[k.kind], tt.signals)
+				}
+				if enabled[k.kind] {
+					wantQueued++
+				} else {
+					wantDropped++
+				}
+			}
+
+			stats := fwd.Stats()
+			if stats.DroppedSignalDisabled != wantDropped {
+				t.Errorf("DroppedSignalDisabled = %d, want %d", stats.DroppedSignalDisabled, wantDropped)
+			}
+			if stats.Enqueued != wantQueued {
+				t.Errorf("Enqueued = %d, want %d", stats.Enqueued, wantQueued)
+			}
+			// 꺼진 시그널은 큐 예산도 먹지 않아야 한다. 그것이 deliver 가 아니라 Enqueue 에서
+			// 막는 이유다 — 상위가 받지도 않을 페이로드가 실제로 보낼 배치를 밀어내면 안 된다.
+			if stats.DroppedQueueFull != 0 {
+				t.Errorf("DroppedQueueFull = %d, want 0", stats.DroppedQueueFull)
+			}
+		})
+	}
+}
+
+// 꺼진 시그널은 상위로 요청 자체가 나가지 않는다. Enqueue 반환값만 보면 워커가 큐를 비우며
+// 뒤늦게 보내는 경우를 놓친다.
+func TestForward는꺼진시그널을상위로보내지않는다(t *testing.T) {
+	t.Parallel()
+	up := newUpstream(t, nil)
+	fwd, err := New(Options{
+		Manifest: testManifestSignals(up.srv.URL, blockAll(),
+			contract.Signals{Logs: true, Metrics: false, Traces: false}),
+		Tokens:      StaticToken("test-token"),
+		Logger:      log.New(&syncBuffer{}, "", 0),
+		BaseBackoff: time.Millisecond,
+		MaxBackoff:  2 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	fwd.Start()
+
+	fwd.Enqueue(otlpdecode.PayloadLogs, otlpdecode.EncodingProtobuf,
+		encodePayload(t, logsFixture(), otlpdecode.EncodingProtobuf))
+	fwd.Enqueue(otlpdecode.PayloadMetrics, otlpdecode.EncodingProtobuf,
+		encodePayload(t, metricsFixture(), otlpdecode.EncodingProtobuf))
+	fwd.Enqueue(otlpdecode.PayloadTraces, otlpdecode.EncodingProtobuf,
+		encodePayload(t, tracesFixture(), otlpdecode.EncodingProtobuf))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := fwd.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+
+	reqs := up.requests()
+	if len(reqs) != 1 {
+		t.Fatalf("상위가 받은 요청 %d 건, want 1 (logs 만)", len(reqs))
+	}
+	if reqs[0].path != otlpdecode.PayloadLogs.Path() {
+		t.Fatalf("상위가 받은 경로 = %q, want %q", reqs[0].path, otlpdecode.PayloadLogs.Path())
+	}
+}
+
 // Enqueue 는 본문을 복사한다. 수신기가 버퍼를 재사용해도 큐에 든 페이로드가 망가지면 안 된다.
 func TestEnqueueCopiesBody(t *testing.T) {
 	t.Parallel()

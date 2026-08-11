@@ -40,11 +40,19 @@ const (
 // 상위로 나가면 안 된다.
 func blockAll() contract.Privacy { return contract.Privacy{} }
 
+// testManifest 는 **시그널 셋을 전부 켠** 회사 manifest 다. 이 헬퍼를 쓰는 테스트들이
+// 보려는 것은 Privacy 집행과 전송 동작이므로, 시그널 게이팅(PROJ-45)이 그것을 가리면 안 된다.
+// 게이팅 자체는 testManifestSignals 를 쓰는 TestEnqueue는꺼진시그널을버린다 가 검증한다.
 func testManifest(endpoint string, p contract.Privacy) contract.Manifest {
+	return testManifestSignals(endpoint, p, contract.Signals{Logs: true, Metrics: true, Traces: true})
+}
+
+// testManifestSignals 는 시그널 셋까지 지정하는 변형이다.
+func testManifestSignals(endpoint string, p contract.Privacy, s contract.Signals) contract.Manifest {
 	return contract.Manifest{
 		SchemaVersion: 1,
 		OTLP:          contract.OTLP{Endpoint: endpoint, Protocol: "http/protobuf"},
-		Signals:       contract.Signals{Logs: true, Metrics: true},
+		Signals:       s,
 		Privacy:       p,
 	}
 }
