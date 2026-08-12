@@ -22,7 +22,11 @@ Claude Code·Codex 의 시그널을 직접 받고, 정규화·집계해 로컬 S
 | [0005](adr/0005-세션을-1급-엔티티로-조립.md) | 이벤트를 `session.id` 로 묶어 세션을 1급 엔티티로 |
 
 기존 설치 아키텍처는 [설치 아키텍처](installation-architecture.md)에 있다. 이 문서의 `§4.5`·`§5.4`
-같은 표기는 그 문서의 절 번호다.
+같은 표기는 그 문서의 절 번호다. 데몬이 상위로 나가는 구간(데몬 → auth-proxy → 원격 파이프라인)의
+HTTP 계약은 [상위 전달 계약](telemetry-egress-contract.md)에 따로 있다 — 헤더·상태코드·타임아웃·
+본문 상한을 바꿀 때는 그 문서와 홉별 계약
+([데몬 → 프록시](daemon-to-proxy-contract.md) · [프록시 → 파이프라인](proxy-to-pipeline-contract.md))
+을 먼저 본다.
 
 ---
 
