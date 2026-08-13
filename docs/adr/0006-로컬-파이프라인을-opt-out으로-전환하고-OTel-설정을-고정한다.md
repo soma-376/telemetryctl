@@ -82,8 +82,12 @@ ADR [0003](0003-원문과-tool-details를-로컬에만-보관.md) 이 정한 방
 ### Negative
 - **데몬이 떠 있지 않은 채 배선된 상태는 텔레메트리가 로컬에도 회사에도 남지 않는 상태다.** opt-in 시절에는
   `local enable` 을 친 사람만 그 상태를 지나갔지만, 이제 enroll 한 모든 사람이 지나간다.
-  - 완화: `enroll` 이 `warnDaemonNotRunning` 으로 크게 알리고 `telemetryctl daemon` 실행을 안내한다.
-  - **근본 해결은 데몬 자동 실행 등록이고, 그것이 이 결정의 진짜 선행 조건이다.** 아래 Follow-up 참고.
+  - 완화: `enroll` 이 `warnDaemonNotRunning` 으로 크게 알리고 ~~`telemetryctl daemon` 실행을 안내한다.~~
+  - ~~**근본 해결은 데몬 자동 실행 등록이고, 그것이 이 결정의 진짜 선행 조건이다.** 아래 Follow-up 참고.~~
+  - **PROJ-55 (ADR 0007) 가 그 선행 조건을 채웠다.** `enroll` 이 배선 직후 자동 실행을 best-effort 로
+    등록하고(launchd LaunchAgent / systemd user unit), 등록 후 데몬 생존까지 확인한다. 이제 이 Negative 는
+    "등록할 수 없는 환경(Windows·systemd 없는 리눅스)" 과 "재시작으로 낫지 않는 영구 실패" 로 좁혀졌고,
+    `warnDaemonNotRunning` 은 그 두 경우에 각각 다른 조언을 준다.
 - 로컬에 원문·raw API body 가 기본으로 쌓인다. ADR 0003 의 보관·삭제 장치(`--no-store-content`, `purge --content`,
   보존일)가 그대로 대응하지만, 기본값이 "쌓는다" 라는 사실 자체는 감수하는 것이다.
 - `local disable` 결과가 PROJ-45 이전 바이너리의 출력과 바이트 동일하지 않다 — 관리 키가 늘었기 때문이다
@@ -92,10 +96,13 @@ ADR [0003](0003-원문과-tool-details를-로컬에만-보관.md) 이 정한 방
   `TestEnroll배선과enable배선이같은설정을만든다` 가 바이트 단위로 지킨다.
 
 ## Follow-up
-- **데몬 자동 실행 등록 (launchd·systemd·Task Scheduler).** 이 ADR 의 Negative 첫 항목을 없애는 유일한 방법이고,
-  `README.md` 와 `docs/local-pipeline.md` 가 이미 차단성 선행 조건으로 지목해 둔 항목이다. 지금은 경고가 최선이다.
-- **기존 설치자 전환 정책.** 자동 실행 등록이 끝난 뒤 state schema 5 로 일괄 전환할지 다시 판단한다.
+- ~~**데몬 자동 실행 등록 (launchd·systemd·Task Scheduler).** 이 ADR 의 Negative 첫 항목을 없애는 유일한 방법이고,
+  `README.md` 와 `docs/local-pipeline.md` 가 이미 차단성 선행 조건으로 지목해 둔 항목이다. 지금은 경고가 최선이다.~~
+  → **닫힘. PROJ-55 가 macOS·리눅스를 구현했다** (`internal/autostart`, ADR 0007). Windows 작업 스케줄러는 PROJ-56 이다.
+- **기존 설치자 전환 정책 — 아직 열려 있다.** 자동 실행 등록이 끝난 뒤 state schema 5 로 일괄 전환할지 다시 판단한다.
   지금 결정한 "건드리지 않는다" 는 그때까지의 잠정 상태다.
+  **PROJ-55 는 이 번호를 소비하지 않았다** — 자동 실행 등록 상태를 `state.json` 에 저장하지 않기로 했기 때문이다
+  (`internal/autostart` 패키지 주석 3번). schema 5 는 여전히 이 항목의 몫이다.
 - **grpc 상위 전달.** grpc 테넌트는 배선 대상에서 빠진다 (`forward.ErrGRPCUnsupported`). 지원이 생기면
   `Apply` 의 강등 분기를 걷어낸다.
 - **Codex `log_user_prompt` 와 `environment`.** 티켓 참고 자료는 각각 `false` 와 `"e2e"` 였으나 전자는 Claude 와의
