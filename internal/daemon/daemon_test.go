@@ -263,6 +263,52 @@ func TestForwardedBodyIsScrubbed(t *testing.T) {
 	}
 }
 
+// TestForward는회사가끈시그널을전달하지않는다 는 PROJ-45 의 완료 판정 기준 중 하나다.
+//
+// 로컬 배선은 시그널 셋을 전부 켜 놓고 받는다 (installer.localProfile). 회사가 끈 시그널을
+// 상위 전달에서 막지 않으면 재배선만으로 회사가 받는 데이터가 늘어난다 —
+// installer/local.go 의 불변식 1 위반이다.
+//
+// 하네스의 회사 manifest 는 traces 가 꺼져 있다 (Signals{Logs, Metrics}). 그래서 트레이스
+// 페이로드는 수신기를 통과하되 상위로는 한 건도 나가면 안 되고, 로그·메트릭은 그대로 나가야
+// 한다. 후자를 함께 보는 이유는 "다 막아 버려서 통과하는" 구현을 배제하기 위해서다.
+func TestForward는회사가끈시그널을전달하지않는다(t *testing.T) {
+	h := start(t, harnessOptions{})
+
+	// 트레이스는 회사가 껐다. 수신기는 받아 주지만 상위로 가면 안 된다.
+	if resp := h.post("/v1/traces", fixture(t, "logs_session_walkthrough.json")); resp.StatusCode != http.StatusOK {
+		t.Fatalf("수신기가 트레이스를 거부했다: HTTP %d — 로컬은 받아야 한다", resp.StatusCode)
+	}
+	// 로그는 회사가 켰다. 이것이 도착하는 것으로 파이프라인이 살아 있음을 확인한다.
+	h.postFixture("logs_session_walkthrough.json")
+
+	waitFor(t, "상위 Collector 수신", func() bool { return len(h.upstream.received()) > 0 })
+	h.stop()
+
+	paths := h.upstream.receivedPaths()
+	if len(paths) == 0 {
+		t.Fatalf("상위로 아무것도 전달되지 않았다 — 게이팅이 로그까지 막았다\n%s", h.logs.String())
+	}
+	sawLogs := false
+	for i, p := range paths {
+		if p == "/v1/traces" {
+			t.Errorf("상위 요청[%d] 경로 = %s — 회사가 끈 시그널이 전달됐다", i, p)
+		}
+		if p == "/v1/logs" {
+			sawLogs = true
+		}
+	}
+	if !sawLogs {
+		t.Errorf("상위가 받은 경로 = %v — 회사가 켠 logs 가 없다", paths)
+	}
+
+	// 종료 요약에 시그널 차단 카운트가 남아야 한다. 이것이 "왜 트레이스가 안 보이는가" 를
+	// 운영자가 확인하는 유일한 지점이다.
+	if logs := h.logs.String(); !strings.Contains(logs, "시그널차단=") {
+		t.Errorf("종료 요약에 시그널차단 카운트가 없다:\n%s", logs)
+	}
+}
+
 // TestConcurrentPostsAreSerialized 는 직렬화 지점이 실제로 동작하는지 본다.
 //
 // -race 로 돌면 두 집계기를 두 수신기 워커가 동시에 만졌을 때 잡힌다. 동시에 총량도

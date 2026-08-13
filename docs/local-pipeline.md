@@ -15,11 +15,12 @@ Claude Code·Codex 의 시그널을 직접 받고, 정규화·집계해 로컬 S
 
 | ADR | 내용 |
 |---|---|
-| [0001](adr/0001-로컬-OTLP-수신기-인라인-프록시-토폴로지.md) | loopback 수신기 + 상위 전달. 재배선은 opt-in 기본 OFF |
+| [0001](adr/0001-로컬-OTLP-수신기-인라인-프록시-토폴로지.md) | loopback 수신기 + 상위 전달 (재배선 opt-in 부분은 0006 이 대체) |
 | [0002](adr/0002-로컬-집계-저장소로-SQLite-채택.md) | `modernc.org/sqlite` + 계층별 보존 |
 | [0003](adr/0003-원문과-tool-details를-로컬에만-보관.md) | 원문·tool details 는 로컬에만, 포워더가 제거해 전달 |
 | [0004](adr/0004-GUI-연동을-Go-패키지-공유로.md) | Wails v3 가 `internal/dashboard` 직접 import |
 | [0005](adr/0005-세션을-1급-엔티티로-조립.md) | 이벤트를 `session.id` 로 묶어 세션을 1급 엔티티로 |
+| [0006](adr/0006-로컬-파이프라인을-opt-out으로-전환하고-OTel-설정을-고정한다.md) | 배선은 opt-out 기본 ON, 로컬 OTel 설정 고정, 회사 준수는 forward 가 집행 |
 
 기존 설치 아키텍처는 [설치 아키텍처](installation-architecture.md)에 있다. 이 문서의 `§4.5`·`§5.4`
 같은 표기는 그 문서의 절 번호다.
@@ -170,19 +171,28 @@ catch-all `map[string]string` 컬럼이 없다(`internal/store/schema.go` 의 `e
 
 ### 4.2 상위 전달의 제거
 
-포워더에 제거 규칙이 하나도 하드코딩돼 있지 않다. `forward.New` 가
+**회사 manifest 준수는 전부 `internal/forward` 가 집행한다** (PROJ-45, ADR 0006). 로컬 배선의 벤더 설정은
+회사 manifest 와 무관하게 고정이므로(§7.2), 여기가 유일한 방어선이다. 축이 둘이다.
+
+**축 1 — `Signals`.** 회사가 끈 시그널은 `Enqueue` 가 큐에 넣지 않는다 (`forward.signalEnabled`).
+`deliver` 가 아니라 `Enqueue` 에서 막는 이유는, 상위가 받지도 않을 페이로드가 큐의 항목·바이트 예산을
+먹으면 그만큼 실제로 보낼 배치가 포화로 버려지기 때문이다. 알 수 없는 kind 는 보내지 않는다 —
+새 시그널의 기본값이 "보낸다" 이면 회사가 동의한 적 없는 데이터가 조용히 나간다.
+집계는 `Stats.DroppedSignalDisabled` 이고 데몬 종료 요약의 `시그널차단` 항목이다.
+
+**축 2 — `Privacy`.** 포워더에 제거 규칙이 하나도 하드코딩돼 있지 않다. `forward.New` 가
 `otlpdecode.PolicyFromPrivacy(manifest.Privacy)` 로 정책을 한 번 만들고, 워커가 전송 직전
 `otlpdecode.Scrub` 을 한 번 호출한다. manifest 가 항목을 허용으로 바꾸면 그 항목은 자동으로 통과한다.
 
-- 기준은 **회사 manifest 원본**이다. `local enable` 이 만드는 로컬 사본이 아니다
-  (`daemon/runner.go` 의 `forward.Options{Manifest: d.state.Manifest}`).
+- 기준은 **회사 manifest 원본**이다. `localProfile` 이 만드는 고정 프로필이 아니다
+  (`daemon/runner.go` 의 `forward.Options{Manifest: d.state.Manifest}`). `state.json` 에 회사 원본이
+  저장되는 것도 이 때문이다 — 거기가 오염되면 두 축이 통째로 무력화된다.
 - `Scrub` 실패는 전송하지 않는다. 정리되지 않은 본문을 흘려보내느니 버린다(`DroppedScrub`).
 - denylist 원칙이다 — 정책이 지목한 키만 빼고 나머지는 순서까지 그대로 흘린다.
 - 입력 인코딩을 보존한다. 큐 항목이 `Encoding` 을 들고 다닌다.
 
-그래서 **회사로 나가는 데이터는 재배선 전후로 동일하다.** 이것이 12단계의 가장 중요한 불변식이고,
-`local enable` 이 회사 manifest 원본을 절대 오염시키지 않는 이유이기도 하다
-(`installer.localManifest` 의 `cloneManifest`).
+그래서 **회사로 나가는 데이터는 재배선 전후로 동일하다.** 이것이 이 파이프라인의 가장 중요한 불변식이고,
+`localProfile` 이 회사 manifest 원본을 절대 오염시키지 않는 이유이기도 하다 (`cloneManifest`).
 
 ### 4.3 회귀 검증 절차
 
@@ -507,30 +517,53 @@ metrics 60초·logs 5초 주기로 재시도하므로 매 건 찍으면 로그�
 
 ### 7.2 `telemetryctl local enable | disable`
 
-이 명령이 저장소에서 **유일하게 사용자의 기존 설정을 바꾸는 지점**이다. 기본은 OFF 다.
+**배선은 `enroll` 이 자동으로 한다 (기본 ON, opt-out)** — PROJ-45, ADR 0006. `local enable` 은 이미 배선된
+설치를 **다시** 배선할 때 쓴다: 데몬이 포트 폴백을 했거나(§7.5), 예전에 `disable` 한 설치를 되돌릴 때다.
+탈출구는 `local disable` 이다.
+
+`installer.Apply` 와 `EnableLocal` 은 같은 `localProfile` 을 거쳐 같은 벤더 설정을 만든다. 두 경로가
+어긋나지 않는 것은 `TestEnroll배선과enable배선이같은설정을만든다` 가 바이트 단위로 지킨다.
 
 ```text
 telemetryctl local enable [--port 4318] [--data-dir <경로>] [--state <경로>]
 telemetryctl local disable [--data-dir <경로>] [--state <경로>]
 ```
 
-`enable` 이 하는 일:
+배선이 하는 일:
 
-1. 회사 manifest 의 **깊은 사본**(`localManifest`)을 만들어 세 가지만 바꾼다.
-   - `otlp.endpoint` → `http://localhost:<port>`
-   - `privacy.collect_user_prompts` → `true`
-   - `privacy.collect_tool_details` → `true`
+1. **고정 로컬 프로필**(`localProfile`)을 만든다. 회사 manifest 의 깊은 사본에서 출발하지만 벤더 설정에
+   닿는 필드를 전부 덮는다 — 회사가 수집 범위를 좁혀도 로컬 기능이 죽지 않아야 하기 때문이다.
 
-   `signals` 와 나머지 `privacy` 네 항목은 건드리지 않는다. 회사가 끈 시그널을 로컬에서 켜면
-   포워더가 그 시그널을 상위로 **새로** 보내게 되어 4.2절의 불변식이 깨진다.
-   회사 `compression` 이 `gzip`·빈 값이 아니면 로컬 사본에서만 지운다 — 수신기가 `identity`·`gzip`
-   만 풀기 때문에 그대로 두면 모든 배치가 415 로 조용히 사라진다.
-2. **회사 telemetry token 을 키링(`credential.AccountTelemetry`)으로 대피시킨다.**
-3. `MergeClaude`/`MergeCodex` 로 벤더 설정을 로컬 사본 + 로컬 ingest 토큰으로 다시 쓴다.
+   | 필드 | 값 |
+   |---|---|
+   | `otlp.endpoint` | `http://localhost:<port>` |
+   | `otlp.protocol` | `http/protobuf` |
+   | `otlp.compression` | 없음 — 수신기는 `identity`·`gzip` 만 풀고, loopback 에서 압축이 벌어 주는 것이 없다 |
+   | `signals` | 셋 다 `true` |
+   | `privacy` | `collect_assistant_responses` 만 `false`, 나머지 `true` |
+
+   회사 값이 살아남는 것은 벤더 설정에 나타나지 않는 필드뿐이다 — `collect_user_email`,
+   `repository_allowlist`, `timeout_ms`, 그리고 Codex `environment` 가 파생되는 `resource_attributes`.
+   회사가 끈 시그널이 상위로 새 나가지 않는 것은 이제 포워더의 시그널 게이팅이 보장한다 (§4.2 축 1).
+2. **회사 telemetry token 을 키링(`credential.AccountTelemetry`)으로 대피시킨다.** enroll 은 enrollment
+   응답에서 직접 넣고, `local enable` 은 벤더 파일에서 되읽어 넣는다(`stashTelemetryToken`). 벤더 설정에는
+   이제 로컬 ingest 토큰만 남으므로 이것이 회사 토큰의 **유일한 사본**이다.
+3. `MergeClaude`/`MergeCodex` 로 벤더 설정을 고정 프로필 + 로컬 ingest 토큰으로 다시 쓴다.
 4. `state.Local.Enabled`·`ListenPort` 를 저장한다. 저장에 실패하면 설정을 되돌리고 실패로 끝낸다.
 
+배선하지 못하면 **회사 Collector 직결로 강등하고 알린다.** 조용히 넘어가지 않는다.
+ingest 토큰을 얻지 못한 경우(잠긴 키링·헤드리스 CI)와 회사 manifest 가 `grpc` 인 경우다.
+후자는 포워더가 grpc 상위 전달을 못 하므로 배선하면 로컬에만 쌓이고 회사에는 아무것도 가지 않는다.
+
 `disable` 은 같은 `(회사 manifest, 회사 token)` 으로 다시 병합한다. `MergeClaude`/`MergeCodex` 가
-관리 키를 전부 지우고 다시 쓰는 **권위적 병합**이라 결과는 재배선 전과 바이트 단위로 같다.
+관리 키를 전부 지우고 다시 쓰는 **권위적 병합**이라 결과는 재배선 전과 같다. 여기서 "같다"는 결정론이지
+버전 간 동일성이 아니다 — 관리 키가 늘면 되돌린 파일에 그 키가 새로 나타난다. 반대로 로컬 전용 키
+(`CLAUDE_CODE_ENHANCED_TELEMETRY_BETA`, Codex `metrics_exporter`·`trace_exporter`)는 반드시 관리 키
+목록에 있어야 한다. 없으면 `disable` 후에도 남아 회사 직결 상태에 로컬 흔적이 섞인다.
+
+`reconnect` 는 배선된 설치의 벤더 설정을 **건드리지 않는다.** 거기 적힌 것은 로컬 ingest 토큰이라
+회사 토큰을 쓰면 endpoint 까지 함께 회사 것으로 돌아가 재배선이 조용히 풀린다. 새 회사 토큰은
+대피본에만 갱신하고, 그 값이 나중에 `disable` 이 쓸 값이다.
 
 #### 재배선된 설정은 인증 헤더를 **두 개** 적는다
 
@@ -753,16 +786,21 @@ go run ./cmd/telemetryctl status
 
 ## 9. 알려진 한계
 
-**데몬이 실행 중이 아닌데 재배선돼 있으면 텔레메트리가 로컬에도 회사에도 남지 않는다.**
-가장 큰 한계다. 그래서 `local enable` 이 기본 OFF 이고, 켤 때 데몬 생존을 확인해 경고한다. 자동 실행
-등록(launchd / systemd user unit / 작업 스케줄러)이 기본 ON 의 필수 선행 조건이며 후속 티켓이다.
+**데몬이 실행 중이 아닌데 배선돼 있으면 텔레메트리가 로컬에도 회사에도 남지 않는다.**
+가장 큰 한계이고, PROJ-45 가 배선을 opt-out 으로 바꾸면서 **이 상태를 지나가는 사람이 늘었다** —
+예전에는 `local enable` 을 친 사람뿐이었지만 이제 enroll 한 모든 사람이 지나간다. 지금 할 수 있는 것은
+`enroll` 과 `local enable` 이 데몬 생존을 확인해 경고하는 것뿐이다. 자동 실행 등록(launchd / systemd
+user unit / 작업 스케줄러)이 이 한계를 없애는 유일한 방법이고 후속 티켓이다 (ADR 0006 Negative 1행).
 
 | 한계 | 내용·완화 |
 |---|---|
 | **파일별 라인 배분이 근사** | `claude_code.lines_of_code.count` 메트릭에는 파일명이 없다. `tool_result` 의 `tool_input` 에서 파일을 얻고 같은 시각의 증분을 귀속시키므로, 한 응답에서 여러 파일을 고치면 배분이 근사가 된다. **세션 합계(`sessions.lines_added`)는 메트릭에서 직접 받아 정확하고 파일별 배분만 근사다.** PROJ-35 는 `session_files` 의 수치에 툴팁으로 이 사실을 표기해야 한다. 코드 형태로 보장된 것은 `Σ배분 ≤ total` 하나다(`fileState` 에 라인 필드가 아예 없고 배분이 `unassigned → assigned` 이동이다) |
 | **제목 품질** | `prompt_head`(첫 프롬프트 첫 문장 60자) → `files` → `fallback` 3단계 휴리스틱이다. 화면 예시(`인증 토큰 검증 및 Collector 전달 프록시 구현`) 수준은 나오지 않는다. `title_source` 컬럼이 출처를 남기므로 후속 교체가 스키마 변경 없이 가능하고, `SessionRow.TitleSource` 로 화면이 출처를 표시할 수 있다 |
 | **`abandoned` 오판 가능** | "마지막 툴 이벤트가 실패이고 이후 성공 없음" 이라는 휴리스틱이다. **화면 필터로만 쓰고 지표로 쓰지 않는다.** 판정 근거는 세션 마감 로그(`s.Diag.StatusReason`)에 남는다 |
-| **데몬 미실행 중 유실** | 위 첫 문단 |
+| **데몬 미실행 중 유실** | 위 첫 문단. opt-out 전환으로 노출 범위가 enroll 한 전원으로 넓어졌다 |
+| **회사가 끈 시그널은 로컬에만 쌓인다** | 로컬은 시그널 셋을 전부 켜고 받지만 포워더가 상위 전달을 막는다(§4.2 축 1). 즉 회사 `signals.traces=false` 면 트레이스는 로컬 파이프라인을 통과하되 회사에는 가지 않는다 — 설계된 동작이고 `Stats.DroppedSignalDisabled` 로 보인다. 다만 `/v1/traces` 는 저장도 하지 않으므로(아래 행) 그 시그널은 실질적으로 버려진다 |
+| **`grpc` 테넌트는 배선되지 않는다** | 포워더가 grpc 상위 전달을 못 하므로 `Apply` 가 회사 직결로 강등하고 알린다. `local enable` 도 `ErrGRPCUnsupported` 로 거부한다. 기존 회사 Collector 직결은 그대로 동작한다 |
+| **기존 설치자는 자동 전환되지 않는다** | state schema 4 를 유지하고 마이그레이션을 넣지 않았다 (ADR 0006 Decision 5). 바이너리만 교체한 사용자는 `local enable` 을 명시적으로 실행해야 한다 |
 | **크래시 손실 창** | flush 주기(2초, 또는 512 이벤트)만큼의 미저장 이벤트를 잃는다. 세션 스냅샷은 30초 주기지만 세션 수치는 마감 전에는 어차피 확정값이 아니다 |
 | **조립기 TTL 이후 같은 `session.id` 재등장** | 마감된 세션은 2시간(`sessionMemoryTTL`) 뒤 조립기 메모리에서 지워진다. 그 뒤 같은 `session.id` 가 다시 등장하면 조립기가 **새 세션으로 시작**하고 `sessions` UPSERT 가 기존 행을 덮는다 — 앞 구간의 수치를 잃는다. TTL 이 유휴 임계값(10분)의 12배인 이유이자, 보존 기간(30일)이 아닌 몇 시간짜리 값을 쓰는 이유(`store.Prune` 이 지운 타임라인을 다음 스냅샷이 되살리지 못하게)다 |
 | **Windows + WSL 이중 설정** | 두 환경이 각각 설정을 갖고 같은 이벤트를 두 번 보낼 수 있다. `dedup_key` UNIQUE 와 배선 창이 잡지만 두 환경의 `installation_id` 가 다르면 다른 이벤트로 취급된다 |

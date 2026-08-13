@@ -18,6 +18,9 @@ import (
 // 조용히 잔재가 남는다 — claude_test.go 의 대칭성 테스트가 그것을 잡는다.
 var claudeManagedEnvKeys = []string{
 	"CLAUDE_CODE_ENABLE_TELEMETRY",
+	// 로컬 배선에서만 켜지지만(claudeEnv) 목록에는 언제나 있어야 한다. 여기서 빠지면
+	// local disable 이 이 키를 지우지 못해 회사 직결 상태에 로컬 흔적이 남는다 (PROJ-45).
+	"CLAUDE_CODE_ENHANCED_TELEMETRY_BETA",
 	"OTEL_EXPORTER_OTLP_PROTOCOL",
 	"OTEL_EXPORTER_OTLP_ENDPOINT",
 	"OTEL_EXPORTER_OTLP_HEADERS",
@@ -34,6 +37,8 @@ var claudeManagedEnvKeys = []string{
 	"OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE",
 	"OTEL_METRIC_EXPORT_INTERVAL",
 	"OTEL_LOGS_EXPORT_INTERVAL",
+	// PROJ-45 추가. 로컬은 traces 도 항상 켜므로 그 주기도 명시한다.
+	"OTEL_TRACES_EXPORT_INTERVAL",
 }
 
 // 아래 세 값은 PROJ-36 이 명시적으로 고정하는 exporter 동작이다.
@@ -52,6 +57,10 @@ const (
 	claudeMetricExportInterval = "60000"
 	// claudeLogsExportInterval 은 밀리초다. Claude Code 기본값 5초.
 	claudeLogsExportInterval = "5000"
+	// claudeTracesExportInterval 은 밀리초다. 로그와 같은 주기를 쓴다 — 툴 타임라인은
+	// 로그와 트레이스를 같은 시간축에 놓고 조립하므로 주기가 어긋나면 세션 마감 시점에
+	// 한쪽만 도착한 배치가 생긴다 (PROJ-45).
+	claudeTracesExportInterval = "5000"
 )
 
 func claudeEnv(m *contract.Manifest, token string) map[string]string {
@@ -72,9 +81,21 @@ func claudeEnv(m *contract.Manifest, token string) map[string]string {
 		"OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": claudeTemporality,
 		"OTEL_METRIC_EXPORT_INTERVAL":                       claudeMetricExportInterval,
 		"OTEL_LOGS_EXPORT_INTERVAL":                         claudeLogsExportInterval,
+		"OTEL_TRACES_EXPORT_INTERVAL":                       claudeTracesExportInterval,
 	}
 	if m.OTLP.Compression != "" {
 		env["OTEL_EXPORTER_OTLP_COMPRESSION"] = m.OTLP.Compression
+	}
+	// 확장 텔레메트리는 **로컬 배선에서만** 켠다.
+	//
+	// 회사 직결 상태에서 켜면 회사가 받는 데이터가 재배선 여부에 따라 달라진다 —
+	// installer/local.go 의 불변식 1 위반이다. 로컬은 포워더가 회사 기준으로 다시
+	// 거르므로 켜도 상위로 나가는 것이 늘지 않는다.
+	//
+	// 판별은 X-Pulsemetry-Local 헤더와 같은 isLocalEndpoint 를 쓴다. "로컬인가" 의
+	// 진실원을 하나로 유지하는 것이 localheader.go 가 설명하는 그 이유다.
+	if isLocalEndpoint(m.OTLP.Endpoint) {
+		env["CLAUDE_CODE_ENHANCED_TELEMETRY_BETA"] = "1"
 	}
 	return env
 }

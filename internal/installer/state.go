@@ -38,8 +38,9 @@ const DefaultRetentionDays = 30
 // 비밀은 들어가지 않는다 (§4.5). loopback ingest 토큰은 키링
 // (credential.AccountLocalIngest)에만 있다.
 type Local struct {
-	// Enabled 는 벤더 설정을 로컬 수신기로 재배선했는지다. 기본 OFF, opt-in 이다.
-	// 이 값을 켜는 것은 12단계 `local enable` 의 몫이고, 데몬은 읽기만 한다.
+	// Enabled 는 벤더 설정을 로컬 수신기로 재배선했는지다. **신규 설치는 기본 ON, opt-out**
+	// 이다 (PROJ-45, ADR 0006) — Apply 가 enroll 시점에 배선하고 이 값을 켠다.
+	// `local enable`·`local disable` 은 그 뒤 이 값을 뒤집는다. 데몬은 읽기만 한다.
 	Enabled bool `json:"enabled"`
 	// ListenPort 는 수신기가 잡기를 원하는 포트다. 0 이면 receiver.DefaultPort.
 	ListenPort int `json:"listen_port,omitempty"`
@@ -53,10 +54,21 @@ type Local struct {
 	StoreContent bool `json:"store_content"`
 }
 
-// DefaultLocal 은 새 설치와 3→4 마이그레이션이 쓰는 기본값이다.
+// DefaultLocal 은 **재배선하지 않은** Local 블록이다.
+//
+// 쓰이는 곳이 둘인데 의미가 다르다.
+//
+//	3→4 마이그레이션 — 기존 설치자는 그대로 둔다. 바이너리만 갈았는데 벤더 설정이
+//	                   바뀌는 것은 사용자가 내린 적 없는 결정이고, 게다가 여기서
+//	                   Enabled 만 켜면 상태는 "로컬" 인데 설정 파일은 회사 직결인
+//	                   불일치가 생긴다 (마이그레이션은 메모리에서만 일어난다).
+//	Apply 의 폴백    — ingest 토큰이 없거나 grpc 테넌트라 배선하지 못한 경우.
+//
+// 신규 설치의 기본값은 여기가 아니라 Apply 가 정한다 — 거기서 Enabled·ListenPort 를
+// 켜서 opt-out 을 만든다 (PROJ-45, ADR 0006).
 func DefaultLocal() Local {
 	return Local{
-		Enabled:       false, // 재배선은 opt-in, 기본 OFF (계획서 「확정된 결정」)
+		Enabled:       false,
 		RetentionDays: DefaultRetentionDays,
 		StoreContent:  true, // 원문 보관 기본 ON (ADR 0003)
 	}

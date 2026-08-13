@@ -2,10 +2,16 @@
 //
 // # 왜 원본 바이트를 그대로 넘기지 않는가
 //
-// 로컬 파이프라인은 OTEL_LOG_USER_PROMPTS·OTEL_LOG_TOOL_DETAILS 를 강제로 켠다 (ADR 0003).
-// 그 순간 회사가 수집하지 않기로 한 데이터가 로컬을 통과해 상위로 흘러갈 수 있게 된다.
-// 그래서 보내기 직전에 회사 manifest 의 Privacy 기준으로 otlpdecode.Scrub 을 태우고
-// **받은 인코딩 그대로** 재인코딩한다. 결과적으로 이 패키지가 프라이버시 집행 지점이다.
+// 로컬 파이프라인의 벤더 설정은 회사 manifest 와 무관하게 **고정**이다 — 시그널 셋을 전부
+// 켜고 원문·tool details·raw API body 수집도 켠다 (PROJ-45, ADR 0003·0006). 그 순간 회사가
+// 수집하지 않기로 한 데이터가 로컬을 통과해 상위로 흘러갈 수 있게 된다. 그래서 회사 manifest
+// 준수는 전부 이 패키지가 책임진다. 집행 지점이 둘이다.
+//
+//	Signals — 회사가 끈 시그널은 Enqueue 가 큐에 넣지도 않는다 (signalEnabled).
+//	Privacy — 보내기 직전 otlpdecode.Scrub 으로 지우고 **받은 인코딩 그대로** 재인코딩한다.
+//
+// 둘 중 하나라도 빠지면 "회사로 나가는 데이터는 재배선 전후로 동일하다"는 불변식이 깨진다
+// (internal/installer/local.go 의 불변식 1).
 //
 // 무엇을 지울지는 전부 otlpdecode.PolicyFromPrivacy 에서 온다. 이 패키지에는 제거 규칙이
 // 하나도 하드코딩돼 있지 않다 — manifest 가 항목을 허용으로 바꾸면 그 항목은 자동으로 통과한다.
@@ -63,6 +69,13 @@ const (
 	// maxUpstreamBodyRead 는 상위 응답 본문을 연결 재사용을 위해 읽어 버릴 상한이다.
 	// 내용은 어디에도 쓰지 않는다.
 	maxUpstreamBodyRead = 4 << 10
+
+	// maxSignalDropLogGap 은 꺼진 시그널 폐기 로그의 최소 간격이다.
+	//
+	// 큐 포화와 달리 이쪽은 **정상 동작**이다. 회사가 끈 시그널은 벤더가 보내는 모든 배치가
+	// 걸리므로, 억제 없이 찍으면 로그가 통째로 잠식된다. maxDropLogGap 과 따로 두는 이유는
+	// 둘이 동시에 일어날 때 서로의 억제 시계를 밀어내지 않게 하기 위해서다.
+	maxSignalDropLogGap = time.Minute
 )
 
 // ErrGRPCUnsupported 는 manifest 가 grpc 프로토콜일 때 New 가 돌려주는 오류다.
@@ -73,8 +86,9 @@ var ErrGRPCUnsupported = errors.New("forward: grpc 상위 전달은 아직 지�
 
 // Options 는 포워더 구성이다. 상위 endpoint·프로토콜·프라이버시 정책은 전부 Manifest 에서 온다.
 type Options struct {
-	// Manifest 는 **회사 manifest 원본**이다. local enable 이 만든 로컬 사본이 아니다 —
-	// 제거 기준은 회사가 수집하기로 한 범위여야 한다 (ADR 0003).
+	// Manifest 는 **회사 manifest 원본**이다. 로컬 배선이 쓰는 고정 프로필이 아니다 —
+	// 무엇을 보낼지(Signals)와 무엇을 지울지(Privacy)의 기준은 둘 다 회사가 정한 범위여야
+	// 한다 (ADR 0003·0006). 고정 프로필을 여기 넣으면 두 집행이 통째로 무력화된다.
 	Manifest contract.Manifest
 	// Tokens 는 Authorization 헤더에 쓸 telemetry token 공급자다. 필수.
 	Tokens TokenSource
@@ -104,6 +118,12 @@ type Stats struct {
 	Sent int64
 	// DroppedQueueFull 은 큐 포화(항목 수 또는 바이트)로 버린 수다.
 	DroppedQueueFull int64
+	// DroppedSignalDisabled 는 회사 manifest 가 끈 시그널이라 버린 수다.
+	//
+	// 손실이 아니라 **정책 집행 결과**다. 로컬은 시그널 셋을 전부 켜고 받으므로
+	// (PROJ-45 고정 프로필) 회사가 끈 시그널은 여기서 멈춘다. 이 값이 0 이 아니라는 것은
+	// 로컬 수집 범위가 회사 수집 범위보다 넓다는 뜻이고, 그것이 설계된 동작이다.
+	DroppedSignalDisabled int64
 	// DroppedScrub 은 Scrub 실패로 버린 수다. **정리에 실패한 페이로드는 절대 보내지 않는다.**
 	DroppedScrub int64
 	// DroppedShutdown 은 종료 제한 시간 안에 비우지 못해 버린 수다.
@@ -131,11 +151,14 @@ type job struct {
 // Forwarder 는 상위 Collector 전달기다. New → Start → Enqueue… → Shutdown 순으로 쓴다.
 type Forwarder struct {
 	endpoint string
-	policy   otlpdecode.ScrubPolicy
-	tokens   TokenSource
-	logger   *log.Logger
-	client   *http.Client
-	timeout  time.Duration
+	// signals 는 회사가 상위로 받기로 한 시그널이다. policy 와 짝을 이루는 두 번째
+	// 집행 축이다 — policy 가 "무엇을 지울지" 라면 이쪽은 "무엇을 아예 보내지 않을지" 다.
+	signals contract.Signals
+	policy  otlpdecode.ScrubPolicy
+	tokens  TokenSource
+	logger  *log.Logger
+	client  *http.Client
+	timeout time.Duration
 
 	maxAttempts int
 	baseBackoff time.Duration
@@ -156,9 +179,10 @@ type Forwarder struct {
 	startOnce  sync.Once
 	closeOnce  sync.Once
 
-	statsMu     sync.Mutex
-	stats       Stats
-	lastDropLog time.Time
+	statsMu           sync.Mutex
+	stats             Stats
+	lastDropLog       time.Time
+	lastSignalDropLog time.Time
 }
 
 // New 는 포워더를 만든다. manifest 가 grpc 면 ErrGRPCUnsupported 로 거부한다.
@@ -191,6 +215,7 @@ func New(opts Options) (*Forwarder, error) {
 
 	f := &Forwarder{
 		endpoint:      endpoint,
+		signals:       opts.Manifest.Signals,
 		policy:        otlpdecode.PolicyFromPrivacy(opts.Manifest.Privacy),
 		tokens:        opts.Tokens,
 		logger:        opts.Logger,
@@ -272,9 +297,16 @@ func (f *Forwarder) loop() {
 // 절대 블로킹하지 않는다. 여기서 기다리면 수신기 핸들러가 밀리고 결국 벤더 exporter 가
 // 기다리게 된다 — 정확히 §5.4 가 금지하는 구조다. 텔레메트리 손실은 허용, 개발 도구 지연은 불허.
 //
+// 회사가 끄기로 한 시그널은 **여기서** 멈춘다. deliver 까지 들고 가면 상위가 받지도 않을
+// 페이로드가 큐의 항목·바이트 예산을 먹고, 그만큼 실제로 보낼 배치가 포화로 버려진다.
+//
 // body 는 복사한다. 호출부(수신기)가 버퍼를 재사용해도 큐에 든 페이로드가 망가지지 않아야 한다.
 func (f *Forwarder) Enqueue(kind otlpdecode.PayloadKind, enc otlpdecode.Encoding, body []byte) bool {
 	if len(body) == 0 {
+		return false
+	}
+	if !f.signalEnabled(kind) {
+		f.dropSignalDisabled(kind)
 		return false
 	}
 
@@ -299,6 +331,40 @@ func (f *Forwarder) Enqueue(kind otlpdecode.PayloadKind, enc otlpdecode.Encoding
 	default:
 		f.dropQueueFull()
 		return false
+	}
+}
+
+// signalEnabled 는 회사 manifest 가 이 시그널을 상위로 받기로 했는지 본다.
+//
+// 알 수 없는 kind 는 false 다. 새 시그널이 생겼을 때 기본값이 "보낸다" 이면 회사가 동의한 적
+// 없는 데이터가 조용히 나간다 — 모르는 것은 보내지 않는 쪽이 되돌릴 수 있는 실패다.
+func (f *Forwarder) signalEnabled(kind otlpdecode.PayloadKind) bool {
+	switch kind {
+	case otlpdecode.PayloadMetrics:
+		return f.signals.Metrics
+	case otlpdecode.PayloadLogs:
+		return f.signals.Logs
+	case otlpdecode.PayloadTraces:
+		return f.signals.Traces
+	default:
+		return false
+	}
+}
+
+// dropSignalDisabled 는 꺼진 시그널 폐기를 집계하고 억제된 간격으로만 로그를 남긴다.
+func (f *Forwarder) dropSignalDisabled(kind otlpdecode.PayloadKind) {
+	f.statsMu.Lock()
+	f.stats.DroppedSignalDisabled++
+	total := f.stats.DroppedSignalDisabled
+	shouldLog := time.Since(f.lastSignalDropLog) >= maxSignalDropLogGap
+	if shouldLog {
+		f.lastSignalDropLog = time.Now()
+	}
+	f.statsMu.Unlock()
+
+	if shouldLog {
+		f.logger.Printf("forward: %s 는 회사 manifest 가 수집하지 않는 시그널이라 전달하지 않는다 "+
+			"(로컬에는 저장된다, 누적 %d 건)", kind, total)
 	}
 }
 

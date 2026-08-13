@@ -45,13 +45,60 @@ func TestClaudeManagedKeysCoverWrittenKeys(t *testing.T) {
 	}
 }
 
+// TestClaude확장텔레메트리는로컬에서만켜진다 는 CLAUDE_CODE_ENHANCED_TELEMETRY_BETA 의
+// 조건부 기록을 못박는다 (PROJ-45).
+//
+// 회사 직결 상태에서 켜면 회사가 받는 데이터가 재배선 여부에 따라 달라진다 —
+// installer/local.go 의 불변식 1 위반이다. 로컬에서는 forward 가 회사 기준으로 다시
+// 거르므로 켜도 상위로 나가는 것이 늘지 않는다.
+func TestClaude확장텔레메트리는로컬에서만켜진다(t *testing.T) {
+	const key = "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA"
+
+	tests := []struct {
+		name     string
+		endpoint string
+		want     string // 빈 문자열이면 키가 없어야 한다
+	}{
+		{name: "로컬 재배선", endpoint: "http://localhost:4318", want: "1"},
+		{name: "회사 직결 https", endpoint: "https://collector.example.com"},
+		// https://localhost 는 우리 수신기가 아니다 — 수신기는 평문 http 로만 뜬다.
+		{name: "https localhost 는 로컬이 아니다", endpoint: "https://localhost:4318"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := companyManifest()
+			m.OTLP.Endpoint = tt.endpoint
+			got, ok := claudeEnv(m, "tok")[key]
+			if tt.want == "" {
+				if ok {
+					t.Fatalf("%s 가 회사 직결 설정에 %q 로 들어갔다 — 회사가 받는 데이터가 늘어난다", key, got)
+				}
+				return
+			}
+			if got != tt.want {
+				t.Fatalf("%s = %q (있음=%v), want %q", key, got, ok, tt.want)
+			}
+		})
+	}
+
+	// 조건부로 쓰는 키라도 관리 목록에는 언제나 있어야 한다. 없으면 local disable 이
+	// 지우지 못해 회사 직결 상태에 로컬 흔적이 남는다.
+	if !containsKey(claudeManagedEnvKeys, key) {
+		t.Errorf("%s 가 claudeManagedEnvKeys 에 없다 — disable 이 지우지 못한다", key)
+	}
+}
+
 // TestClaudeManagedKeysIncludeProj36Additions 는 계획서가 지정한 세 키가 관리 목록에
-// 들어갔는지 본다.
+// 들어갔는지 본다. PROJ-45 가 추가한 두 키도 함께 지킨다.
 func TestClaudeManagedKeysIncludeProj36Additions(t *testing.T) {
 	want := []string{
 		"OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE",
 		"OTEL_METRIC_EXPORT_INTERVAL",
 		"OTEL_LOGS_EXPORT_INTERVAL",
+		// PROJ-45. 무조건 쓰는 키만 여기 넣는다 — 이 루프는 "관리 목록에 있고 claudeEnv 가
+		// 실제로 쓴다"를 함께 본다. 로컬에서만 쓰는 CLAUDE_CODE_ENHANCED_TELEMETRY_BETA 는
+		// TestClaude확장텔레메트리는로컬에서만켜진다 가 따로 지킨다.
+		"OTEL_TRACES_EXPORT_INTERVAL",
 	}
 	for _, key := range want {
 		t.Run(key, func(t *testing.T) {

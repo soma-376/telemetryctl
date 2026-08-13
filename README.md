@@ -76,24 +76,30 @@ Claude Code(`~/.claude/settings.json`)·Codex(`~/.codex/config.toml`)에 OTel �
 `telemetry_token`만 기록합니다. `reconnect`는 설치 토큰으로
 `POST /v1/installations/telemetry-token`을 호출해 새 telemetry token을 발급받습니다.
 
-## 로컬 데이터 파이프라인 (opt-in)
+## 로컬 데이터 파이프라인 (opt-out, 기본 켜짐)
 
-기본 구성에서는 텔레메트리가 회사 Collector 로만 가고 로컬에는 아무것도 남지 않습니다.
-`telemetryctl local enable` 로 재배선하면 데몬이 loopback OTLP 수신기를 띄워 시그널을 직접 받고,
-세션 단위로 조립·집계해 로컬 SQLite(`~/.pulsemetry/pulsemetry.db`)에 저장한 뒤 회사 Collector 로도
-전달합니다. **기본은 OFF 이고 `local disable` 로 정확히 되돌립니다.**
+`enroll` 이 벤더 설정을 로컬 수신기로 자동 배선합니다. 데몬이 loopback OTLP 수신기를 띄워 시그널을
+직접 받고, 세션 단위로 조립·집계해 로컬 SQLite(`~/.pulsemetry/pulsemetry.db`)에 저장한 뒤 회사
+Collector 로도 전달합니다. **끄려면 `local disable` 입니다.**
 
 ```sh
-telemetryctl daemon &          # 데몬을 먼저 띄웁니다 (자동 실행 등록은 후속 티켓)
-telemetryctl local enable      # 벤더 설정 endpoint 를 http://localhost:4318 로 재배선
+telemetryctl enroll --invite <코드>   # 설치 + 로컬 배선 (endpoint → http://localhost:4318)
+telemetryctl daemon &                 # 데몬을 띄웁니다 (자동 실행 등록은 후속 티켓)
 telemetryctl sessions --since 1d
-telemetryctl local disable     # 회사 Collector 직결로 복귀
+telemetryctl local disable            # 회사 Collector 직결로 복귀
 ```
 
-로컬 화면에 필요한 프롬프트·tool details 는 재배선 시 강제로 켜지지만, **회사로 나가는 데이터는
-재배선 전후로 동일합니다** — 데몬이 회사 manifest 의 Privacy 기준으로 제거한 뒤 전달합니다.
-프롬프트 원문은 로컬에만 16KB 캡으로 30일간 보관되며 `--no-store-content`·`purge --content` 로
-끄거나 지울 수 있습니다.
+> **데몬이 떠 있지 않으면 텔레메트리가 로컬에도 회사에도 남지 않습니다.** `enroll` 이 이 상태를
+> 경고합니다. 자동 실행 등록 전까지는 `telemetryctl daemon` 을 직접 띄워야 합니다.
+
+로컬 OTel 설정은 회사 manifest 와 무관하게 **고정**입니다 — 시그널 셋을 전부 켜고 원문·tool details
+수집도 켭니다(응답 원문 제외). 회사가 수집 범위를 좁혀도 로컬 화면이 비지 않게 하기 위해서입니다.
+그래도 **회사로 나가는 데이터는 배선 전후로 동일합니다** — 데몬이 회사 manifest 의 `signals` 로
+전달 여부를, `privacy` 로 제거 대상을 판단합니다. 프롬프트 원문은 로컬에만 16KB 캡으로 30일간
+보관되며 `--no-store-content`·`purge --content` 로 끄거나 지울 수 있습니다.
+
+기존 설치자(이미 `enroll` 을 마친 사용자)는 바이너리를 교체해도 자동 전환되지 않습니다.
+`telemetryctl local enable` 로 명시적으로 켜세요.
 
 토폴로지·스키마·프라이버시 불변식·GUI 조회 API 계약은
 [로컬 파이프라인 문서](docs/local-pipeline.md)에, 설계 결정 배경은 [ADR](docs/adr/)에 있습니다.
@@ -148,8 +154,9 @@ CGO_ENABLED=0 go build ./...   # 배포 바이너리가 C 툴체인을 요구하
 
 1. **GUI 데스크탑 앱** (PROJ-35) — `gui/` 에 별도 `go.mod` 로 Wails v3 앱을 두고
    `internal/dashboard` 를 감쌉니다. 계약은 [로컬 파이프라인 문서](docs/local-pipeline.md) 6절
-2. **데몬 자동 실행 등록** (launchd / systemd user unit / 작업 스케줄러) — `local enable` 기본 ON 의
-   선행 조건
+2. **데몬 자동 실행 등록** (launchd / systemd user unit / 작업 스케줄러) — **차단성**. 배선이 기본 ON 이
+   된 지금(PROJ-45), 데몬이 떠 있지 않으면 텔레메트리가 로컬에도 회사에도 남지 않고 그 상태를 enroll 한
+   전원이 지나갑니다. 현재는 경고만 하고 있습니다 (ADR 0006 Negative 1행)
 3. 토큰 rotation · heartbeat · 설정 재조회(`GET /v1/manifest`)
 4. `resource_attributes` → `OTEL_RESOURCE_ATTRIBUTES` 배선 (회사 단위 태깅)
 5. 설치 바이너리 PATH 등록, `uninstall`·`repair` (자격증명 파일에서 헤더 재주입)

@@ -582,9 +582,9 @@ func (d *daemon) logSummary() {
 	}
 	if d.fwd != nil {
 		f := d.fwd.Stats()
-		d.log.Printf("전달 요약: 큐=%d 전송=%d 큐포화버림=%d scrub버림=%d 종료버림=%d "+
+		d.log.Printf("전달 요약: 큐=%d 전송=%d 큐포화버림=%d 시그널차단=%d scrub버림=%d 종료버림=%d "+
 			"폐기4xx=%d 실패=%d 재시도=%d 토큰오류=%d 속성제거=%d 본문제거=%d",
-			f.Enqueued, f.Sent, f.DroppedQueueFull, f.DroppedScrub, f.DroppedShutdown,
+			f.Enqueued, f.Sent, f.DroppedQueueFull, f.DroppedSignalDisabled, f.DroppedScrub, f.DroppedShutdown,
 			f.Discarded, f.Failed, f.Retries, f.TokenErrors,
 			f.AttributesRemoved, f.BodiesCleared)
 	}

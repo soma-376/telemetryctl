@@ -6,6 +6,10 @@ import (
 	"testing"
 
 	"github.com/BurntSushi/toml"
+
+	// 테스트에서만 import 한다. 프로덕션 config 가 otlpdecode 를 끌어들이면 enroll·status
+	// 경로까지 protobuf 디코더가 딸려 온다 (codex.go 의 codexSignalPaths 주석).
+	"github.com/your-org/pulsemetry/internal/otlpdecode"
 )
 
 func readTOML(t *testing.T, path string) map[string]any {
@@ -36,6 +40,63 @@ func codexHeaders(t *testing.T, path string) map[string]any {
 	}
 	t.Fatalf("headers 표를 찾지 못했다: %v", root)
 	return nil
+}
+
+// TestCodex경로가PayloadKind와일치한다 는 복제된 경로 문자열이 진짜와 어긋나지 않게 한다.
+//
+// config 는 otlpdecode 를 import 하지 않는다 — 그러면 enroll·status 경로까지 protobuf
+// 디코더가 딸려 온다 (codex.go 의 codexSignalPaths 주석). 그래서 값을 복제하고, 대신
+// 여기서만 otlpdecode 를 불러 두 값이 같은지 본다. LocalIngestHeader 와 같은 방식이다.
+//
+// 어긋나면 Codex 가 존재하지 않는 경로로 보내고 수신기가 404 로 전부 버린다.
+func TestCodex경로가PayloadKind와일치한다(t *testing.T) {
+	want := map[string]string{
+		codexLogsExporterKey:    otlpdecode.PayloadLogs.Path(),
+		codexMetricsExporterKey: otlpdecode.PayloadMetrics.Path(),
+		codexTracesExporterKey:  otlpdecode.PayloadTraces.Path(),
+	}
+	if len(codexSignalPaths) != len(want) {
+		t.Fatalf("codexSignalPaths 항목 수 = %d, want %d", len(codexSignalPaths), len(want))
+	}
+	for key, wantPath := range want {
+		if got := codexSignalPaths[key]; got != wantPath {
+			t.Errorf("codexSignalPaths[%s] = %q, want %q (otlpdecode.PayloadKind.Path())", key, got, wantPath)
+		}
+	}
+}
+
+// TestCodex회사직결출력은변하지않는다 는 PROJ-45 가 회사 직결 경로를 건드리지 않았음을
+// 못박는다.
+//
+// 로컬에만 exporter 3종을 추가하는 것이 이 티켓의 설계다. 회사 직결에서도 추가하면
+// 회사가 받는 데이터가 늘어난다 — installer/local.go 의 불변식 1 위반이다.
+func TestCodex회사직결출력은변하지않는다(t *testing.T) {
+	m := companyManifest() // endpoint 는 https://collector.example.com
+	table, err := codexOTelTable(m, "company-token")
+	if err != nil {
+		t.Fatalf("codexOTelTable: %v", err)
+	}
+
+	if _, ok := table[codexMetricsExporterKey]; ok {
+		t.Error("회사 직결 설정에 metrics_exporter 가 생겼다 — 회사가 받는 데이터가 늘어난다")
+	}
+	if _, ok := table[codexTracesExporterKey]; ok {
+		t.Error("회사 직결 설정에 trace_exporter 가 생겼다 — 회사가 받는 데이터가 늘어난다")
+	}
+
+	exporter, _ := table[codexLogsExporterKey].(map[string]any)
+	inner, _ := exporter["otlp-http"].(map[string]any)
+	if inner == nil {
+		t.Fatalf("회사 직결 exporter 표가 없다: %v", table)
+	}
+	// 경로를 붙이지 않은 base endpoint 그대로여야 한다.
+	if got := inner["endpoint"]; got != m.OTLP.Endpoint {
+		t.Errorf("endpoint = %v, want %v (경로를 붙이면 안 된다)", got, m.OTLP.Endpoint)
+	}
+	headers, _ := inner["headers"].(map[string]any)
+	if _, ok := headers[LocalIngestHeader]; ok {
+		t.Error("회사 직결 설정에 로컬 헤더가 붙었다")
+	}
 }
 
 // TestMergeCodexLocalEndpointAddsLocalHeader 는 재배선된 Codex 설정이 수신기의 3중 인증을
