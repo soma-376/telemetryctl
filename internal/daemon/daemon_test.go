@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/your-org/pulsemetry/internal/autostart"
 	"github.com/your-org/pulsemetry/internal/contract"
 	"github.com/your-org/pulsemetry/internal/event"
 	"github.com/your-org/pulsemetry/internal/forward"
@@ -767,6 +768,24 @@ func TestCapTailDropsOldest(t *testing.T) {
 	same := capTail([]int{1, 2}, 3, "테스트", logger)
 	if len(same) != 2 {
 		t.Errorf("상한 이하인데 잘렸다: %v", same)
+	}
+}
+
+// TestTimeoutStopSec는데몬종료예산보다커야한다 는 두 패키지에 걸친 불변식이다 (PROJ-55).
+//
+// systemd 유닛의 TimeoutStopSec 이 이 데몬의 종료 예산보다 작으면, systemd 가 flush
+// 도중에 SIGKILL 을 보내 미저장 집계를 잃고 runtime.json 이 남는다. 그 증상은 재부팅
+// 때만 나타나고 로그에는 아무 흔적도 없어서 재현이 거의 불가능하다.
+//
+// **테스트를 이쪽에 두는 것이 load-bearing 이다.** 반대 방향(internal/autostart 가
+// internal/daemon 을 import)이면 SQLite·protobuf 가 CLI 의 status 경로까지 딸려 들어온다.
+// 테스트 전용 역방향 import 는 프로덕션 의존 사이클을 만들지 않는다.
+// 저장소가 이미 retention-days 교차 확인에 같은 패턴을 쓴다 (installer/state.go 의
+// "두 값이 어긋나면 daemon 패키지의 테스트가 잡는다").
+func TestTimeoutStopSec는데몬종료예산보다커야한다(t *testing.T) {
+	if autostart.TimeoutStopSec <= DefaultShutdownTimeout {
+		t.Fatalf("autostart.TimeoutStopSec(%v) 는 DefaultShutdownTimeout(%v) 보다 커야 한다",
+			autostart.TimeoutStopSec, DefaultShutdownTimeout)
 	}
 }
 
