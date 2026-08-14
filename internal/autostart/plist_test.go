@@ -5,14 +5,36 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-// Tier 1 — 순수 렌더러 테스트다. 빌드 태그를 쓰지 않기로 한 덕에 **세 러너 모두에서** 돈다.
+// Tier 1 — 순수 렌더러 테스트다. 빌드 태그를 쓰지 않기로 한 덕에 darwin.go 는 **세 러너
+// 모두에서 컴파일되고 go vet 대상에 들어간다** — 플랫폼 파일 분리를 거부한 이유가 그것이고,
+// 그 값은 그대로 살아 있다.
+//
+// 다만 렌더 결과 검증이 실제로 도는 곳은 darwin·linux 다. windows 는 TestRenderPlist 를
+// 스킵한다. 사유는 렌더러의 플랫폼 의존이 아니라 아래 defaultPlist 의 픽스처 제약이다.
+//
 // 이 테스트들이 이 티켓에서 가장 값어치 있는 회귀 방어선이다: plist 가 깨져도 launchd 는
 // 조용히 job 을 띄우지 않을 뿐이라 운영에서는 "아무 일도 안 일어남" 으로만 보인다.
 
+// defaultPlist 는 렌더러 입력 픽스처다.
+//
+// # 이 픽스처는 GOOS 에 의존한다 (렌더러는 아니다)
+//
+// 로그 경로를 filepath.Join 으로 만드는데, windows 의 Join 은 내부 Clean 을 거치며 구분자를
+// 전부 `\` 로 바꾼다 — `\Users\tester\Library\Logs\pulsemetry\daemon.log`. 반면 기대값은
+// macOS 경로라 슬래시로 적혀 있어 비교가 어긋난다. renderPlist 자체는 문자열만 조립하는
+// 순수 함수라 GOOS 와 무관하게 같은 바이트를 낸다. **깨지는 것은 렌더러가 아니라 이 픽스처다.**
+//
+// 픽스처를 GOOS 중립으로(path.Join·리터럴) 고치는 대신 windows 를 스킵하기로 했다. plist 는
+// windows 자동 실행 경로에 아예 등장하지 않기 때문이다 — autostart.New 의 switch 는
+// darwin·linux 만 받고 windows 는 ErrUnsupportedPlatform 이며(작업 스케줄러는 PROJ-56),
+// 순수 함수를 세 번째 러너에서 한 번 더 돌려도 새로 잡히는 회귀가 없다.
+//
+// **이 픽스처를 GOOS 중립으로 고치는 날 TestRenderPlist 의 스킵도 함께 지워라.**
 func defaultPlist(execPath, home string) string {
 	return string(renderPlist(plistParams{
 		Label:             Label,
@@ -25,6 +47,9 @@ func defaultPlist(execPath, home string) string {
 }
 
 func TestRenderPlist(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("픽스처(defaultPlist)의 로그 경로가 GOOS 의존이다 — 렌더러 문제가 아니다")
+	}
 	const exec = "/usr/local/bin/telemetryctl"
 	const home = "/Users/tester"
 	out := defaultPlist(exec, home)

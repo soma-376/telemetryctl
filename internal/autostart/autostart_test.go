@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -111,9 +112,22 @@ func TestDarwinEnable명령순서(t *testing.T) {
 	if !presentAtBootstrap {
 		t.Fatal("bootstrap 시점에 plist 가 디스크에 없었다")
 	}
-	if perm != 0o644 {
-		t.Errorf("plist 권한 = %v, want 0644", perm)
-	}
+	// 권한만 떼어 낸다. windows 는 POSIX 권한 비트를 저장하지 않고 FILE_ATTRIBUTE_READONLY
+	// 한 비트로 축약해서, os.Stat 이 읽기 전용이면 0444 를 아니면 0666 을 합성한다 —
+	// **0644 는 그 OS 에서 관측 자체가 불가능하다.** AtomicWriteFile 이 넘긴 0o644 도
+	// windows 의 Chmod 에서는 owner write 비트만 쓰여 "읽기 전용 해제" 로 끝난다.
+	// 즉 0666 은 파일이 느슨하게 쓰인 것이 아니라 그 정보가 애초에 없다는 뜻이다.
+	//
+	// 위의 명령 순서·bootstrap 시점 존재 단언은 windows 에서도 유효하므로 함께 끄지 않는다.
+	// perm 은 Enable 중 onCall 에서 이미 포착된 값이고 여기서는 읽기만 한다.
+	t.Run("plist 권한은 0644 다", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("windows 는 POSIX 권한 비트를 쓰지 않는다")
+		}
+		if perm != 0o644 {
+			t.Errorf("plist 권한 = %v, want 0644", perm)
+		}
+	})
 	if res.Kind != KindLaunchd || res.UnitPath != plistPath {
 		t.Errorf("Result = %+v", res)
 	}
