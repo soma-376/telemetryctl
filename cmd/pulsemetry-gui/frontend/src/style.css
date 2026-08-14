@@ -1,0 +1,80 @@
+:root {
+    font-family: Inter, Pretendard, system-ui, sans-serif;
+    color: #eaf0f8;
+    background: #0a0f18;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+}
+
+main {
+    min-height: 100vh;
+    padding: 28px clamp(28px, 6vw, 72px);
+    background: radial-gradient(circle at 80% 12%, #3dc4b11f, transparent 30%), #0a0f18;
+}
+
+nav {
+    display: flex;
+    justify-content: space-between;
+}
+
+nav span {
+    color: #68768b;
+    font-size: 12px;
+}
+
+.hero {
+    max-width: 760px;
+    padding-top: clamp(76px, 13vh, 130px);
+}
+
+.eyebrow {
+    color: #6dd7c7;
+    font-size: 12px;
+    font-weight: 750;
+    letter-spacing: .14em;
+}
+
+h1 {
+    margin: 16px 0;
+    font-size: clamp(42px, 7vw, 76px);
+    line-height: 1.03;
+    letter-spacing: -.055em;
+}
+
+.description,
+.status p {
+    color: #94a1b5;
+}
+
+.status {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    max-width: 760px;
+    margin-top: 64px;
+    padding: 22px 24px;
+    border: 1px solid #222d40;
+    border-radius: 16px;
+    background: #121a28c7;
+}
+
+.status i {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #d5a348;
+    box-shadow: 0 0 16px #d5a34873;
+}
+
+.status p {
+    margin: 5px 0 0;
+    font-size: 14px;
+}
