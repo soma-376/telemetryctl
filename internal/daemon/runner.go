@@ -30,6 +30,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/your-org/pulsemetry/internal/autostart"
 	"github.com/your-org/pulsemetry/internal/forward"
 	"github.com/your-org/pulsemetry/internal/hostenv"
 	"github.com/your-org/pulsemetry/internal/installer"
@@ -454,6 +455,7 @@ func (d *daemon) loop(ctx context.Context) {
 	// 기동 직후 한 번씩 돌린다. 한 시간을 못 살고 재시작되는 환경에서도 보존 정책이
 	// 적용되고, 토큰 문제를 첫 페이로드가 아니라 지금 발견한다.
 	d.pipe.submit(cmdPrune)
+	d.rotateAutostartLogs()
 	d.warmToken(ctx)
 
 	for {
@@ -467,9 +469,28 @@ func (d *daemon) loop(ctx context.Context) {
 			d.pipe.submit(cmdSessions)
 		case <-pruneT.C:
 			d.pipe.submit(cmdPrune)
+			d.rotateAutostartLogs()
 		case <-tokenT.C:
 			d.warmToken(ctx)
 		}
+	}
+}
+
+// rotateAutostartLogs 는 자동 실행 로그가 상한을 넘으면 회전시킨다 (PROJ-55).
+//
+// 보존 정책 틱에 얹는 이유는 성격이 같기 때문이다 — 둘 다 "오래되거나 커진 것을 시간
+// 단위로 정리한다" 이고, 실패해도 다음 틱이 그대로 재시도한다.
+//
+// **이 패키지는 플랫폼을 알 필요가 없다.** launchd 만 로그 파일을 남기고 systemd 는
+// journald 가 로테이션까지 맡는데, 그 판단은 전부 autostart.RotateLogs 안에 있다
+// (LogDir 가 비면 no-op). 실패는 로깅만 한다 — 로그가 커진 것은 수집을 멈출 이유가 아니다.
+func (d *daemon) rotateAutostartLogs() {
+	env, err := hostenv.Detect()
+	if err != nil {
+		return
+	}
+	if err := autostart.RotateLogs(env); err != nil {
+		d.log.Printf("경고: 자동 실행 로그 회전 실패: %v", err)
 	}
 }
 
