@@ -1,17 +1,13 @@
 <script lang="ts">
-  import type { Summary, MascotHeadline } from "../../../lib/types";
+  import type { Summary } from "../../../lib/types";
   import { formatTokens } from "../../../lib/format";
   import MetricCard from "./MetricCard.svelte";
-  import Mascot from "../../../lib/components/Mascot.svelte";
   import ClockIcon from "../../../lib/icons/ClockIcon.svelte";
   import PulseIcon from "../../../lib/icons/PulseIcon.svelte";
   import WaveIcon from "../../../lib/icons/WaveIcon.svelte";
 
-  let {
-    summary,
-    mascot,
-    deltaNoun,
-  }: { summary: Summary; mascot: MascotHeadline; deltaNoun: string } = $props();
+  let { summary, deltaNoun }: { summary: Summary; deltaNoun: string } =
+    $props();
 
   const arrow = (d: number) =>
     d > 0 ? `▲ ${d}%` : d < 0 ? `▼ ${Math.abs(d)}%` : "–";
@@ -20,7 +16,7 @@
 
 <div
   class="grid items-stretch"
-  style="grid-template-columns:repeat(4,minmax(170px,1fr)) minmax(230px,420px);gap:14px"
+  style="grid-template-columns:repeat(4,minmax(0,1fr));gap:14px"
 >
   <MetricCard
     iconBg="var(--color-accent-soft)"
@@ -31,7 +27,7 @@
     deltaColor="var(--color-accent)"
     deltaNote={note(summary.activeTimeDelta)}
   >
-    {#snippet icon()}<ClockIcon />{/snippet}
+    {#snippet icon()}<ClockIcon size={17} />{/snippet}
   </MetricCard>
 
   <MetricCard
@@ -43,7 +39,7 @@
     deltaColor="var(--color-info)"
     deltaNote={note(summary.tokensDelta)}
   >
-    {#snippet icon()}<PulseIcon />{/snippet}
+    {#snippet icon()}<PulseIcon size={17} />{/snippet}
   </MetricCard>
 
   <MetricCard
@@ -55,7 +51,7 @@
     deltaColor="var(--color-success)"
     deltaNote={note(summary.costDelta)}
   >
-    {#snippet icon()}<span style="font-size:15px;font-weight:700">$</span
+    {#snippet icon()}<span style="font-size:16px;font-weight:700">$</span
       >{/snippet}
   </MetricCard>
 
@@ -68,22 +64,6 @@
     deltaColor="var(--color-text-muted)"
     deltaNote={note(summary.sessionsDelta)}
   >
-    {#snippet icon()}<WaveIcon />{/snippet}
+    {#snippet icon()}<WaveIcon size={17} />{/snippet}
   </MetricCard>
-
-  <div class="flex items-end justify-center" style="gap:22px;padding:0 8px">
-    <div class="flex flex-col items-center" style="gap:8px">
-      <Mascot pose={mascot.pose} height={128} />
-      <div
-        class="bg-border-strong"
-        style="width:150px;height:2px;border-radius:2px"
-      ></div>
-    </div>
-    <div
-      class="text-text whitespace-pre"
-      style="font-size:16px;line-height:1.7;padding-bottom:28px"
-    >
-      {mascot.msg}
-    </div>
-  </div>
 </div>

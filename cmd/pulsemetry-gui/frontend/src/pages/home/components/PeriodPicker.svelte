@@ -83,14 +83,16 @@
   <button
     type="button"
     onclick={toggle}
-    class="bg-surface border-border text-text hover:border-border-strong flex items-center rounded-full border transition-colors duration-[120ms] ease-in-out"
-    style="gap:7px;padding:7px 13px;font-size:12.5px"
+    class="bg-surface border-border text-text hover:border-border-strong flex items-center rounded-[10px] border whitespace-nowrap transition-colors duration-[120ms] ease-in-out"
+    style="gap:8px;padding:9px 14px;font-size:13px"
   >
-    <CalendarIcon size={15} strokeWidth={1.7} />
+    <CalendarIcon size={15} strokeWidth={1.7} class="text-text-secondary" />
     <span class="font-semibold">{periodDateText(period.value)}</span>
     <ChevronDownIcon
       size={13}
-      class={open ? "rotate-180 transition-transform" : "transition-transform"}
+      class="text-text-muted {open
+        ? 'rotate-180 transition-transform'
+        : 'transition-transform'}"
     />
   </button>
 

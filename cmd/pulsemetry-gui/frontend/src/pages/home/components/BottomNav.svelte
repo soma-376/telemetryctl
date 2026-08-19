@@ -12,29 +12,32 @@
   }: { active?: Tab; onSelect?: (tab: Tab) => void } = $props();
 
   const TABS = [
-    { id: "overview", label: "Overview", icon: HomeIcon },
+    { id: "overview", label: "Home", icon: HomeIcon },
     { id: "activity", label: "Activity", icon: ListIcon },
     { id: "insights", label: "Insights", icon: BarsIcon },
     { id: "settings", label: "Settings", icon: GearIcon },
   ] as const;
 </script>
 
-<nav class="mx-auto w-full" style="max-width:1520px;padding:14px 28px 22px">
+<nav
+  class="mx-auto w-full"
+  style="max-width:var(--page-max-width);padding:12px 32px 18px"
+>
   <div
     class="bg-surface border-border flex border"
-    style="gap:8px;border-radius:16px;padding:6px"
+    style="gap:6px;border-radius:16px;padding:7px"
   >
     {#each TABS as tab (tab.id)}
       {@const isActive = active === tab.id}
       <button
         type="button"
         onclick={() => onSelect?.(tab.id)}
-        class="flex flex-1 cursor-pointer items-center justify-center border-none font-semibold transition-colors duration-[120ms] ease-in-out {isActive
+        class="flex flex-1 cursor-pointer items-center justify-center border-none font-semibold whitespace-nowrap transition-colors duration-[120ms] ease-in-out {isActive
           ? 'bg-accent-soft text-accent'
           : 'text-text-secondary bg-transparent hover:bg-surface-hover'}"
-        style="gap:8px;padding:12px;border-radius:12px;font-size:13.5px"
+        style="gap:9px;padding:12px 8px;border-radius:12px;font-size:14px"
       >
-        <tab.icon size={19} strokeWidth={1.8} />
+        <tab.icon size={17} strokeWidth={1.8} />
         {tab.label}
       </button>
     {/each}

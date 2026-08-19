@@ -5,8 +5,8 @@
   let { agent, size = "md" }: { agent: AgentId; size?: "sm" | "md" | "lg" } =
     $props();
 
-  const DIM = { sm: 24, md: 38, lg: 40 } as const;
-  const RADIUS = { sm: 7, md: 11, lg: 12 } as const;
+  const DIM = { sm: 24, md: 32, lg: 40 } as const;
+  const RADIUS = { sm: 7, md: 10, lg: 12 } as const;
 
   const style = $derived(AGENT_STYLE[agent]);
   const dim = $derived(DIM[size]);

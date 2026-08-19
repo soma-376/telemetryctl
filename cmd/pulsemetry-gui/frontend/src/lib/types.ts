@@ -6,6 +6,7 @@ export type MascotPose =
   | "tired"
   | "watching"
   | "collecting-alt"
+  | "found"
   | "found-alt"
   | "warning"
   | "no-data"
@@ -53,6 +54,25 @@ export interface Insight {
 export interface MascotHeadline {
   pose: MascotPose;
   msg: string;
+}
+
+export interface VendorLimit {
+  scope: string;
+  reset: string;
+  /** 남은 비율(%) — 벤더 rate-limit 응답 기준 */
+  pct: number;
+  remain: string;
+  used: string;
+}
+
+export interface VendorUsage {
+  id: AgentId;
+  plan: string;
+  spend: string;
+  spendNote: string;
+  tokens: string;
+  credential: string;
+  limits: VendorLimit[];
 }
 
 export interface Connection {

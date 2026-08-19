@@ -6,6 +6,7 @@ import type {
   MascotHeadline,
   Connection,
   PeriodRange,
+  VendorUsage,
 } from "../../lib/types";
 import { periodBucket } from "../../lib/period.svelte";
 
@@ -89,6 +90,53 @@ const HEADLINES: Record<Bucket, MascotHeadline> = {
   "7d": { pose: "normal", msg: "이번 주도\n잘 달렸어." },
   month: { pose: "normal", msg: "이번 달\n페이스 좋아." },
 };
+
+// 벤더별 한도 — 각 벤더 자격 증명으로 조회한 값. 남은 %는 벤더의
+// rate-limit 응답 기준이라 로컬 토큰 집계와 무관하며, 기간 스코프도 안 탄다.
+const VENDORS: VendorUsage[] = [
+  {
+    id: "claude",
+    plan: "Max 20x",
+    spend: "$2.14",
+    spendNote: "오늘",
+    tokens: "102k tokens",
+    credential: "OAuth · claude.ai 계정",
+    limits: [
+      { scope: "5시간 한도", reset: "5시간 46분 뒤 초기화", pct: 93, remain: "93% 남음", used: "7% 사용" },
+      { scope: "주간 한도", reset: "3일 17시간 뒤 초기화", pct: 64, remain: "64% 남음", used: "36% 사용" },
+      { scope: "월별 크레딧", reset: "8월 31일 초기화", pct: 71, remain: "$5.0k 남음", used: "$2.1k 사용" },
+    ],
+  },
+  {
+    id: "codex",
+    plan: "Pro",
+    spend: "$1.32",
+    spendNote: "오늘",
+    tokens: "55k tokens",
+    credential: "API key · sk-…f2a9",
+    limits: [
+      { scope: "5시간 한도", reset: "5시간 34분 뒤 초기화", pct: 90, remain: "90% 남음", used: "10% 사용" },
+      { scope: "주간 한도", reset: "7일 · 3일 17시간 뒤", pct: 55, remain: "55% 남음", used: "45% 사용" },
+      { scope: "GPT-5.3-Codex-Spark", reset: "5시간 뒤 초기화", pct: 100, remain: "100% 남음", used: "미사용" },
+    ],
+  },
+  {
+    id: "gemini",
+    plan: "Ultra",
+    spend: "$0.36",
+    spendNote: "오늘",
+    tokens: "24k tokens",
+    credential: "OAuth · Google Cloud",
+    limits: [
+      { scope: "일일 한도", reset: "23시간 58분 뒤 초기화", pct: 100, remain: "100% 남음", used: "미사용" },
+      { scope: "Gemini 3.1 Pro", reset: "23시간 58분 뒤", pct: 98, remain: "98% 남음", used: "2% 사용" },
+      { scope: "Gemini Pro", reset: "23시간 58분 뒤", pct: 100, remain: "100% 남음", used: "미사용" },
+    ],
+  },
+];
+
+export const vendorUsage: VendorUsage[] = VENDORS;
+export const vendorSyncedText = "40초 전 동기화";
 
 export const connection: Connection = { online: true, activeAgents: 3 };
 export const liveTokensToday = SUMMARY.today.tokens;

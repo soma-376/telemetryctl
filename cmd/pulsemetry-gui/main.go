@@ -15,7 +15,7 @@ var assets embed.FS
 func main() {
 	app := NewApp()
 	if err := wails.Run(&options.App{
-		Title: "Pulsemetry", Width: 1180, Height: 760, MinWidth: 960, MinHeight: 640,
+		Title: "Pulsemetry", Width: 1080, Height: 860, MinWidth: 880, MinHeight: 640,
 		AssetServer: &assetserver.Options{Assets: assets},
 		OnStartup:   app.startup,
 		Bind:        []interface{}{app},

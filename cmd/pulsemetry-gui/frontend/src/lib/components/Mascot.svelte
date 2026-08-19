@@ -5,6 +5,7 @@
   import tired from "../assets/pulse/tired.png";
   import watching from "../assets/pulse/watching.png";
   import collectingAlt from "../assets/pulse/collecting-alt.png";
+  import found from "../assets/pulse/found.png";
   import foundAlt from "../assets/pulse/found-alt.png";
   import warning from "../assets/pulse/warning.png";
   import noData from "../assets/pulse/no-data.png";
@@ -18,6 +19,7 @@
     tired,
     watching,
     "collecting-alt": collectingAlt,
+    found,
     "found-alt": foundAlt,
     warning,
     "no-data": noData,

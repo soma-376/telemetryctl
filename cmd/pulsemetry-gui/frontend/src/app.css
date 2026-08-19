@@ -1,6 +1,11 @@
 @import "tailwindcss";
 
 @theme {
+  /* ── Page width: Overview v2 기준 ─────────────────────
+     본문·헤더·내비 공통 폭. 좌우 패딩은 32px 고정. */
+  --page-min-width: 880px;
+  --page-max-width: 1080px;
+
   /* Surfaces */
   --color-bg: #f7f4ef;
   --color-surface: #fffdfc;
@@ -42,6 +47,7 @@
   --color-info-hover: #3d6ae0;
   --color-warning: #e99a2c;
   --color-danger: #e35d5d;
+  --color-danger-strong: #c24a4a;
   --color-inactive: #8c8882;
 
   --color-success-soft: #e8f6ee;
@@ -110,6 +116,19 @@
 
   to {
     opacity: 1;
+  }
+}
+
+/* 설정 모달 등장 */
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 
