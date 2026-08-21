@@ -235,3 +235,52 @@ END`,
   PRIMARY KEY (hour, dim, "key")
 ) WITHOUT ROWID`,
 }
+
+// schemaV2 는 세션 안의 턴과 연속된 턴 범위의 단계 분류 결과를 저장할 자리를 추가한다.
+// 실제 턴 조립·분류는 후속 작업의 몫이라 기존 행을 추측해 백필하지 않는다.
+var schemaV2 = []string{
+	`CREATE TABLE turns (
+  session_id          TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+  turn_index          INTEGER NOT NULL,
+  started_at          INTEGER NOT NULL,
+  last_event_at       INTEGER NOT NULL,
+  ended_at            INTEGER,
+  prompt_length       INTEGER NOT NULL DEFAULT 0,
+  work_type           TEXT,
+  duration_ms         INTEGER NOT NULL DEFAULT 0,
+  active_seconds      REAL NOT NULL DEFAULT 0,
+  input_tokens        INTEGER NOT NULL DEFAULT 0,
+  output_tokens       INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens   INTEGER NOT NULL DEFAULT 0,
+  cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd            REAL NOT NULL DEFAULT 0,
+  tool_calls          INTEGER NOT NULL DEFAULT 0,
+  tool_errors         INTEGER NOT NULL DEFAULT 0,
+  tool_rejects        INTEGER NOT NULL DEFAULT 0,
+  api_requests        INTEGER NOT NULL DEFAULT 0,
+  api_errors          INTEGER NOT NULL DEFAULT 0,
+  retries             INTEGER NOT NULL DEFAULT 0,
+  responses           INTEGER NOT NULL DEFAULT 0,
+  lines_added         INTEGER NOT NULL DEFAULT 0,
+  lines_removed       INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (session_id, turn_index)
+) WITHOUT ROWID`,
+
+	`CREATE TABLE session_phases (
+  session_id          TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+  phase_index         INTEGER NOT NULL,
+  phase_type          TEXT NOT NULL,
+  start_turn_index    INTEGER NOT NULL,
+  end_turn_index      INTEGER NOT NULL,
+  started_at          INTEGER NOT NULL,
+  last_event_at       INTEGER NOT NULL,
+  turn_count          INTEGER NOT NULL DEFAULT 0,
+  confidence          REAL,
+  classifier          TEXT,
+  classifier_version  TEXT,
+  PRIMARY KEY (session_id, phase_index)
+) WITHOUT ROWID`,
+
+	`ALTER TABLE tool_events ADD COLUMN turn_index INTEGER`,
+	`CREATE INDEX idx_tool_events_turn ON tool_events(session_id, turn_index, ts)`,
+}

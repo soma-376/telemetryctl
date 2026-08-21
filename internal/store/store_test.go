@@ -5,7 +5,10 @@ import (
 	"errors"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+
+	"github.com/your-org/pulsemetry/internal/session"
 )
 
 func TestOpenAppliesMigrations(t *testing.T) {
@@ -22,7 +25,7 @@ func TestOpenAppliesMigrations(t *testing.T) {
 
 	// 계획서 스키마의 테이블·가상 테이블이 전부 만들어졌는지 본다.
 	tables := []string{
-		"meta", "sessions", "session_files", "tool_events", "mcp_session_usage",
+		"meta", "sessions", "turns", "session_phases", "session_files", "tool_events", "mcp_session_usage",
 		"vendors", "events", "event_content", "content_fts", "rollup_hourly",
 	}
 	for _, name := range tables {
@@ -42,7 +45,7 @@ func TestOpenAppliesMigrations(t *testing.T) {
 // 스키마 문자열을 직접 확인하는 수밖에 없다.
 func TestWithoutRowidTables(t *testing.T) {
 	db := openTestDB(t)
-	for _, name := range []string{"session_files", "mcp_session_usage", "rollup_hourly"} {
+	for _, name := range []string{"turns", "session_phases", "session_files", "mcp_session_usage", "rollup_hourly"} {
 		var ddl string
 		err := db.SQL().QueryRowContext(context.Background(),
 			`SELECT sql FROM sqlite_master WHERE type='table' AND name = ?`, name).Scan(&ddl)
@@ -52,6 +55,60 @@ func TestWithoutRowidTables(t *testing.T) {
 		if !contains(ddl, "WITHOUT ROWID") {
 			t.Errorf("%s 가 WITHOUT ROWID 가 아니다", name)
 		}
+	}
+}
+
+func TestTurnAndPhaseSchema(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	rows, err := db.SQL().QueryContext(ctx, `PRAGMA index_info('idx_tool_events_turn')`)
+	if err != nil {
+		t.Fatalf("idx_tool_events_turn 조회: %v", err)
+	}
+	defer rows.Close()
+	var columns []string
+	for rows.Next() {
+		var seq, cid int
+		var name string
+		if err := rows.Scan(&seq, &cid, &name); err != nil {
+			t.Fatalf("idx_tool_events_turn 컬럼 조회: %v", err)
+		}
+		columns = append(columns, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("idx_tool_events_turn 순회: %v", err)
+	}
+	if got := strings.Join(columns, ","); got != "session_id,turn_index,ts" {
+		t.Fatalf("idx_tool_events_turn 컬럼 = %s", got)
+	}
+
+	for _, id := range []string{"sess-1", "sess-2"} {
+		if _, err := db.Write(ctx, Batch{Sessions: []session.Session{newSession(id, baseTime)}}); err != nil {
+			t.Fatalf("세션 %s Write: %v", id, err)
+		}
+		if _, err := db.SQL().ExecContext(ctx, `
+			INSERT INTO turns (session_id, turn_index, started_at, last_event_at)
+			VALUES (?, 1, ?, ?)`, id, baseTime.Unix(), baseTime.Unix()); err != nil {
+			t.Fatalf("턴 %s INSERT: %v", id, err)
+		}
+		if _, err := db.SQL().ExecContext(ctx, `
+			INSERT INTO session_phases
+			  (session_id, phase_index, phase_type, start_turn_index, end_turn_index, started_at, last_event_at, turn_count)
+			VALUES (?, 1, 'implementation', 1, 1, ?, ?, 1)`, id, baseTime.Unix(), baseTime.Unix()); err != nil {
+			t.Fatalf("단계 %s INSERT: %v", id, err)
+		}
+	}
+	if _, err := db.SQL().ExecContext(ctx, `
+		INSERT INTO turns (session_id, turn_index, started_at, last_event_at)
+		VALUES ('sess-1', 1, ?, ?)`, baseTime.Unix(), baseTime.Unix()); err == nil {
+		t.Fatal("같은 세션의 중복 turn_index가 허용됐다")
+	}
+	if _, err := db.SQL().ExecContext(ctx, `
+		INSERT INTO session_phases
+		  (session_id, phase_index, phase_type, start_turn_index, end_turn_index, started_at, last_event_at)
+		VALUES ('sess-1', 1, 'review', 1, 1, ?, ?)`, baseTime.Unix(), baseTime.Unix()); err == nil {
+		t.Fatal("같은 세션의 중복 phase_index가 허용됐다")
 	}
 }
 

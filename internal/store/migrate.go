@@ -20,10 +20,10 @@ import (
 // 새 설치(고친 문장을 실행)의 스키마가 갈리고, 그 차이는 어느 쪽에서도 드러나지 않는다.
 // 잘못된 마이그레이션은 다음 번호의 새 마이그레이션으로 바로잡는다.
 //
-// 예 — 후속 티켓이 phase_json 을 채우며 컬럼을 더할 때:
+// 예 — 후속 티켓이 분류 결과에 컬럼을 더할 때:
 //
-//	{version: 2, name: "세션 단계 신뢰도", stmts: []string{
-//		`ALTER TABLE sessions ADD COLUMN phase_confidence REAL`,
+//	{version: 3, name: "턴 분류 근거", stmts: []string{
+//		`ALTER TABLE turns ADD COLUMN work_type_reason TEXT`,
 //	}},
 type migration struct {
 	version int
@@ -31,9 +31,10 @@ type migration struct {
 	stmts   []string
 }
 
-// migrations 는 버전 오름차순이다. 지금은 버전 1 하나다.
+// migrations 는 버전 오름차순이다.
 var migrations = []migration{
 	{version: 1, name: "초기 스키마", stmts: schemaV1},
+	{version: 2, name: "턴과 세션 단계", stmts: schemaV2},
 }
 
 // LatestSchemaVersion 은 이 바이너리가 아는 최신 스키마 버전이다.

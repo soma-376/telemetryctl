@@ -62,6 +62,59 @@ func TestIncrementalMigration(t *testing.T) {
 	}
 }
 
+func TestMigrateV1ToV2PreservesDataWithoutBackfill(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), DefaultFileName)
+	original := migrations
+	t.Cleanup(func() { migrations = original })
+
+	migrations = original[:1]
+	db, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open v1: %v", err)
+	}
+	if _, err := db.Write(ctx, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}}); err != nil {
+		db.Close()
+		t.Fatalf("v1 Write: %v", err)
+	}
+	const legacyPhaseJSON = `[{"type":"legacy"}]`
+	if _, err := db.SQL().ExecContext(ctx,
+		`UPDATE sessions SET phase_json = ? WHERE session_id = 'sess-1'`, legacyPhaseJSON); err != nil {
+		db.Close()
+		t.Fatalf("v1 phase_json 설정: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("v1 Close: %v", err)
+	}
+
+	migrations = original
+	db, err = Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open v2: %v", err)
+	}
+	defer db.Close()
+
+	var phaseJSON string
+	if err := db.SQL().QueryRowContext(ctx,
+		`SELECT phase_json FROM sessions WHERE session_id = 'sess-1'`).Scan(&phaseJSON); err != nil {
+		t.Fatalf("기존 session 조회: %v", err)
+	}
+	if phaseJSON != legacyPhaseJSON {
+		t.Fatalf("phase_json = %q", phaseJSON)
+	}
+	var nullTurns int
+	if err := db.SQL().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tool_events WHERE session_id = 'sess-1' AND turn_index IS NULL`).Scan(&nullTurns); err != nil {
+		t.Fatalf("기존 tool_events 조회: %v", err)
+	}
+	if nullTurns != 2 {
+		t.Fatalf("turn_index가 NULL인 기존 tool_events = %d, want 2", nullTurns)
+	}
+	if countRows(t, db, "turns") != 0 || countRows(t, db, "session_phases") != 0 {
+		t.Fatal("v2 마이그레이션이 기존 데이터에서 turn 또는 phase를 백필했다")
+	}
+}
+
 // 실패한 마이그레이션은 버전을 올리지 않는다. 올려 버리면 다음 기동이 반쯤 적용된 스키마를
 // 완성된 것으로 믿는다.
 func TestFailedMigrationDoesNotAdvanceVersion(t *testing.T) {
