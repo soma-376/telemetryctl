@@ -1,7 +1,8 @@
 # `sessions`
 
 세션 한 건의 상태, 표시 정보, 누적 사용량을 한 행에 저장하는 화면의 중심 테이블이다.
-`session_files`, `tool_events`, `mcp_session_usage`의 부모이며 기본 400일간 보존한다.
+`turns`, `session_phases`, `session_files`, `tool_events`, `mcp_session_usage`의 부모이며 기본
+400일간 보존한다.
 
 ## 식별·상태·시간 컬럼
 
@@ -52,22 +53,23 @@
 
 | 컬럼 | 타입 | 필수 여부·기본값 | 설명 |
 |---|---|---|---|
-| `phase_json` | `TEXT` | 선택, `NULL` | 후속 단계 분류 결과를 담을 JSON 문자열 |
-| `work_type` | `TEXT` | 선택, `NULL` | 후속 작업 유형 분류값 |
+| `phase_json` | `TEXT` | 선택, `NULL` | 스키마 버전 1과의 호환성을 위해 남겨 둔 레거시 단계 분류 JSON. 신규 결과는 `session_phases`에 저장 |
+| `work_type` | `TEXT` | 선택, `NULL` | 세션 전체의 후속 작업 유형 분류값. 턴별 결과는 `turns.work_type`에 저장 |
 
 ## 키·인덱스·관계
 
 | 항목 | 내용 |
 |---|---|
 | 기본 키 | `session_id` |
-| 자식 테이블 | `session_files`, `tool_events`, `mcp_session_usage` |
+| 자식 테이블 | `turns`, `session_phases`, `session_files`, `tool_events`, `mcp_session_usage` |
 | 시간 인덱스 | `idx_sessions_started(started_at)` |
 | 상태 인덱스 | `idx_sessions_status(status, last_event_at)` |
 | 벤더 인덱스 | `idx_sessions_vendor(vendor, started_at)` |
 | 프로젝트 인덱스 | `idx_sessions_project(project_hash, started_at)` |
 | 보존 기준 | `started_at`이 아니라 `last_event_at` 기준 400일 |
 
-`phase_json`과 `work_type`은 후속 분류 작업을 위한 컬럼이며 현재 세션 UPSERT가 덮어쓰지 않는다.
+`phase_json`과 `work_type`은 현재 세션 UPSERT가 덮어쓰지 않는다. `phase_json`은 삭제하거나
+백필하지 않지만 신규 단계 분류의 저장소로 사용하지 않는다.
 
 ## 참고용 DDL
 

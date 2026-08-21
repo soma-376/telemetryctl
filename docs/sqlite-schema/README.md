@@ -5,7 +5,7 @@ DDL은 설명을 검증하고 복사할 때 쓰는 참고 자료다. 스키마�
 새 마이그레이션과 구현·테스트를 문서에 맞춰 변경한다. 이미 배포된 마이그레이션은 고치지 않고 다음
 버전의 마이그레이션으로 변경한다.
 
-현재 구현은 `internal/store/schema.go`의 스키마 버전 1이며, 데이터베이스 파일은
+현재 구현은 `internal/store/schema.go`의 스키마 버전 2이며, 데이터베이스 파일은
 `<data-dir>/pulsemetry.db`(기본 `~/.pulsemetry/pulsemetry.db`)다. 드라이버는 순수 Go 구현인
 `modernc.org/sqlite`이고 드라이버 이름은 `sqlite`다. 데몬이 유일한 쓰기 주체이고 GUI와 CLI는
 read-only 연결을 사용한다. CI의 `CGO_ENABLED=0` 빌드는 SQLite 계층이 C 툴체인을 요구하지 않는다는
@@ -17,6 +17,8 @@ read-only 연결을 사용한다. CI의 `CGO_ENABLED=0` 빌드는 SQLite 계층�
 |---|---|---|
 | [`meta`](meta.md) | 스키마 버전과 설치·보존 메타데이터 | 삭제 대상 아님 |
 | [`sessions`](sessions.md) | 화면의 중심이 되는 세션별 합계 | 400일 |
+| [`turns`](turns.md) | 세션 안에서 프롬프트로 구분한 턴별 합계 | 400일, 세션 삭제 시 CASCADE |
+| [`session_phases`](session-phases.md) | 연속된 턴을 묶은 세션 단계 분류 결과 | 400일, 세션 삭제 시 CASCADE |
 | [`session_files`](session-files.md) | 세션별 파일 변경량 | 400일, 세션 삭제 시 CASCADE |
 | [`tool_events`](tool-events.md) | 세션의 툴 실행 타임라인 | 30일 |
 | [`mcp_session_usage`](mcp-session-usage.md) | 세션별 MCP 서버 사용량 | 400일, 세션 삭제 시 CASCADE |
@@ -57,7 +59,7 @@ read-only 연결을 사용한다. CI의 `CGO_ENABLED=0` 빌드는 SQLite 계층�
 | 계층 | 기본 보존 | 직접 삭제 | 연쇄 삭제 | 삭제 후 화면 동작 |
 |---|---:|---|---|---|
 | 이벤트 | 30일 | `event_content`, `events`, `tool_events` | `events` 삭제 시 남은 `event_content` | 세션 합계와 파일 목록은 보이고 원문과 툴 타임라인은 비어 있음 |
-| 세션 | 400일 | `sessions`, `rollup_hourly`, `vendors` | `session_files`, `mcp_session_usage`, 남은 `tool_events` | 세션과 장기 집계가 화면에서 제거됨 |
+| 세션 | 400일 | `sessions`, `rollup_hourly`, `vendors` | `turns`, `session_phases`, `session_files`, `mcp_session_usage`, 남은 `tool_events` | 세션과 장기 집계가 화면에서 제거됨 |
 
 세션 보존 기준은 `started_at`이 아니라 `last_event_at`이다. 전체 prune은 단일 트랜잭션이며, 실패하면
 부분 삭제 없이 다음 주기에 재시도한다. `event_content`는 FTS5 동기화를 보장하기 위해 `events`보다
@@ -67,6 +69,9 @@ read-only 연결을 사용한다. CI의 `CGO_ENABLED=0` 빌드는 SQLite 계층�
 
 `meta.local_schema_version`을 기준으로 `internal/store/migrate.go`의 마이그레이션을 버전 순서대로
 적용한다. 마이그레이션 하나는 트랜잭션 하나다.
+
+버전 2는 `turns`와 `session_phases`를 만들고 `tool_events.turn_index`를 추가한다. 기존 행은
+turn 경계를 추측해 백필하지 않으므로 `tool_events.turn_index`가 `NULL`로 남는다.
 
 | 순서 | 작업 | 규칙 |
 |---:|---|---|

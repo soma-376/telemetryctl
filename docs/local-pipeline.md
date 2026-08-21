@@ -850,9 +850,10 @@ ls ~/.config/systemd/user 2>/dev/null | grep -i pulsemetry || echo "OK: 등록�
 1. **데몬 자동 실행 등록 — Windows** (PROJ-56, 작업 스케줄러). macOS·리눅스는 PROJ-55 에서 끝났다
    (7.7절, ADR 0007). Settings 「시작 프로그램」 토글은 `autostart.Manager` 를 감싸면 되고,
    등록 상태를 `state.json` 에 두지 않으므로 토글의 진실원은 OS 서비스 관리자 하나다
-2. **세션 단계 분류 + 작업 유형 분포** — `sessions.phase_json`·`work_type` 컬럼을 채운다. 지금은 두
-   컬럼이 NULL 이고 `session.Session` 에는 대응 필드가 **아예 없다**(없으면 실수로 채울 수 없다).
-   `sessions` UPSERT 가 두 컬럼을 제외하므로 후속 티켓이 채운 값을 다음 스냅샷이 덮지 않는다
+2. **turn 조립 + 세션 단계 분류 + 작업 유형 분포** — 사용자 프롬프트를 경계로 `turns`를 채우고
+   `turns.work_type`과 `session_phases`에 분류 결과를 저장한다. 현재 스키마는 저장 자리만 제공하며
+   `session.Session`과 세션 UPSERT에는 turn·phase 생성 경로가 없다. 레거시 `sessions.phase_json`은
+   호환성을 위해 남기지만 신규 결과 저장소로 사용하지 않는다
 3. **Insights 경고 카드·제안** — 반복 실패 감지, 유사 프롬프트 탐지, 벤더 전환 분석
 4. **제목·요약 품질 개선** (`title_source='llm'`) — 프롬프트를 외부로 보내는 문제라 **별도 프라이버시
    검토가 선행**되어야 한다. ADR 0003 은 원문이 로컬을 떠나지 않는다는 전제 위에 서 있고, 그 전제를

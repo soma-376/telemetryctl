@@ -9,6 +9,7 @@
 |---|---|---|---|
 | `id` | `INTEGER` | 필수, 기본 키 | 툴 이벤트 대리 키 |
 | `session_id` | `TEXT` | 필수 | 툴 실행이 속한 세션 ID |
+| `turn_index` | `INTEGER` | 선택, `NULL` | 세션 안에서 툴 실행이 속한 턴 번호. 기존 행과 판별 불가능한 이벤트는 `NULL` |
 | `ts` | `INTEGER` | 필수 | 실행 시각, UTC unix 초 |
 | `tool_name` | `TEXT` | 필수 | 실행한 툴 이름 |
 | `action` | `TEXT` | 선택, `NULL` | 툴에서 수행한 동작 |
@@ -26,8 +27,10 @@
 |---|---|
 | 기본 키 | `id` |
 | 부모 | `session_id` → `sessions.session_id` |
+| 턴 연결 | `(session_id, turn_index)`로 `turns`와 논리적으로 연결. 복합 외래 키는 두지 않음 |
 | 삭제 | 부모 세션 삭제 시 `ON DELETE CASCADE`; 보존 정책은 30일 후 직접 삭제 |
 | 인덱스 | `idx_tool_events_session(session_id, ts)`로 세션별 시간순 조회 지원 |
+| 턴 인덱스 | `idx_tool_events_turn(session_id, turn_index, ts)`로 특정 턴의 툴 이벤트를 시간순 조회 |
 | 프라이버시 | 대상 전체 경로는 저장하지 않고 해시와 표시 이름만 저장 |
 
 ## 참고용 DDL
@@ -49,4 +52,8 @@ CREATE TABLE tool_events (
 );
 
 CREATE INDEX idx_tool_events_session ON tool_events(session_id, ts);
+
+-- 스키마 버전 2
+ALTER TABLE tool_events ADD COLUMN turn_index INTEGER;
+CREATE INDEX idx_tool_events_turn ON tool_events(session_id, turn_index, ts);
 ```

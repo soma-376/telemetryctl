@@ -171,5 +171,5 @@ enrollment 서버 스펙은 서버 저장소를 참조하세요.
 3. 토큰 rotation · heartbeat · 설정 재조회(`GET /v1/manifest`)
 4. `resource_attributes` → `OTEL_RESOURCE_ATTRIBUTES` 배선 (회사 단위 태깅)
 5. 설치 바이너리 PATH 등록, `uninstall`·`repair` (자격증명 파일에서 헤더 재주입)
-6. 세션 단계 분류·작업 유형 분포 (`sessions.phase_json`·`work_type` 채우기) 및 Insights 카드
+6. turn 조립과 `turns.work_type`·`session_phases` 분류 결과 생성 및 Insights 카드
 7. Codex 텔레메트리 인증 배선 (현재 Codex 설정에는 토큰이 들어가지 않음)
