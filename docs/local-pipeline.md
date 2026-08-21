@@ -227,89 +227,10 @@ sqlite3 "$DB" "SELECT body FROM event_content WHERE kind='tool_input';" | grep -
 
 ## 5. SQLite 스키마
 
-실제 DDL 은 `internal/store/schema.go` 의 `schemaV1` 이다. 파일은 `<data-dir>/pulsemetry.db`
-(기본 `~/.pulsemetry/pulsemetry.db`), 드라이버는 `modernc.org/sqlite`(드라이버명 `"sqlite"`)이며
-**CGO 를 요구하지 않는다.** CI 에 `CGO_ENABLED=0` 빌드 스텝이 이 성질의 회귀 방어선으로 들어 있다.
+DDL, 테이블 관계, PRAGMA, 보존 계층, 마이그레이션 규칙은
+[SQLite 스키마 문서](sqlite-schema/README.md)로 분리했다. 테이블별 문서는 해당 목차에서 찾을 수 있다.
 
-| 테이블 | 역할 | 보존 |
-|---|---|---|
-| `meta` | `local_schema_version`·`installation_id`·`last_rollup_at`과 GUI 호환용 고정 적용값 `retention_days=400` | — |
-| `sessions` | 화면의 중심. 세션 한 행에 수치 전부 | 400일 |
-| `session_files` | 파일별 변경량. `WITHOUT ROWID` | 400일 (CASCADE) |
-| `mcp_session_usage` | MCP 서버별 연결·호출·토큰. `WITHOUT ROWID` | 400일 (CASCADE) |
-| `vendors` | `first_seen`·`last_seen`·`events_total` (Settings 연결 상태) | 400일 |
-| `rollup_hourly` | 시간 버킷 집계. `PRIMARY KEY (hour, dim, key)`, `WITHOUT ROWID` | 400일 |
-| `tool_events` | 툴 타임라인 | 400일 |
-| `events` | 정규화 원본 이벤트. 속성 allowlist 컬럼만 | 400일 |
-| `event_content` | 프롬프트·응답·tool_input·tool_result 원문 | 400일 |
-| `content_fts` | `event_content.body` 의 FTS5 external content 색인 | 400일 (`event_content`를 따라감) |
-
-`rollup_hourly` 의 컬럼 순서는 `rollup.Bucket` 의 필드 순서와 같다. 어긋나면 INSERT 인자 나열이
-조용히 밀린다. `dim` 은 `total|vendor|model|tool|project|type` 여섯 가지이고 `dim='total'` 이면
-`key` 는 빈 문자열이다.
-
-### 5.1 `event_content` 는 계획서와 다르다
-
-계획서 DDL 은 `event_id INTEGER PRIMARY KEY` 로 **이벤트당 원문 하나**를 가정했다. 실제로는 한
-이벤트가 최대 4종(`prompt`·`response`·`tool_input`·`tool_result`)을 가지며, `claude_code.tool_result`
-로그 한 건이 `tool_input` 과 `tool_result` 를 함께 실어 오는 것이 예외가 아니라 **기본 경로**다.
-계획서대로 두면 그중 하나만 남고 나머지가 조용히 사라진다.
-
-```sql
-CREATE TABLE event_content (
-  id        INTEGER PRIMARY KEY,            -- 대리 키
-  event_id  INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  kind      TEXT    NOT NULL,               -- prompt | response | tool_input | tool_result
-  body      TEXT    NOT NULL,
-  truncated INTEGER NOT NULL DEFAULT 0,
-  UNIQUE (event_id, kind)
-);
-CREATE VIRTUAL TABLE content_fts USING fts5(
-  body, content='event_content', content_rowid='id'   -- 계획서는 'event_id' 였다
-);
-```
-
-`content_rowid` 는 FTS5 external content 규약상 content 테이블의 rowid 여야 하므로 대리 키 `id` 를
-가리킨다. external content FTS5 는 원본 테이블을 자동으로 따라가지 않으므로 AFTER
-INSERT/DELETE/UPDATE 트리거 세 개가 함께 있다 — 빠뜨리면 색인이 영원히 비고 검색이 "결과 없음" 으로
-조용히 실패한다.
-
-`store.EventRecord` 가 `Event` 와 `[]event.Content` 를 **묶어서** 받는 것도 같은 맥락이다. 따로 받으면
-"이벤트는 중복이라 무시했는데 원문은 저장" 상태가 표현 가능해진다.
-
-### 5.2 PRAGMA
-
-PRAGMA 는 전부 DSN 으로 건다. 커넥션마다 적용되므로 코드에서 한 번 실행하면 새 커넥션에 붙지 않는다.
-
-- `foreign_keys` — SQLite 기본이 **OFF** 다. 켜지 않으면 SQL 은 전부 성공하고 CASCADE 만 조용히 안 돈다.
-- `recursive_triggers` — 이게 있어야 CASCADE 로 지워진 원문까지 FTS 색인이 따라간다.
-- 읽기는 `mode=ro` + `busy_timeout(5000)`.
-
-### 5.3 단일 400일 보존 정책
-
-모든 로컬 테이블에 같은 400일 컷오프를 적용한다(ADR 0008).
-
-```text
-400일 경과 → event_content · events · tool_events 삭제
-             sessions 삭제 → CASCADE 로 session_files · mcp_session_usage 정리
-             rollup_hourly · vendors 도 같은 컷오프로 삭제
-```
-
-`event_content`를 `events`보다 먼저 지워야 FTS5 색인에 유령 행이 남지 않는다.
-
-세션의 기준은 `started_at` 이 아니라 `last_event_at` 이다. 시작 시각으로 재면 아직 살아 있는
-장기 세션이 잘린다.
-
-`Prune` 전체가 트랜잭션 하나다. 실패해도 부분 삭제가 남지 않으므로 다음 틱 재시도가 안전하다
-(Windows 에서 GUI 가 파일을 연 채인 경우).
-
-### 5.4 마이그레이션
-
-`meta.local_schema_version` 기반이다. 다음 마이그레이션 추가 절차는 `store/migrate.go` 의
-`migrations` 슬라이스 끝에 항목 하나를 더하는 것이고, **1건 = 트랜잭션 1건**이다.
-**이미 배포된 버전의 문장은 고치지 않는다** — 고치면 기존 설치와 신규 설치의 스키마가 조용히 갈린다.
-`meta` 자체는 어느 마이그레이션에도 속하지 않는다(버전을 담는 그릇이 버전 관리 대상이면 첫 실행이
-닭과 달걀이 된다).
+이 절 번호는 GUI 계약과 운영 절을 가리키는 기존 링크가 깨지지 않도록 유지한다.
 
 ---
 

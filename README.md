@@ -15,7 +15,7 @@ Codex와 Claude Code의 OpenTelemetry 설정을 조직 단위로 안전하게 �
 ├── contracts/                 # 서버와의 JSON Schema 계약 사본 (계약 테스트 기준)
 │   ├── enrollment-manifest.schema.json
 │   └── enrollment-envelope.schema.json
-├── docs/                      # 설치 아키텍처·로컬 파이프라인·ADR·개발 워크플로
+├── docs/                      # 설치 아키텍처·로컬 파이프라인·SQLite 스키마·ADR·개발 워크플로
 └── internal/
     ├── contract/              #   enroll 요청/응답·manifest Go 타입 (스키마와 1:1)
     ├── enrollment/            #   서버 /v1/enroll 호출
@@ -111,8 +111,9 @@ telemetryctl local disable            # 회사 Collector 직결로 복귀
 기존 설치자(이미 `enroll` 을 마친 사용자)는 바이너리를 교체해도 자동 전환되지 않습니다.
 `telemetryctl local enable` 로 명시적으로 켜세요.
 
-토폴로지·스키마·프라이버시 불변식·GUI 조회 API 계약은
-[로컬 파이프라인 문서](docs/local-pipeline.md)에, 설계 결정 배경은 [ADR](docs/adr/)에 있습니다.
+토폴로지·프라이버시 불변식·GUI 조회 API 계약은 [로컬 파이프라인 문서](docs/local-pipeline.md)에,
+DDL과 테이블별 계약은 [SQLite 스키마 문서](docs/sqlite-schema/README.md)에, 설계 결정 배경은
+[ADR](docs/adr/)에 있습니다.
 
 ## 로컬 개발
 
@@ -155,10 +156,10 @@ go test -race -cover ./...
 CGO_ENABLED=0 go build ./...   # 배포 바이너리가 C 툴체인을 요구하지 않는지 (ADR 0002)
 ```
 
-자세한 설계는 [설치 아키텍처](docs/installation-architecture.md)와
-[로컬 파이프라인](docs/local-pipeline.md), 결정 배경은 [ADR](docs/adr/), 협업 규칙은
-[개발 워크플로](docs/development-workflow.md)를 참고하세요. enrollment 서버 스펙은 서버 저장소를
-참조하세요.
+자세한 설계는 [설치 아키텍처](docs/installation-architecture.md),
+[로컬 파이프라인](docs/local-pipeline.md), [SQLite 스키마](docs/sqlite-schema/README.md)를 참고하세요.
+결정 배경은 [ADR](docs/adr/), 협업 규칙은 [개발 워크플로](docs/development-workflow.md)에 있습니다.
+enrollment 서버 스펙은 서버 저장소를 참조하세요.
 
 ## 다음 구현 대상
 
