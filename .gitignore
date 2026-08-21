@@ -29,6 +29,3 @@ __pycache__/
 Thumbs.db
 *.swp
 *~
-
-# Wails dev/build binaries
-cmd/pulsemetry-gui/build/bin/
