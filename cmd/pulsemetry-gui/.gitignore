@@ -1,6 +1,10 @@
-# Wails 빌드 산출물
-build/bin/
+# Wails v3 빌드 산출물
+bin/
+.task/
+*.syso
 build/*/data/
+build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
+build/linux/appimage/build
 
 # 로컬 데몬 로그 (개발 중 생성)
 *.stderr.log

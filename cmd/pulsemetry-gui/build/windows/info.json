@@ -1,15 +1,15 @@
 {
 	"fixed": {
-		"file_version": "{{.Info.ProductVersion}}"
+		"file_version": "0.1.0"
 	},
 	"info": {
 		"0000": {
-			"ProductVersion": "{{.Info.ProductVersion}}",
-			"CompanyName": "{{.Info.CompanyName}}",
-			"FileDescription": "{{.Info.ProductName}}",
-			"LegalCopyright": "{{.Info.Copyright}}",
-			"ProductName": "{{.Info.ProductName}}",
-			"Comments": "{{.Info.Comments}}"
+			"ProductVersion": "0.1.0",
+			"CompanyName": "soma-376",
+			"FileDescription": "Pulsemetry GUI",
+			"LegalCopyright": "© 2026, soma-376",
+			"ProductName": "Pulsemetry",
+			"Comments": "AI 도구 사용 현황 데스크톱 대시보드"
 		}
 	}
 }
