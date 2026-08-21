@@ -12,3 +12,28 @@ export async function getAppInfo(): Promise<AppInfo> {
     return { name: "Pulsemetry", version: "browser preview" };
   }
 }
+
+// 트레이 퀵뷰 → 메인 창 제어. 브라우저 프리뷰에서는 조용히 무시된다.
+export async function openMainWindow(): Promise<void> {
+  try {
+    await App.OpenMainWindow();
+  } catch {
+    /* browser preview */
+  }
+}
+
+export async function openMainSettings(): Promise<void> {
+  try {
+    await App.OpenMainSettings();
+  } catch {
+    /* browser preview */
+  }
+}
+
+export async function quitApp(): Promise<void> {
+  try {
+    await App.Quit();
+  } catch {
+    /* browser preview */
+  }
+}

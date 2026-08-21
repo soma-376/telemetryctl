@@ -18,3 +18,24 @@ import * as $models from "./models.js";
 export function GetAppInfo(): $CancellablePromise<$models.AppInfo> {
     return $Call.ByID(713661858);
 }
+
+/**
+ * OpenMainSettings 는 메인 창을 열고 설정 모달을 띄우라는 이벤트를 보낸다 (퀵뷰 "트레이 설정").
+ */
+export function OpenMainSettings(): $CancellablePromise<void> {
+    return $Call.ByID(975306329);
+}
+
+/**
+ * OpenMainWindow 는 퀵뷰를 닫고 메인 창을 앞으로 가져온다 (퀵뷰 "Pulsemetry 열기").
+ */
+export function OpenMainWindow(): $CancellablePromise<void> {
+    return $Call.ByID(3129367688);
+}
+
+/**
+ * Quit 은 앱을 완전히 종료한다 (퀵뷰 전원 버튼).
+ */
+export function Quit(): $CancellablePromise<void> {
+    return $Call.ByID(3181047470);
+}

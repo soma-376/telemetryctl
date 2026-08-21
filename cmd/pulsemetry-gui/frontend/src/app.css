@@ -119,6 +119,26 @@
   }
 }
 
+/* 트레이 퀵뷰 등장 */
+@keyframes trayIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* 새로고침 스피너 */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* 설정 모달 등장 */
 @keyframes popIn {
   from {
