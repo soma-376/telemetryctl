@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -195,7 +196,7 @@ func TestLoadStateRejectsCorruptJSON(t *testing.T) {
 	}
 }
 
-// 스키마 3 → 4 마이그레이션. 이미 설치된 사용자가 바이너리만 갈아도 재enroll 없이
+// 스키마 3 → 5 마이그레이션. 이미 설치된 사용자가 바이너리만 갈아도 재enroll 없이
 // 동작해야 하고, 없던 Local 블록은 제로값이 아니라 **명시적 기본값**으로 채워져야 한다.
 // 제로값을 그대로 두면 StoreContent 가 false 가 되어 업그레이드만으로 원문 보관이 꺼진다.
 func TestMigrateV3AddsLocalDefaults(t *testing.T) {
@@ -237,13 +238,46 @@ func TestMigrateV3AddsLocalDefaults(t *testing.T) {
 	}
 }
 
-// 이미 4 인 파일은 손대지 않는다. 특히 사용자가 끈 StoreContent 를 되켜면 안 된다.
+func TestMigrateV4DropsRetentionDays(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	raw := []byte(`{
+  "state_schema_version": 4,
+  "installation_id": "inst_v4",
+  "local": {"enabled": true, "listen_port": 4319, "retention_days": 30, "store_content": false}
+}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, migrated, err := LoadStateMigrated(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !migrated || got.StateSchemaVersion != StateSchemaVersion {
+		t.Fatalf("migrated/version = %t/%d, want true/%d", migrated, got.StateSchemaVersion, StateSchemaVersion)
+	}
+	if !got.Local.Enabled || got.Local.ListenPort != 4319 || got.Local.StoreContent {
+		t.Errorf("기존 Local 설정이 바뀌었다: %+v", got.Local)
+	}
+	if err := SaveState(path, got); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(after, []byte(`"retention_days"`)) {
+		t.Fatalf("마이그레이션 저장 후 retention_days 가 남았다: %s", after)
+	}
+}
+
+// 이미 5 인 파일은 손대지 않는다. 특히 사용자가 끈 StoreContent 를 되켜면 안 된다.
 func TestMigrateLeavesCurrentSchemaAlone(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	optedOut := State{
 		StateSchemaVersion: StateSchemaVersion,
 		InstallationID:     "inst_1",
-		Local:              Local{Enabled: true, ListenPort: 4319, RetentionDays: 7, StoreContent: false},
+		Local:              Local{Enabled: true, ListenPort: 4319, StoreContent: false},
 	}
 	if err := SaveState(path, &optedOut); err != nil {
 		t.Fatal(err)

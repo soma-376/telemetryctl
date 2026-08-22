@@ -86,7 +86,7 @@ func TestStatusLocalBlockWithData(t *testing.T) {
 	res.mustContain(t,
 		"재배선: 꺼짐",
 		"수신 포트(설정): 4318",
-		"보존: 30일",
+		"보존: 전체 400일 (고정)",
 		"원문 보관: 켬",
 		"데이터 디렉터리: "+dir,
 		"스키마 v",

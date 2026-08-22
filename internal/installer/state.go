@@ -15,17 +15,12 @@ import (
 
 // StateSchemaVersion 은 로컬 설치 상태 파일의 스키마 버전이다.
 //
-// 4 (PROJ-36): Local 블록 신설. 3 이하로 기록된 파일은 LoadState 가 읽으면서
-// migrateState 로 올린다 — 이미 설치된 사용자가 바이너리만 갈아도 재enroll 없이
-// 동작해야 한다.
-const StateSchemaVersion = 4
-
-// DefaultRetentionDays 는 Local.RetentionDays 기본값이다 (Settings 「데이터 보존 기간」).
+// 4 (PROJ-36): Local 블록 신설.
+// 5 (PROJ-71): 사용자 지정 retention_days 제거. 모든 로컬 데이터는 400일 고정 보존한다.
 //
-// store.DefaultEventRetentionDays 와 같은 값이지만 여기에 따로 둔다. installer 가
-// store 를 import 하면 enroll·status 경로까지 SQLite 드라이버를 끌고 들어오기 때문이다.
-// 두 값이 어긋나면 daemon 패키지의 테스트가 잡는다.
-const DefaultRetentionDays = 30
+// 이전 버전으로 기록된 파일은 LoadState 가 읽으면서 migrateState 로 올린다 — 이미 설치된
+// 사용자가 바이너리만 갈아도 재enroll 없이 동작해야 한다.
+const StateSchemaVersion = 5
 
 // Local 은 로컬 파이프라인(수신기·저장소)의 **설정된 의도**다 (PROJ-36).
 //
@@ -46,8 +41,6 @@ type Local struct {
 	ListenPort int `json:"listen_port,omitempty"`
 	// DataDir 는 SQLite·runtime.json 이 놓일 디렉터리다. 비우면 store.DefaultDataDir.
 	DataDir string `json:"data_dir,omitempty"`
-	// RetentionDays 는 events·event_content·tool_events 보존일이다.
-	RetentionDays int `json:"retention_days,omitempty"`
 	// StoreContent 는 원문 로컬 보관 여부다. 기본 ON, opt-out 이다 (ADR 0003).
 	// omitempty 를 붙이면 안 된다 — false 가 사라지면 다음 읽기에서 기본값 ON 으로
 	// 되살아나 사용자가 끈 프라이버시 설정이 조용히 풀린다.
@@ -68,9 +61,8 @@ type Local struct {
 // 켜서 opt-out 을 만든다 (PROJ-45, ADR 0006).
 func DefaultLocal() Local {
 	return Local{
-		Enabled:       false,
-		RetentionDays: DefaultRetentionDays,
-		StoreContent:  true, // 원문 보관 기본 ON (ADR 0003)
+		Enabled:      false,
+		StoreContent: true, // 원문 보관 기본 ON (ADR 0003)
 	}
 }
 
@@ -159,11 +151,12 @@ func migrateState(s *State) bool {
 	//
 	// 제로값을 그대로 두면 안 된다. Local.StoreContent 의 제로값은 false 이고, 그것은
 	// 계획서가 "기본 ON, opt-out" 으로 못박은 원문 보관을 업그레이드만으로 꺼 버린다는
-	// 뜻이다 (ADR 0003). RetentionDays 도 0 이면 보존 기간이 0일로 읽힐 수 있다.
-	// 그래서 없던 블록은 반드시 명시적 기본값으로 채운다.
+	// 뜻이다 (ADR 0003). 그래서 없던 블록은 반드시 명시적 기본값으로 채운다.
 	if s.StateSchemaVersion < 4 {
 		s.Local = DefaultLocal()
 	}
+	// 4 → 5: Local.RetentionDays 를 제거했다. encoding/json 은 구버전의 retention_days 를
+	// 읽을 때 무시하고, 데몬이 마이그레이션 결과를 저장하면 그 키가 디스크에서도 사라진다.
 
 	s.StateSchemaVersion = StateSchemaVersion
 	return true

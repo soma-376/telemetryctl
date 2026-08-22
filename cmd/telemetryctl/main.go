@@ -94,7 +94,6 @@ daemon 옵션:
   --no-receiver               로컬 OTLP 수신기를 띄우지 않음
   --no-forward                회사 Collector 전달 없이 수신·로컬 집계만
   --no-store-content          프롬프트·툴 원문을 로컬에 저장하지 않음
-  --retention-days <일>       이벤트·원문·툴 타임라인 보존일 (기본 30)
   --interval <30s>            세션 마감·스냅샷 저장 주기
 
 stats 옵션:
@@ -161,7 +160,6 @@ func cmdDaemon(args []string) int {
 	noReceiver := fs.Bool("no-receiver", false, "로컬 OTLP 수신기를 띄우지 않는다")
 	noForward := fs.Bool("no-forward", false, "회사 Collector 전달을 하지 않는다 (수신·로컬 집계만)")
 	noStoreContent := fs.Bool("no-store-content", false, "프롬프트·툴 원문을 로컬에 저장하지 않는다")
-	retentionDays := fs.Int("retention-days", 0, "이벤트·원문·툴 타임라인 보존일 (미지정 시 상태 파일 설정 → 30)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -195,7 +193,6 @@ func cmdDaemon(args []string) int {
 		DisableReceiver: *noReceiver,
 		DisableForward:  *noForward,
 		NoStoreContent:  *noStoreContent,
-		RetentionDays:   *retentionDays,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, "daemon 실패:", err)
 		return 1

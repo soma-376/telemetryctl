@@ -117,8 +117,6 @@ type Options struct {
 	// NoStoreContent 는 --no-store-content 다. state.Local.StoreContent 를 끄는
 	// 방향으로만 작동한다 — 플래그로 프라이버시 설정을 켜 주지는 않는다.
 	NoStoreContent bool
-	// RetentionDays 는 --retention-days 다. 0 이면 state.Local.RetentionDays.
-	RetentionDays int
 
 	// 틱 주기. 0 이면 위의 기본값.
 	Interval        time.Duration
@@ -235,21 +233,10 @@ func (d *daemon) start(ctx context.Context) error {
 	}
 	d.dataDir = dataDir
 
-	retentionDays := d.opts.RetentionDays
-	if retentionDays <= 0 {
-		retentionDays = state.Local.RetentionDays
-	}
-	if retentionDays <= 0 {
-		retentionDays = store.DefaultEventRetentionDays
-	}
 	// 원문 보관은 기본 ON, opt-out 이다 (ADR 0003). 플래그는 끄는 방향으로만 작동한다.
 	storeContent := state.Local.StoreContent && !d.opts.NoStoreContent
 
 	db, err := store.Open(ctx, store.PathIn(dataDir),
-		store.WithRetention(store.RetentionPolicy{
-			EventDays:   retentionDays,
-			SessionDays: store.DefaultSessionRetentionDays,
-		}),
 		store.WithContentStorage(storeContent),
 	)
 	if err != nil {
@@ -259,7 +246,7 @@ func (d *daemon) start(ctx context.Context) error {
 	if err := db.SetMeta(ctx, store.MetaInstallationID, state.InstallationID); err != nil {
 		d.log.Printf("경고: meta.installation_id 기록 실패: %v", err)
 	}
-	if err := db.SetMeta(ctx, store.MetaRetentionDays, strconv.Itoa(retentionDays)); err != nil {
+	if err := db.SetMeta(ctx, store.MetaRetentionDays, strconv.Itoa(store.DefaultRetentionDays)); err != nil {
 		d.log.Printf("경고: meta.retention_days 기록 실패: %v", err)
 	}
 
@@ -302,7 +289,7 @@ func (d *daemon) start(ctx context.Context) error {
 	}
 
 	d.log.Printf("데몬 기동: installation_id=%s db=%s 보존=%d일 원문보관=%t 수신=%t 전달=%t",
-		state.InstallationID, db.Path(), retentionDays, storeContent,
+		state.InstallationID, db.Path(), store.DefaultRetentionDays, storeContent,
 		!d.opts.DisableReceiver, d.fwd != nil)
 
 	if d.opts.Ready != nil {

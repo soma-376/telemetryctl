@@ -534,12 +534,12 @@ func TestMissingServerURLRefusesUnlessNoForward(t *testing.T) {
 	}
 }
 
-// TestStateSchemaMigrationV3ToV4 는 이미 설치된 사용자가 바이너리만 갈았을 때
+// TestStateSchemaMigrationV3ToV5 는 이미 설치된 사용자가 바이너리만 갈았을 때
 // 재enroll 없이 동작하는지 본다.
 //
 // 특히 Local.StoreContent 가 중요하다. 제로값(false)을 그대로 쓰면 업그레이드만으로
 // 원문 보관이 꺼진다 — 사용자가 끈 적 없는 설정이 조용히 바뀌는 것이다.
-func TestStateSchemaMigrationV3ToV4(t *testing.T) {
+func TestStateSchemaMigrationV3ToV5(t *testing.T) {
 	h := prepare(t, harnessOptions{noStart: true})
 
 	// 버전 3 파일에는 local 키 자체가 없다.
@@ -588,9 +588,6 @@ func TestStateSchemaMigrationV3ToV4(t *testing.T) {
 	if !got.Local.StoreContent {
 		t.Error("Local.StoreContent 가 false 다 — 업그레이드만으로 원문 보관이 꺼졌다")
 	}
-	if got.Local.RetentionDays != installer.DefaultRetentionDays {
-		t.Errorf("Local.RetentionDays = %d, want %d", got.Local.RetentionDays, installer.DefaultRetentionDays)
-	}
 	if got.Local.Enabled {
 		t.Error("Local.Enabled 가 true 다 — 재배선은 opt-in 이어야 한다")
 	}
@@ -603,8 +600,8 @@ func TestStateSchemaMigrationV3ToV4(t *testing.T) {
 	if err := db.QueryRow(`SELECT value FROM meta WHERE key = ?`, store.MetaRetentionDays).Scan(&retention); err != nil {
 		t.Fatal(err)
 	}
-	if retention != "30" {
-		t.Errorf("meta.retention_days = %q, want 30", retention)
+	if retention != "400" {
+		t.Errorf("meta.retention_days = %q, want 400", retention)
 	}
 }
 
@@ -632,21 +629,9 @@ func TestFutureSchemaIsNotDowngraded(t *testing.T) {
 	}
 }
 
-// TestRetentionDefaultsAgree 는 installer 와 store 가 같은 기본 보존일을 믿는지 본다.
-// installer 가 store 를 import 하지 않으려고 상수를 복제했으므로 여기서 묶어 둔다.
-func TestRetentionDefaultsAgree(t *testing.T) {
-	if installer.DefaultRetentionDays != store.DefaultEventRetentionDays {
-		t.Errorf("installer.DefaultRetentionDays=%d != store.DefaultEventRetentionDays=%d",
-			installer.DefaultRetentionDays, store.DefaultEventRetentionDays)
-	}
-}
-
-// TestRetentionDaysFlagOverridesState 는 --retention-days 가 상태 파일을 이기는지 본다.
-func TestRetentionDaysFlagOverridesState(t *testing.T) {
-	h := start(t, harnessOptions{
-		state:  func(st *installer.State) { st.Local.RetentionDays = 30 },
-		daemon: func(o *Options) { o.RetentionDays = 7 },
-	})
+// TestRetentionIsFixedAt400Days 는 사용자 설정 없이 단일 정책이 메타에 기록되는지 본다.
+func TestRetentionIsFixedAt400Days(t *testing.T) {
+	h := start(t, harnessOptions{})
 	h.stop()
 
 	db := h.openDB()
@@ -654,8 +639,8 @@ func TestRetentionDaysFlagOverridesState(t *testing.T) {
 	if err := db.QueryRow(`SELECT value FROM meta WHERE key = ?`, store.MetaRetentionDays).Scan(&v); err != nil {
 		t.Fatal(err)
 	}
-	if v != "7" {
-		t.Errorf("meta.retention_days = %q, want 7", v)
+	if v != "400" {
+		t.Errorf("meta.retention_days = %q, want 400", v)
 	}
 }
 
@@ -780,8 +765,6 @@ func TestCapTailDropsOldest(t *testing.T) {
 // **테스트를 이쪽에 두는 것이 load-bearing 이다.** 반대 방향(internal/autostart 가
 // internal/daemon 을 import)이면 SQLite·protobuf 가 CLI 의 status 경로까지 딸려 들어온다.
 // 테스트 전용 역방향 import 는 프로덕션 의존 사이클을 만들지 않는다.
-// 저장소가 이미 retention-days 교차 확인에 같은 패턴을 쓴다 (installer/state.go 의
-// "두 값이 어긋나면 daemon 패키지의 테스트가 잡는다").
 func TestTimeoutStopSec는데몬종료예산보다커야한다(t *testing.T) {
 	if autostart.TimeoutStopSec <= DefaultShutdownTimeout {
 		t.Fatalf("autostart.TimeoutStopSec(%v) 는 DefaultShutdownTimeout(%v) 보다 커야 한다",

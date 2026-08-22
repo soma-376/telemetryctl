@@ -60,52 +60,12 @@ func DefaultPath(env hostenv.Env) string { return PathIn(DefaultDataDir(env)) }
 // PathIn 은 데이터 디렉터리 안의 DB 경로다. daemon --data-dir 가 쓴다.
 func PathIn(dataDir string) string { return filepath.Join(dataDir, DefaultFileName) }
 
-// RetentionPolicy 는 계층별 보존 기간이다 (계획서 「보존」).
-//
-// 두 계층으로 나뉜 이유가 화면 요구다. 오래된 세션은 수치와 파일 목록이 남고 툴 타임라인과
-// 원문만 사라져야 한다 — 화면 저하가 절벽이 아니라 점진적이어야 한다.
-type RetentionPolicy struct {
-	// EventDays 는 events·event_content·tool_events 보존일이다.
-	// Settings 「데이터 보존 기간」에 대응한다.
-	EventDays int
-	// SessionDays 는 sessions·session_files·mcp_session_usage·rollup_hourly·vendors 보존일이다.
-	SessionDays int
-}
-
-const (
-	// DefaultEventRetentionDays 는 Settings 「데이터 보존 기간」 기본값이다.
-	DefaultEventRetentionDays = 30
-	// DefaultSessionRetentionDays 는 세션 계열 보존일이다.
-	DefaultSessionRetentionDays = 400
-)
-
-// DefaultRetention 은 계획서가 정한 기본 보존 정책이다.
-func DefaultRetention() RetentionPolicy {
-	return RetentionPolicy{
-		EventDays:   DefaultEventRetentionDays,
-		SessionDays: DefaultSessionRetentionDays,
-	}
-}
-
-// normalized 는 0 이하 값을 기본값으로 되돌린다. 0 을 그대로 쓰면 "즉시 전부 삭제" 가 되고
-// 그 사고는 되돌릴 수 없다.
-func (p RetentionPolicy) normalized() RetentionPolicy {
-	if p.EventDays <= 0 {
-		p.EventDays = DefaultEventRetentionDays
-	}
-	if p.SessionDays <= 0 {
-		p.SessionDays = DefaultSessionRetentionDays
-	}
-	// 이벤트가 세션보다 오래 남으면 "점진적 저하" 의 방향이 뒤집힌다.
-	if p.EventDays > p.SessionDays {
-		p.EventDays = p.SessionDays
-	}
-	return p
-}
+// DefaultRetentionDays 는 모든 로컬 데이터의 고정 보존일이다 (PROJ-71).
+// events·event_content·tool_events 와 세션·롤업·벤더 계층에 같은 값을 적용한다.
+const DefaultRetentionDays = 400
 
 type config struct {
 	busyTimeout  time.Duration
-	retention    RetentionPolicy
 	storeContent bool
 }
 
@@ -119,11 +79,6 @@ func WithBusyTimeout(d time.Duration) Option {
 			c.busyTimeout = d
 		}
 	}
-}
-
-// WithRetention 은 보존 정책을 바꾼다 (daemon --retention-days).
-func WithRetention(p RetentionPolicy) Option {
-	return func(c *config) { c.retention = p.normalized() }
 }
 
 // WithContentStorage 는 원문 저장 여부를 바꾼다 (daemon --no-store-content).
@@ -143,7 +98,6 @@ type DB struct {
 func Open(ctx context.Context, path string, opts ...Option) (*DB, error) {
 	cfg := config{
 		busyTimeout:  DefaultBusyTimeout,
-		retention:    DefaultRetention(),
 		storeContent: true,
 	}
 	for _, o := range opts {
@@ -187,9 +141,6 @@ func (d *DB) Path() string { return d.path }
 
 // SQL 은 하위 핸들이다. 이 패키지가 제공하지 않는 질의가 필요한 호출자(10단계 dashboard)를 위한 것이다.
 func (d *DB) SQL() *sql.DB { return d.db }
-
-// Retention 은 적용 중인 보존 정책이다.
-func (d *DB) Retention() RetentionPolicy { return d.cfg.retention }
 
 // StoresContent 는 원문을 저장하는 설정인지 알려준다.
 func (d *DB) StoresContent() bool { return d.cfg.storeContent }
