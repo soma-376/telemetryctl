@@ -1,27 +1,19 @@
 <script lang="ts">
-  const filters = ["오늘 (8월 8일)", "모든 프로젝트", "All agents", "모든 상태"];
+  import PeriodPicker from "../home/components/PeriodPicker.svelte";
+
+  // 날짜는 헤더와 같은 전역 period 스토어를 쓰는 PeriodPicker.
+  // 나머지 필터는 아직 표시 전용(실데이터 연동 시 구현).
+  const filters = ["모든 프로젝트", "All agents", "모든 상태"];
 </script>
 
 <div class="flex items-center" style="gap:10px">
-  {#each filters as label, i (label)}
+  <PeriodPicker align="left" />
+  {#each filters as label (label)}
     <button
       type="button"
       class="bg-surface border-border text-text hover:border-border-strong flex flex-none cursor-pointer items-center whitespace-nowrap border"
       style="gap:9px;border-radius:10px;padding:10px 14px;font-size:13px"
     >
-      {#if i === 0}
-        <svg
-          viewBox="0 0 24 24"
-          style="width:16px;height:16px"
-          fill="none"
-          stroke="var(--color-text-secondary)"
-          stroke-width="1.7"
-          stroke-linecap="round"
-          ><rect x="3" y="5" width="18" height="16" rx="3"></rect><path
-            d="M8 3v4M16 3v4M3 10h18"
-          ></path></svg
-        >
-      {/if}
       {` ${label} `}
       <svg
         viewBox="0 0 24 24"

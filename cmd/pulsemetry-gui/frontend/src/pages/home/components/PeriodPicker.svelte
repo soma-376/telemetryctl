@@ -16,6 +16,10 @@
   import ChevronLeftIcon from "../../../lib/icons/ChevronLeftIcon.svelte";
   import ChevronRightIcon from "../../../lib/icons/ChevronRightIcon.svelte";
 
+  // align: 팝업을 트리거의 어느 모서리에 붙일지. 헤더(우측 배치)는 right,
+  // Activity 필터처럼 좌측에 놓일 때는 left 로 화면 밖 클리핑을 막는다.
+  let { align = "right" }: { align?: "left" | "right" } = $props();
+
   let open = $state(false);
   let anchor = $state<string | null>(null);
   let hover = $state<string | null>(null);
@@ -104,7 +108,9 @@
       onclick={() => (open = false)}
     ></button>
     <div
-      class="bg-surface border-border absolute right-0 z-20 border"
+      class="bg-surface border-border absolute z-20 border {align === 'left'
+        ? 'left-0'
+        : 'right-0'}"
       style="top:calc(100% + 8px);border-radius:14px;padding:14px;width:288px"
     >
       <div class="flex" style="gap:6px;margin-bottom:12px">
