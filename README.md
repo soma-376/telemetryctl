@@ -104,8 +104,9 @@ telemetryctl local disable            # 회사 Collector 직결로 복귀
 로컬 OTel 설정은 회사 manifest 와 무관하게 **고정**입니다 — 시그널 셋을 전부 켜고 원문·tool details
 수집도 켭니다(응답 원문 제외). 회사가 수집 범위를 좁혀도 로컬 화면이 비지 않게 하기 위해서입니다.
 그래도 **회사로 나가는 데이터는 배선 전후로 동일합니다** — 데몬이 회사 manifest 의 `signals` 로
-전달 여부를, `privacy` 로 제거 대상을 판단합니다. 프롬프트 원문은 로컬에만 16KB 캡으로 30일간
-보관되며 `--no-store-content`·`purge --content` 로 끄거나 지울 수 있습니다.
+전달 여부를, `privacy` 로 제거 대상을 판단합니다. 프롬프트 원문을 포함한 모든 로컬 데이터는
+400일간 보관됩니다. 원문은 항목당 16KB로 제한되며 `--no-store-content`·`purge --content` 로
+끄거나 지울 수 있습니다([ADR 0008](docs/adr/0008-로컬-데이터를-400일간-보존한다.md)).
 
 기존 설치자(이미 `enroll` 을 마친 사용자)는 바이너리를 교체해도 자동 전환되지 않습니다.
 `telemetryctl local enable` 로 명시적으로 켜세요.

@@ -39,7 +39,7 @@ const (
 
 const (
 	defaultBreakdownDays  = 7
-	maxBreakdownDays      = 400 // 세션 계층 보존 기간과 같다. 그보다 오래된 롤업은 없다
+	maxBreakdownDays      = 400 // 고정 보존 기간과 같다. 그보다 오래된 롤업은 없다
 	defaultBreakdownLimit = 50
 	maxBreakdownLimit     = 500
 	hoursPerDay           = 24

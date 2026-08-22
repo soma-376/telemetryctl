@@ -26,7 +26,7 @@ const (
 //
 // 경로 정책이 여기서 갈린다. Attributes 에는 전체 경로가 들어갈 자리가 없지만 Body 에는
 // tool_input 원문이 그대로 남는다 — 세션 조립기가 파일별 변경을 만들려면 그 경로가
-// 필요하고, ADR 0003 이 16KB 캡·30일 보존·상위 미전달 조건으로 로컬에만 허용했다.
+// 필요하고, ADR 0003·0008이 16KB 캡·400일 보존·상위 미전달 조건으로 로컬에만 허용했다.
 type Content struct {
 	Kind      ContentKind
 	Body      string
