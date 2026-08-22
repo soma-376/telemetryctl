@@ -34,8 +34,8 @@ type Status struct {
 	// 데몬이 아직 마이그레이션하지 않았다는 뜻이고, 작으면 GUI 쪽이 낡았다는 뜻이다.
 	LatestSchemaVersion int `json:"latest_schema_version"`
 
-	// RetentionDays 는 meta.retention_days 의 마지막 적용값이다 (Settings 「데이터 보존 기간」).
-	// 0 이면 데몬이 아직 기록하지 않았다.
+	// RetentionDays 는 meta.retention_days 에 기록된 모든 로컬 데이터의 고정 보존일이다.
+	// 0 이면 데몬이 아직 기록하지 않았다. JSON 필드는 GUI 호환성을 위해 유지한다.
 	RetentionDays int `json:"retention_days"`
 	// LastRollupAt 은 마지막 롤업 플러시 시각(UTC unix 초)이다. 0 이면 아직 없음.
 	LastRollupAt int64 `json:"last_rollup_at"`

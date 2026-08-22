@@ -140,7 +140,7 @@ func TestNoIdentityAttributesAnywhere(t *testing.T) {
 //
 // 원문은 event_content 로만 가고 events 로는 길이·바이트 수만 간다. tool_input 원문에는
 // 전체 경로가 그대로 남는다 — 세션 조립기가 파일별 변경을 만들려면 그 경로가 필요하고,
-// ADR 0003 이 그 원문을 16KB 캡·30일 보존·상위 미전달 조건으로 로컬에만 허용했기 때문이다.
+// ADR 0003·0008이 그 원문을 16KB 캡·400일 보존·상위 미전달 조건으로 로컬에만 허용했기 때문이다.
 // 이 단언이 깨진다면 events 와 event_content 의 역할이 섞였다는 뜻이다.
 func TestRawContentIsSeparatedFromEvents(t *testing.T) {
 	res := decodeBoth(t, PayloadLogs, "logs_session_walkthrough.json", testOptions())

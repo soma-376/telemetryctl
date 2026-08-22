@@ -128,7 +128,7 @@ func TestContentFTSCleanedOnPruneAndPurge(t *testing.T) {
 	t.Run("prune", func(t *testing.T) {
 		db := openTestDB(t)
 		old := EventRecord{
-			Event:    newEvent("claude_code.user_prompt", baseTime.Add(-31*day), 0),
+			Event:    newEvent("claude_code.user_prompt", baseTime.Add(-401*day), 0),
 			Contents: []event.Content{{Kind: event.ContentPrompt, Body: "오래된 인증 토큰"}},
 		}
 		if _, err := db.Write(context.Background(), Batch{Events: []EventRecord{old}}); err != nil {

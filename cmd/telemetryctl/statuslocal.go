@@ -29,6 +29,7 @@ import (
 	"github.com/your-org/pulsemetry/internal/credential"
 	"github.com/your-org/pulsemetry/internal/dashboard"
 	"github.com/your-org/pulsemetry/internal/receiver"
+	"github.com/your-org/pulsemetry/internal/store"
 )
 
 // healthTimeout 은 /healthz 확인 한 번의 상한이다. status 는 즉답해야 하는 명령이라
@@ -138,8 +139,8 @@ func printLocalSettings(w io.Writer, t localTarget) {
 		content = "켬"
 	}
 	fmt.Fprintf(w, "    재배선: %s\n", rewire)
-	fmt.Fprintf(w, "    수신 포트(설정): %d%s · 보존: %d일 · 원문 보관: %s\n",
-		port, portNote, l.RetentionDays, content)
+	fmt.Fprintf(w, "    수신 포트(설정): %d%s · 보존: 전체 %d일 (고정) · 원문 보관: %s\n",
+		port, portNote, store.DefaultRetentionDays, content)
 }
 
 func printDatabaseStatus(w io.Writer, st dashboard.Status) {
@@ -154,7 +155,7 @@ func printDatabaseStatus(w io.Writer, st dashboard.Status) {
 	}
 	fmt.Fprintf(w, "    DB: %s (%s · %s)\n", st.DatabasePath, formatBytes(st.DatabaseBytes), schema)
 	if st.RetentionDays > 0 {
-		fmt.Fprintf(w, "    보존(적용값): 이벤트 %d일\n", st.RetentionDays)
+		fmt.Fprintf(w, "    보존(적용값): 전체 %d일\n", st.RetentionDays)
 	}
 }
 

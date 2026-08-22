@@ -97,7 +97,7 @@ func TestApply는로컬을기본배선한다(t *testing.T) {
 		t.Errorf("state.Local.ListenPort = %d, want %d", state.Local.ListenPort, DefaultLocalPort)
 	}
 	// 원문 보관 기본 ON 은 PROJ-45 가 건드리지 않는다 (ADR 0003).
-	if !state.Local.StoreContent || state.Local.RetentionDays != DefaultRetentionDays {
+	if !state.Local.StoreContent {
 		t.Errorf("Local 블록의 나머지 기본값이 바뀌었다: %+v", state.Local)
 	}
 

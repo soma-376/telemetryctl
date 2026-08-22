@@ -16,12 +16,13 @@ Claude Code·Codex 의 시그널을 직접 받고, 정규화·집계해 로컬 S
 | ADR | 내용 |
 |---|---|
 | [0001](adr/0001-로컬-OTLP-수신기-인라인-프록시-토폴로지.md) | loopback 수신기 + 상위 전달 (재배선 opt-in 부분은 0006 이 대체) |
-| [0002](adr/0002-로컬-집계-저장소로-SQLite-채택.md) | `modernc.org/sqlite` + 계층별 보존 |
+| [0002](adr/0002-로컬-집계-저장소로-SQLite-채택.md) | `modernc.org/sqlite` + WAL/FTS5 |
 | [0003](adr/0003-원문과-tool-details를-로컬에만-보관.md) | 원문·tool details 는 로컬에만, 포워더가 제거해 전달 |
 | [0004](adr/0004-GUI-연동을-Go-패키지-공유로.md) | Wails v3 가 `internal/dashboard` 직접 import |
 | [0005](adr/0005-세션을-1급-엔티티로-조립.md) | 이벤트를 `session.id` 로 묶어 세션을 1급 엔티티로 |
 | [0006](adr/0006-로컬-파이프라인을-opt-out으로-전환하고-OTel-설정을-고정한다.md) | 배선은 opt-out 기본 ON, 로컬 OTel 설정 고정, 회사 준수는 forward 가 집행 |
 | [0007](adr/0007-데몬은-비정상-종료일-때만-자동-재시작한다.md) | 자동 실행 등록의 재시작 정책 — 비정상 종료일 때만 되살린다 |
+| [0008](adr/0008-로컬-데이터를-400일간-보존한다.md) | 모든 로컬 데이터 400일 고정 보존 |
 
 기존 설치 아키텍처는 [설치 아키텍처](installation-architecture.md)에 있다. 이 문서의 `§4.5`·`§5.4`
 같은 표기는 그 문서의 절 번호다.
@@ -93,9 +94,8 @@ gui/            Wails v3 앱 (별도 go.mod, 아직 없음 — PROJ-35)
 노출한다. 그래서 "OTLP 를 받는다" 는 관심사를 파이프라인 없이 `httptest` 로 전부 테스트할 수 있다.
 
 `installer` 는 `receiver`·`store` 를 import 하지 않는다. 하면 `enroll`·`status` 경로까지 protobuf
-디코더와 SQLite 드라이버를 끌고 들어온다. 그래서 `installer.DefaultLocalPort`·
-`installer.DefaultRetentionDays` 가 `receiver.DefaultPort`·`store.DefaultEventRetentionDays` 와
-같은 값을 따로 갖는다. 두 값이 어긋나면 `cmd/telemetryctl`·`daemon` 의 테스트가 잡는다.
+디코더와 SQLite 드라이버를 끌고 들어온다. 그래서 `installer.DefaultLocalPort`가
+`receiver.DefaultPort`와 같은 값을 따로 갖는다. 두 값이 어긋나면 `cmd/telemetryctl`의 테스트가 잡는다.
 
 ### 3.2 proto 의존성은 `otlpdecode` 에 격리돼 있다 (계약)
 
@@ -167,7 +167,7 @@ catch-all `map[string]string` 컬럼이 없다(`internal/store/schema.go` 의 `e
 
 **`event_content.body` 는 설계상 원본 그대로다.** `tool_input` 원문에는 전체 경로가 **반드시** 남아야
 한다 — 그게 없으면 `session_files` 를 만들 수 없고 「파일 변경」 화면이 영원히 빈다. ADR 0003 이
-이 자리를 16KB 캡·30일 보존·상위 미전달 세 조건으로 허용했다. `internal/otlpdecode/target.go` 와
+이 자리를 16KB 캡·400일 보존·상위 미전달 세 조건으로 허용한다(ADR 0008). `internal/otlpdecode/target.go` 와
 `internal/event/content.go` 의 주석이 이 구분을 명시적으로 못박고, 프라이버시 회귀 테스트가
 `Targets`·조립된 `Session` 에는 전체 경로가 없고 `Content.Body` 에는 있다는 것을 양쪽으로 단언한다.
 
@@ -233,16 +233,16 @@ sqlite3 "$DB" "SELECT body FROM event_content WHERE kind='tool_input';" | grep -
 
 | 테이블 | 역할 | 보존 |
 |---|---|---|
-| `meta` | `local_schema_version`·`installation_id`·`retention_days`·`last_rollup_at` | — |
+| `meta` | `local_schema_version`·`installation_id`·`last_rollup_at`과 GUI 호환용 고정 적용값 `retention_days=400` | — |
 | `sessions` | 화면의 중심. 세션 한 행에 수치 전부 | 400일 |
 | `session_files` | 파일별 변경량. `WITHOUT ROWID` | 400일 (CASCADE) |
 | `mcp_session_usage` | MCP 서버별 연결·호출·토큰. `WITHOUT ROWID` | 400일 (CASCADE) |
 | `vendors` | `first_seen`·`last_seen`·`events_total` (Settings 연결 상태) | 400일 |
 | `rollup_hourly` | 시간 버킷 집계. `PRIMARY KEY (hour, dim, key)`, `WITHOUT ROWID` | 400일 |
-| `tool_events` | 툴 타임라인 | 30일 |
-| `events` | 정규화 원본 이벤트. 속성 allowlist 컬럼만 | 30일 |
-| `event_content` | 프롬프트·응답·tool_input·tool_result 원문 | 30일 |
-| `content_fts` | `event_content.body` 의 FTS5 external content 색인 | `event_content` 를 따라감 |
+| `tool_events` | 툴 타임라인 | 400일 |
+| `events` | 정규화 원본 이벤트. 속성 allowlist 컬럼만 | 400일 |
+| `event_content` | 프롬프트·응답·tool_input·tool_result 원문 | 400일 |
+| `content_fts` | `event_content.body` 의 FTS5 external content 색인 | 400일 (`event_content`를 따라감) |
 
 `rollup_hourly` 의 컬럼 순서는 `rollup.Bucket` 의 필드 순서와 같다. 어긋나면 INSERT 인자 나열이
 조용히 밀린다. `dim` 은 `total|vendor|model|tool|project|type` 여섯 가지이고 `dim='total'` 이면
@@ -285,23 +285,19 @@ PRAGMA 는 전부 DSN 으로 건다. 커넥션마다 적용되므로 코드에�
 - `recursive_triggers` — 이게 있어야 CASCADE 로 지워진 원문까지 FTS 색인이 따라간다.
 - 읽기는 `mode=ro` + `busy_timeout(5000)`.
 
-### 5.3 보존 계층과 점진적 저하
+### 5.3 단일 400일 보존 정책
 
-두 계층의 컷오프가 다르고, **이벤트 계층을 지울 때 `sessions` 행을 건드리지 않는다.**
+모든 로컬 테이블에 같은 400일 컷오프를 적용한다(ADR 0008).
 
 ```text
-30일 경과 →  events · event_content · tool_events 삭제
-             sessions · session_files 는 남는다
-             ⇒ 세션 목록과 수치·파일 목록은 보이고, 그 안의 툴 타임라인과 원문만 빈다
-
-400일 경과 → sessions 삭제 → CASCADE 로 session_files · mcp_session_usage 정리
-             rollup_hourly · vendors 도 같은 컷오프
+400일 경과 → event_content · events · tool_events 삭제
+             sessions 삭제 → CASCADE 로 session_files · mcp_session_usage 정리
+             rollup_hourly · vendors 도 같은 컷오프로 삭제
 ```
 
-CASCADE 방향이 한쪽뿐(`sessions → tool_events`)이라는 성질이 이 저하를 만든다. 이벤트 계층 삭제가
-`tool_events` 를 **직접** 조준하는 것도 그래서다 — `sessions` 를 건드리는 순간 파일 목록까지 사라진다.
+`event_content`를 `events`보다 먼저 지워야 FTS5 색인에 유령 행이 남지 않는다.
 
-세션 계층의 기준은 `started_at` 이 아니라 `last_event_at` 이다. 시작 시각으로 재면 아직 살아 있는
+세션의 기준은 `started_at` 이 아니라 `last_event_at` 이다. 시작 시각으로 재면 아직 살아 있는
 장기 세션이 잘린다.
 
 `Prune` 전체가 트랜잭션 하나다. 실패해도 부분 삭제가 남지 않으므로 다음 틱 재시도가 안전하다
@@ -469,7 +465,7 @@ Windows 에서 데몬의 prune 이 막힌다.
 ```text
 telemetryctl daemon [--listen localhost:4318] [--data-dir <경로>] [--state <경로>]
                     [--no-receiver] [--no-forward] [--no-store-content]
-                    [--retention-days 30] [--interval 30s]
+                    [--interval 30s]
 ```
 
 | 플래그 | 동작 |
@@ -479,7 +475,6 @@ telemetryctl daemon [--listen localhost:4318] [--data-dir <경로>] [--state <�
 | `--no-receiver` | 수신기를 띄우지 않는다. 이때는 `runtime.json` 도 쓰지 않는다(듣는 곳이 없다) |
 | `--no-forward` | 상위 전달 없이 수신·로컬 집계만. `grpc` manifest 에서의 탈출구이기도 하다 |
 | `--no-store-content` | 원문을 로컬에 저장하지 않는다. **끄는 방향으로만 작동한다** — 플래그로 켜 주지는 않는다 |
-| `--retention-days` | `events`·`event_content`·`tool_events` 보존일. 세션 계층 400일은 고정 |
 | `--interval` | 세션 마감·스냅샷 저장 주기 (기본 30초) |
 
 데몬은 `enroll` 된 상태를 요구한다(`state.json` 이 없으면 기동 실패). 회사 manifest 가 `grpc` 면
@@ -704,7 +699,7 @@ telemetryctl status
 - 셋 다 `internal/dashboard` 를 쓴다. CLI 와 GUI 가 같은 함수로 같은 숫자를 낸다.
 - **DB 없음·데몬 꺼짐에서 세 명령 모두 종료 코드 0 이다.** `status` 는 진단 명령이라 어떤
   상태에서도 동작해야 한다. `--json` 은 `available:false` + 빈 배열(`null` 아님)을 준다.
-- `--since` 는 `7d`·`24h`·`90m` 형식이고 상한이 400일(세션 보존 상한)이다.
+- `--since` 는 `7d`·`24h`·`90m` 형식이고 상한이 400일(고정 보존 상한)이다.
 - `stats` 의 합계 행은 `dim=total` 을 따로 질의해 만든다. 표시된 행의 합으로 계산하면 `--limit`
   으로 잘렸을 때 조용히 틀린 숫자가 된다.
 - 사람용 출력과 `--json` 이 한 구조체에서 나오고, 표 셀은 그 구조체 필드에서만 만든다 — 표는 JSON
@@ -740,12 +735,13 @@ telemetryctl autostart status  [--data-dir <경로>] [--state <경로>]
 launchd LaunchAgent 와 **정확히 같은 의미론**이 되어 두 플랫폼이 대칭이 된다. 자세한 근거는
 `internal/autostart` 패키지 주석에 있다.
 
-**서비스에 굽는 인자는 `daemon` 하나뿐이다.** `--state`·`--data-dir`·`--listen`·`--retention-days`
-는 전부 서비스 관리자 아래서 올바르게 풀린다(HOME 이 설정되므로 `DefaultStatePath` →
-`state.Local` → 기본값). `--listen` 생략은 단지 허용 가능한 게 아니라 **바람직하다** — `fixed=false`
+**서비스 명령은 `daemon`으로 시작한다.** `--state`·`--data-dir`은 명시한 값이 기본값과 다를 때만
+뒤에 붙고, `--listen`은 서비스에 굽지 않는다. 기본 경로는 서비스 관리자 아래에서 HOME 을 기준으로
+`DefaultStatePath` → `state.Local` → 기본값 순서로 풀린다. `--listen` 생략은 단지 허용 가능한 게
+아니라 **바람직하다** — `fixed=false`
 라 부팅 시 일시적 포트 충돌이 하드 실패(→ 재시작 루프)가 아니라 우아한 폴백이 된다(7.5절).
-`--state`·`--data-dir` 은 **명시했고 기본값과 다를 때만** 굽는다. 그러지 않으면 `state.json` 의
-위치가 두 곳이 되고 `installer.EnableLocal` 이 `state.Local.DataDir` 를 바꾸는 순간 조용히 어긋난다.
+기본 경로까지 굽지 않는 이유는 `state.json` 위치가 두 곳이 되고 `installer.EnableLocal` 이
+`state.Local.DataDir` 를 바꾸는 순간 조용히 어긋나는 일을 막기 위해서다.
 
 **재시작 정책은 ADR 0007 이다** — launchd `KeepAlive={SuccessfulExit:false}`, systemd
 `Restart=on-failure`. SIGTERM 은 `main.go` 의 `signal.NotifyContext` 가 잡아 종료 코드 0 이 되므로
@@ -771,8 +767,8 @@ systemd `TimeoutStopSec=20` 은 `daemon.DefaultShutdownTimeout`(15초)보다 커
 
 **등록 상태를 `state.json` 에 저장하지 않는다.** plist·unit 파일 자체가 산출물이고 OS 서비스
 관리자가 권위 있는 소스다. 저장하면 사용자가 `systemctl --user disable` 하거나 macOS 로그인
-항목에서 껐을 때 `state.json` 만 거짓말을 한다. `StateSchemaVersion` 은 4 로 유지되며, **schema 5
-는 ADR 0006 Follow-up 2(기존 설치자 일괄 전환)의 몫으로 비워 두었다.**
+항목에서 껐을 때 `state.json` 만 거짓말을 한다. 현재 `StateSchemaVersion` 은 5이며, schema 5는
+자동 실행 등록과 무관하게 PROJ-71의 `local.retention_days` 제거 마이그레이션에 사용한다(ADR 0008).
 
 로그는 플랫폼마다 다르다. systemd 는 journald 가 로테이션까지 맡으므로 할 일이 없다
 (`journalctl --user -u pulsemetry-daemon.service -n 100`). launchd 는 로테이션하지 않으므로
@@ -910,9 +906,9 @@ ls ~/.config/systemd/user 2>/dev/null | grep -i pulsemetry || echo "OK: 등록�
 | **launchd 로그는 우리가 회전시킨다** | launchd 는 로테이션하지 않는다. 데몬의 prune 틱(1시간)이 16 MiB 상한으로 copy-truncate 한다(`.1` 하나만 보관). 복사와 truncate 사이에 쓰인 몇 줄은 잃을 수 있고, 크래시 진단 로그에 대해 그것은 받아들일 만하다 |
 | **회사가 끈 시그널은 로컬에만 쌓인다** | 로컬은 시그널 셋을 전부 켜고 받지만 포워더가 상위 전달을 막는다(§4.2 축 1). 즉 회사 `signals.traces=false` 면 트레이스는 로컬 파이프라인을 통과하되 회사에는 가지 않는다 — 설계된 동작이고 `Stats.DroppedSignalDisabled` 로 보인다. 다만 `/v1/traces` 는 저장도 하지 않으므로(아래 행) 그 시그널은 실질적으로 버려진다 |
 | **`grpc` 테넌트는 배선되지 않는다** | 포워더가 grpc 상위 전달을 못 하므로 `Apply` 가 회사 직결로 강등하고 알린다. `local enable` 도 `ErrGRPCUnsupported` 로 거부한다. 기존 회사 Collector 직결은 그대로 동작한다 |
-| **기존 설치자는 자동 전환되지 않는다** | state schema 4 를 유지하고 마이그레이션을 넣지 않았다 (ADR 0006 Decision 5). 바이너리만 교체한 사용자는 `local enable` 을 명시적으로 실행해야 한다 |
+| **기존 설치자는 자동 전환되지 않는다** | ADR 0006에서 로컬 재배선 마이그레이션을 넣지 않았다. state schema 5 마이그레이션은 보존 설정만 제거하므로, 바이너리만 교체한 사용자는 여전히 `local enable`을 명시적으로 실행해야 한다 |
 | **크래시 손실 창** | flush 주기(2초, 또는 512 이벤트)만큼의 미저장 이벤트를 잃는다. 세션 스냅샷은 30초 주기지만 세션 수치는 마감 전에는 어차피 확정값이 아니다 |
-| **조립기 TTL 이후 같은 `session.id` 재등장** | 마감된 세션은 2시간(`sessionMemoryTTL`) 뒤 조립기 메모리에서 지워진다. 그 뒤 같은 `session.id` 가 다시 등장하면 조립기가 **새 세션으로 시작**하고 `sessions` UPSERT 가 기존 행을 덮는다 — 앞 구간의 수치를 잃는다. TTL 이 유휴 임계값(10분)의 12배인 이유이자, 보존 기간(30일)이 아닌 몇 시간짜리 값을 쓰는 이유(`store.Prune` 이 지운 타임라인을 다음 스냅샷이 되살리지 못하게)다 |
+| **조립기 TTL 이후 같은 `session.id` 재등장** | 마감된 세션은 2시간(`sessionMemoryTTL`) 뒤 조립기 메모리에서 지워진다. 그 뒤 같은 `session.id` 가 다시 등장하면 조립기가 **새 세션으로 시작**하고 `sessions` UPSERT 가 기존 행을 덮는다 — 앞 구간의 수치를 잃는다. TTL 이 유휴 임계값(10분)의 12배인 이유이자, 보존 기간(400일)이 아닌 몇 시간짜리 값을 쓰는 이유(`store.Prune` 이 지운 타임라인을 다음 스냅샷이 되살리지 못하게)다 |
 | **Windows + WSL 이중 설정** | 두 환경이 각각 설정을 갖고 같은 이벤트를 두 번 보낼 수 있다. `dedup_key` UNIQUE 와 배선 창이 잡지만 두 환경의 `installation_id` 가 다르면 다른 이벤트로 취급된다 |
 | **경로 정규화의 한계** | `NormalizePath` 는 구분자 통일 → `path.Clean` → 드라이브 문자 대문자화까지만 한다. `~/a.go` 와 `/Users/jy/a.go` 는 다른 해시가 되고, POSIX 파일명에 들어간 리터럴 백슬래시는 구분자로 취급된다. 홈 확장·심볼릭 링크 해석은 파일시스템을 읽어야 하므로 하지 않는다(순수 함수 유지) |
 | **cumulative 콜드 스타트 과소 집계** | 계열의 첫 관측은 기준선으로만 기록하고 값을 더하지 않는다. "조용히 2배 집계되느니 폐기" 와 같은 방향이며 `rollup.Stats.Baselines` 로 보인다 |
@@ -920,7 +916,7 @@ ls ~/.config/systemd/user 2>/dev/null | grep -i pulsemetry || echo "OK: 등록�
 | **Codex 시그널 매핑 없음** | `rollup/mapping.go` 의 표에 Claude Code 시그널만 있다. Codex 이름을 추측으로 넣지 않았다(틀린 컬럼에 조용히 쌓인다). 표에 없는 이름은 `Unmapped` 로 세고 집계하지 않는다 |
 | **트레이스는 저장하지 않는다** | `/v1/traces` 는 받아서 상위로 전달만 한다. `events` 스키마에 스팬을 담을 자리가 없다 |
 | **시간대 근사** | 6.4절 — UTC+5:30 같은 오프셋에서 하루 경계에 최대 한 시간 버킷의 근사가 남는다 |
-| **원문 평문 저장** | `event_content` 는 평문이고 디스크 암호화에 의존한다. 완화는 16KB 캡 + 30일 보존 + `--no-store-content` + `purge --content` + `status` 사용량 표시다 |
+| **원문 평문 저장** | `event_content` 는 400일간 평문으로 남고 디스크 암호화에 의존한다. 완화는 16KB 캡 + `--no-store-content` + `purge --content` + `status` 사용량 표시다 |
 | **로컬 ingest 토큰이 `settings.json` 에 평문** | loopback 전용이고 권한은 "이 PC 에 텔레메트리 쓰기" 뿐이다. 회사 토큰이 같은 자리에 있던 것보다 낫다 |
 | **키링 불가 환경(WSL·헤드리스)** | `enroll` 이 이미 키링에 의존하므로 기존 제약이다. 데몬은 `Options.IngestToken` 으로 우회할 수 있으나 CLI 플래그는 없다 |
 | **Windows 에서 GUI 가 파일을 연 채 prune** | prune 실패는 로깅 후 다음 틱 재시도다. 치명적으로 다루지 않는다 |

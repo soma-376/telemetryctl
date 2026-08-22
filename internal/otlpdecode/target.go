@@ -24,7 +24,7 @@ import (
 // session 패키지는 "이미 정규화된 값만 받는다" 를 계약으로 갖는다. 여기서 event.NormalizePath
 // 를 거쳐 해시+basename+확장자로 줄이므로 전체 경로 문자열은 이 구조체를 통해 세션·저장소로
 // 흘러갈 수 없다 (ADR 0003). 전체 경로는 tool_input **원문**(event_content.body)에만 남는다 —
-// 그쪽은 16KB 캡·30일 보존·상위 미전달 조건으로 허용된 자리다.
+// 그쪽은 16KB 캡·400일 보존·상위 미전달 조건으로 허용된 자리다(ADR 0003·0008).
 type Target struct {
 	EventIndex int
 	DedupKey   string

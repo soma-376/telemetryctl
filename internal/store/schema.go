@@ -7,7 +7,7 @@ const (
 	// MetaInstallationID 는 enrollment 의 installation_id 사본이다. events.installation_id 와
 	// 같은 값이라 DB 하나가 어느 설치의 것인지 파일만 보고 알 수 있다.
 	MetaInstallationID = "installation_id"
-	// MetaRetentionDays 는 Settings 「데이터 보존 기간」의 마지막 적용값이다.
+	// MetaRetentionDays 는 모든 로컬 데이터에 마지막으로 적용한 고정 보존일이다.
 	MetaRetentionDays = "retention_days"
 	// MetaLastRollupAt 는 마지막 롤업 플러시 시각(unix 초)이다.
 	MetaLastRollupAt = "last_rollup_at"

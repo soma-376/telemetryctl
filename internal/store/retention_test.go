@@ -12,13 +12,13 @@ import (
 
 const day = 24 * time.Hour
 
-// seedRetention 은 이벤트 계층 컷오프(30일)와 세션 계층 컷오프(400일) 양쪽을 걸치는
-// 데이터를 넣는다. now 기준 상대 시각으로만 만들어 경계 판정이 벽시계에 의존하지 않는다.
+// seedRetention 은 단일 400일 컷오프 양쪽을 걸치는 데이터를 넣는다.
+// now 기준 상대 시각으로만 만들어 경계 판정이 벽시계에 의존하지 않는다.
 func seedRetention(t *testing.T, db *DB, now time.Time) {
 	t.Helper()
 	ctx := context.Background()
 
-	ages := []time.Duration{1 * day, 31 * day, 401 * day}
+	ages := []time.Duration{1 * day, 399 * day, 401 * day}
 	var (
 		recs     []EventRecord
 		sessions []session.Session
@@ -49,9 +49,8 @@ func seedRetention(t *testing.T, db *DB, now time.Time) {
 
 func sessionIDFor(i int) string { return []string{"fresh", "mid", "ancient"}[i] }
 
-// 계획서 「보존」의 핵심 의도를 그대로 검사한다:
-// 오래된 세션은 수치와 파일 목록이 남고 툴 타임라인·원문만 사라진다.
-func TestPruneGradualDegradation(t *testing.T) {
+// 모든 로컬 데이터가 같은 400일 보존 기간을 따르는지 검사한다.
+func TestPruneUsesUnifiedRetention(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	now := baseTime
@@ -62,28 +61,34 @@ func TestPruneGradualDegradation(t *testing.T) {
 		t.Fatalf("Prune: %v", err)
 	}
 
-	// 이벤트 계층: 31일·401일 된 것 두 건이 사라진다.
-	if res.Events != 2 || res.EventContent != 2 {
-		t.Errorf("이벤트 계층 삭제 = %d/%d, want 2/2", res.Events, res.EventContent)
+	// 401일 된 이벤트와 원문만 사라진다.
+	if res.Events != 1 || res.EventContent != 1 {
+		t.Errorf("이벤트 삭제 = %d/%d, want 1/1", res.Events, res.EventContent)
 	}
-	if n := countRows(t, db, "events"); n != 1 {
-		t.Errorf("events = %d행, want 1", n)
+	if n := countRows(t, db, "events"); n != 2 {
+		t.Errorf("events = %d행, want 2", n)
 	}
 
-	// 세션 계층: 401일 된 세션 하나만 사라진다.
+	// 401일 된 세션과 종속 데이터도 함께 사라진다.
 	if res.Sessions != 1 {
 		t.Errorf("sessions 삭제 = %d, want 1", res.Sessions)
 	}
 
-	// 31일 된 세션은 살아 있고 파일 목록도 그대로다 — 타임라인만 비었다.
+	// 399일 된 데이터는 이벤트·원문·타임라인·세션 모두 온전하다.
 	if n := countWhere(t, db, "sessions", "session_id = 'mid'"); n != 1 {
-		t.Fatalf("31일 된 세션이 사라졌다 — 점진적 저하가 아니라 절벽이다")
+		t.Fatalf("399일 된 세션이 사라졌다")
 	}
 	if n := countWhere(t, db, "session_files", "session_id = 'mid'"); n != 1 {
-		t.Errorf("31일 된 세션의 파일 목록이 사라졌다")
+		t.Errorf("399일 된 세션의 파일 목록이 사라졌다")
 	}
-	if n := countWhere(t, db, "tool_events", "session_id = 'mid'"); n != 0 {
-		t.Errorf("31일 된 세션의 툴 타임라인이 %d행 남았다", n)
+	if n := countWhere(t, db, "tool_events", "session_id = 'mid'"); n != 2 {
+		t.Errorf("399일 된 세션의 툴 타임라인 = %d행, want 2", n)
+	}
+	if n := countWhere(t, db, "events", "session_id = 'mid'"); n != 1 {
+		t.Errorf("399일 된 세션의 이벤트 = %d행, want 1", n)
+	}
+	if n := countWhere(t, db, "event_content", "event_id IN (SELECT id FROM events WHERE session_id = 'mid')"); n != 1 {
+		t.Errorf("399일 된 세션의 원문 = %d행, want 1", n)
 	}
 	// 수치도 남아 있어야 Today·Activity 의 세션 카드가 계속 보인다.
 	var toolCalls int64
@@ -154,7 +159,7 @@ func TestPruneCutoffBoundary(t *testing.T) {
 	ctx := context.Background()
 	now := baseTime
 
-	cutoff := now.Add(-30 * day)
+	cutoff := now.Add(-DefaultRetentionDays * day)
 	tests := []struct {
 		name string
 		at   time.Time
@@ -188,61 +193,6 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
-}
-
-func TestPruneRespectsCustomRetention(t *testing.T) {
-	db := openTestDB(t, WithRetention(RetentionPolicy{EventDays: 2, SessionDays: 5}))
-	ctx := context.Background()
-	now := baseTime
-
-	if got := db.Retention(); got.EventDays != 2 || got.SessionDays != 5 {
-		t.Fatalf("Retention = %+v", got)
-	}
-
-	for i, age := range []time.Duration{1 * day, 3 * day, 6 * day} {
-		at := now.Add(-age)
-		ev := newEvent("claude_code.user_prompt", at, i)
-		ev.SessionID = sessionIDFor(i)
-		if _, err := db.Write(ctx, Batch{
-			Events:   []EventRecord{{Event: ev}},
-			Sessions: []session.Session{newSession(sessionIDFor(i), at)},
-		}); err != nil {
-			t.Fatalf("시드 Write: %v", err)
-		}
-	}
-
-	if _, err := db.Prune(ctx, now); err != nil {
-		t.Fatalf("Prune: %v", err)
-	}
-	if n := countRows(t, db, "events"); n != 1 {
-		t.Errorf("events = %d행, want 1", n)
-	}
-	if n := countRows(t, db, "sessions"); n != 2 {
-		t.Errorf("sessions = %d행, want 2", n)
-	}
-}
-
-// 잘못된 보존 값이 "즉시 전부 삭제" 가 되면 안 된다.
-func TestRetentionPolicyNormalized(t *testing.T) {
-	tests := []struct {
-		name string
-		in   RetentionPolicy
-		want RetentionPolicy
-	}{
-		{"제로값은 기본값", RetentionPolicy{}, DefaultRetention()},
-		{"음수는 기본값", RetentionPolicy{EventDays: -1, SessionDays: -1}, DefaultRetention()},
-		{"이벤트가 세션보다 길면 세션에 맞춘다", RetentionPolicy{EventDays: 800, SessionDays: 400},
-			RetentionPolicy{EventDays: 400, SessionDays: 400}},
-		{"정상값은 그대로", RetentionPolicy{EventDays: 7, SessionDays: 90},
-			RetentionPolicy{EventDays: 7, SessionDays: 90}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.in.normalized(); got != tc.want {
-				t.Fatalf("normalized() = %+v, want %+v", got, tc.want)
-			}
-		})
-	}
 }
 
 // prune 실패는 치명적이지 않아야 한다 (계획서 리스크 표). 트랜잭션 하나라 실패해도

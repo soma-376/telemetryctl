@@ -1,6 +1,21 @@
 package main
 
-import "testing"
+import (
+	"bytes"
+	"strings"
+	"testing"
+)
+
+func TestRetentionDaysFlagIsRemoved(t *testing.T) {
+	var usage bytes.Buffer
+	writeUsage(&usage)
+	if strings.Contains(usage.String(), "--retention-days") {
+		t.Fatal("사용법에 제거된 --retention-days 가 남아 있다")
+	}
+	if code := cmdDaemon([]string{"--retention-days", "30"}); code != 2 {
+		t.Fatalf("cmdDaemon 제거된 플래그 종료 코드 = %d, want 2", code)
+	}
+}
 
 // --listen 은 두 가지를 동시에 뜻한다 — 포트 지정과 "폴백하지 마라". 파싱이 틀리면
 // 사용자가 지정한 포트를 조용히 무시하고 4318 로 뜨는, 가장 알아채기 어려운 실패가 난다.

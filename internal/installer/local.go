@@ -57,8 +57,8 @@ import (
 // DefaultLocalPort 는 재배선이 기본으로 가리키는 loopback 포트다.
 //
 // receiver.DefaultPort 와 같은 값이어야 하지만 여기에 따로 둔다 — installer 가 receiver 를
-// import 하면 enroll·status 경로까지 protobuf 디코더를 끌고 들어온다. DefaultRetentionDays 와
-// 같은 이유이고, 두 값이 어긋나면 cmd/telemetryctl 의 테스트가 잡는다.
+// import 하면 enroll·status 경로까지 protobuf 디코더를 끌고 들어온다. 두 값이 어긋나면
+// cmd/telemetryctl 의 테스트가 잡는다.
 const DefaultLocalPort = 4318
 
 // ErrGRPCUnsupported 는 회사 manifest 가 grpc 일 때 재배선을 거부하는 오류다.

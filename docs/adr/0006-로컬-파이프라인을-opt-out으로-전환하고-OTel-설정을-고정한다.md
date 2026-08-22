@@ -99,10 +99,10 @@ ADR [0003](0003-원문과-tool-details를-로컬에만-보관.md) 이 정한 방
 - ~~**데몬 자동 실행 등록 (launchd·systemd·Task Scheduler).** 이 ADR 의 Negative 첫 항목을 없애는 유일한 방법이고,
   `README.md` 와 `docs/local-pipeline.md` 가 이미 차단성 선행 조건으로 지목해 둔 항목이다. 지금은 경고가 최선이다.~~
   → **닫힘. PROJ-55 가 macOS·리눅스를 구현했다** (`internal/autostart`, ADR 0007). Windows 작업 스케줄러는 PROJ-56 이다.
-- **기존 설치자 전환 정책 — 아직 열려 있다.** 자동 실행 등록이 끝난 뒤 state schema 5 로 일괄 전환할지 다시 판단한다.
-  지금 결정한 "건드리지 않는다" 는 그때까지의 잠정 상태다.
-  **PROJ-55 는 이 번호를 소비하지 않았다** — 자동 실행 등록 상태를 `state.json` 에 저장하지 않기로 했기 때문이다
-  (`internal/autostart` 패키지 주석 3번). schema 5 는 여전히 이 항목의 몫이다.
+- **기존 설치자 전환 정책 — 아직 열려 있다.** state schema 5는 PROJ-71에서 사용자 지정
+  `local.retention_days`를 제거하는 데 사용됐으며, 기존 설치자의 `Local.Enabled`는 바꾸지 않는다(ADR 0008).
+  따라서 이 follow-up은 여전히 열려 있고, 일괄 전환을 결정한다면 새 스키마 버전과 별도 결정이 필요하다.
+  이전의 “schema 5를 이 항목에 사용한다”는 계획은 ADR 0008로 대체되었다.
 - **grpc 상위 전달.** grpc 테넌트는 배선 대상에서 빠진다 (`forward.ErrGRPCUnsupported`). 지원이 생기면
   `Apply` 의 강등 분기를 걷어낸다.
 - **Codex `log_user_prompt` 와 `environment`.** 티켓 참고 자료는 각각 `false` 와 `"e2e"` 였으나 전자는 Claude 와의
