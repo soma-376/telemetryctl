@@ -23,9 +23,9 @@ import (
 const (
 	// defaultSince 는 --since 기본값이다 (계획서 CLI 표의 `--since 7d`).
 	defaultSince = 7 * 24 * time.Hour
-	// maxSinceDays 는 --since 상한(일)이다. 세션 계층 보존 기간과 같다 — 그보다 오래된
+	// maxSinceDays 는 --since 상한(일)이다. 고정 보존 기간과 같다 — 그보다 오래된
 	// 데이터는 어차피 없으므로, 더 긴 구간을 받아 봐야 빈 구간만 늘어난다.
-	maxSinceDays = 400
+	maxSinceDays = store.DefaultRetentionDays
 	maxSince     = maxSinceDays * 24 * time.Hour
 )
 

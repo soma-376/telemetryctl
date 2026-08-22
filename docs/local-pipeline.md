@@ -233,7 +233,7 @@ sqlite3 "$DB" "SELECT body FROM event_content WHERE kind='tool_input';" | grep -
 
 | 테이블 | 역할 | 보존 |
 |---|---|---|
-| `meta` | `local_schema_version`·`installation_id`·`retention_days`·`last_rollup_at` | — |
+| `meta` | `local_schema_version`·`installation_id`·`last_rollup_at`과 GUI 호환용 고정 적용값 `retention_days=400` | — |
 | `sessions` | 화면의 중심. 세션 한 행에 수치 전부 | 400일 |
 | `session_files` | 파일별 변경량. `WITHOUT ROWID` | 400일 (CASCADE) |
 | `mcp_session_usage` | MCP 서버별 연결·호출·토큰. `WITHOUT ROWID` | 400일 (CASCADE) |
@@ -735,12 +735,13 @@ telemetryctl autostart status  [--data-dir <경로>] [--state <경로>]
 launchd LaunchAgent 와 **정확히 같은 의미론**이 되어 두 플랫폼이 대칭이 된다. 자세한 근거는
 `internal/autostart` 패키지 주석에 있다.
 
-**서비스에 굽는 인자는 `daemon` 하나뿐이다.** `--state`·`--data-dir`·`--listen`은 전부 서비스 관리자
-아래서 올바르게 풀린다(HOME 이 설정되므로 `DefaultStatePath` → `state.Local` → 기본값).
-`--listen` 생략은 단지 허용 가능한 게 아니라 **바람직하다** — `fixed=false`
+**서비스 명령은 `daemon`으로 시작한다.** `--state`·`--data-dir`은 명시한 값이 기본값과 다를 때만
+뒤에 붙고, `--listen`은 서비스에 굽지 않는다. 기본 경로는 서비스 관리자 아래에서 HOME 을 기준으로
+`DefaultStatePath` → `state.Local` → 기본값 순서로 풀린다. `--listen` 생략은 단지 허용 가능한 게
+아니라 **바람직하다** — `fixed=false`
 라 부팅 시 일시적 포트 충돌이 하드 실패(→ 재시작 루프)가 아니라 우아한 폴백이 된다(7.5절).
-`--state`·`--data-dir` 은 **명시했고 기본값과 다를 때만** 굽는다. 그러지 않으면 `state.json` 의
-위치가 두 곳이 되고 `installer.EnableLocal` 이 `state.Local.DataDir` 를 바꾸는 순간 조용히 어긋난다.
+기본 경로까지 굽지 않는 이유는 `state.json` 위치가 두 곳이 되고 `installer.EnableLocal` 이
+`state.Local.DataDir` 를 바꾸는 순간 조용히 어긋나는 일을 막기 위해서다.
 
 **재시작 정책은 ADR 0007 이다** — launchd `KeepAlive={SuccessfulExit:false}`, systemd
 `Restart=on-failure`. SIGTERM 은 `main.go` 의 `signal.NotifyContext` 가 잡아 종료 코드 0 이 되므로
@@ -766,8 +767,8 @@ systemd `TimeoutStopSec=20` 은 `daemon.DefaultShutdownTimeout`(15초)보다 커
 
 **등록 상태를 `state.json` 에 저장하지 않는다.** plist·unit 파일 자체가 산출물이고 OS 서비스
 관리자가 권위 있는 소스다. 저장하면 사용자가 `systemctl --user disable` 하거나 macOS 로그인
-항목에서 껐을 때 `state.json` 만 거짓말을 한다. `StateSchemaVersion` 은 4 로 유지되며, **schema 5
-는 ADR 0006 Follow-up 2(기존 설치자 일괄 전환)의 몫으로 비워 두었다.**
+항목에서 껐을 때 `state.json` 만 거짓말을 한다. 현재 `StateSchemaVersion` 은 5이며, schema 5는
+자동 실행 등록과 무관하게 PROJ-71의 `local.retention_days` 제거 마이그레이션에 사용한다(ADR 0008).
 
 로그는 플랫폼마다 다르다. systemd 는 journald 가 로테이션까지 맡으므로 할 일이 없다
 (`journalctl --user -u pulsemetry-daemon.service -n 100`). launchd 는 로테이션하지 않으므로
