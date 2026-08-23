@@ -1,12 +1,9 @@
 <script lang="ts">
-  import Header from "../home/components/Header.svelte";
   import { period, periodRangeText } from "../../lib/period.svelte";
-  import { SESSIONS, HEADER } from "./data";
-  import Filters from "./Filters.svelte";
-  import SessionTable from "./SessionTable.svelte";
-  import SessionDetail from "./SessionDetail.svelte";
-
-  let { onOpenSettings }: { onOpenSettings?: () => void } = $props();
+  import { SESSIONS } from "./data";
+  import Filters from "./components/Filters.svelte";
+  import SessionTable from "./components/SessionTable.svelte";
+  import SessionDetail from "./components/SessionDetail.svelte";
 
   let selected = $state<number | null>(null);
 
@@ -35,13 +32,6 @@
 </script>
 
 <svelte:window onkeydown={onKeydown} />
-
-<Header
-  online={HEADER.online}
-  activeAgents={HEADER.activeAgents}
-  tokensToday={HEADER.tokensToday}
-  {onOpenSettings}
-/>
 
 <main
   class="mx-auto w-full flex-1"

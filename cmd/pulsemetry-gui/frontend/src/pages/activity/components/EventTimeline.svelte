@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ActivityEvent } from "./data";
+  import type { ActivityEvent } from "../data";
 
   let { events }: { events: ActivityEvent[] } = $props();
 </script>

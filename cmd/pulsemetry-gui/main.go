@@ -48,8 +48,8 @@ func main() {
 	// 트레이 퀵뷰 — 프레임 없는 팝업. 트레이 클릭으로 토글되고 포커스를 잃으면 닫힌다.
 	quick := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:         "Pulsemetry Quick View",
-		Width:         1064,
-		Height:        670,
+		Width:         392,
+		Height:        600,
 		Frameless:     true,
 		AlwaysOnTop:   true,
 		Hidden:        true,

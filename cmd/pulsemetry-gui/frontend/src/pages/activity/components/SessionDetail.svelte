@@ -1,7 +1,7 @@
 <script lang="ts">
   import { fade, fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
-  import { detailDisplay } from "./data";
+  import { detailDisplay } from "../data";
   import KpiGrid from "./KpiGrid.svelte";
   import StageFlow from "./StageFlow.svelte";
   import EventTimeline from "./EventTimeline.svelte";

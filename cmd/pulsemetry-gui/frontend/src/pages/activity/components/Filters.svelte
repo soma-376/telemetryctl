@@ -1,13 +1,10 @@
 <script lang="ts">
-  import PeriodPicker from "../home/components/PeriodPicker.svelte";
-
-  // 날짜는 헤더와 같은 전역 period 스토어를 쓰는 PeriodPicker.
+  // 날짜는 공용 Header의 DateRangePicker가 담당한다.
   // 나머지 필터는 아직 표시 전용(실데이터 연동 시 구현).
   const filters = ["모든 프로젝트", "All agents", "모든 상태"];
 </script>
 
 <div class="flex items-center" style="gap:10px">
-  <PeriodPicker align="left" />
   {#each filters as label (label)}
     <button
       type="button"

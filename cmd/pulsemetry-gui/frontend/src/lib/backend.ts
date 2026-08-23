@@ -1,5 +1,6 @@
 import { App } from "../../bindings/github.com/your-org/pulsemetry/cmd/pulsemetry-gui";
 import type { AppInfo } from "../../bindings/github.com/your-org/pulsemetry/cmd/pulsemetry-gui";
+import { Application } from "@wailsio/runtime";
 
 export type { AppInfo };
 
@@ -17,6 +18,15 @@ export async function getAppInfo(): Promise<AppInfo> {
 export async function openMainWindow(): Promise<void> {
   try {
     await App.OpenMainWindow();
+  } catch {
+    /* browser preview */
+  }
+}
+
+// 현재 웹뷰(트레이 퀵뷰)만 숨긴다. 앱 프로세스는 계속 실행된다.
+export async function hideCurrentWindow(): Promise<void> {
+  try {
+    await Application.Hide();
   } catch {
     /* browser preview */
   }

@@ -33,5 +33,12 @@ tasks:
 
   dev:
     summary: Runs the application in development mode
+    # 포트 충돌 대응: WAILS_VITE_PORT 를 명시하면 그 포트를 그대로 쓰고(충돌 시
+    # 실패해서 알려줌), 지정하지 않으면 9245부터 비어 있는 포트를 찾아 쓴다.
+    # 고아 vite/앱 프로세스가 남아 있어도 dev 는 다음 포트로 비켜서 뜬다.
+    vars:
+      FREE_VITE_PORT:
+        sh: node build/devport.mjs {{.VITE_PORT}}
+      DEV_PORT: '{{if .WAILS_VITE_PORT}}{{.WAILS_VITE_PORT}}{{else}}{{.FREE_VITE_PORT}}{{end}}'
     cmds:
-      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+      - wails3 dev -config ./build/config.yml -port {{.DEV_PORT}}

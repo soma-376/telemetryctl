@@ -9,7 +9,11 @@
 
   // 남은 비율이 줄수록 벤더색 → 경고 → 위험으로 전환
   const barFg = (pct: number) =>
-    pct >= 50 ? style.fg : pct >= 25 ? "var(--color-warning)" : "var(--color-danger)";
+    pct >= 50
+      ? style.fg
+      : pct >= 25
+        ? "var(--color-warning)"
+        : "var(--color-danger)";
   const valueFg = (pct: number) =>
     pct >= 25 ? "var(--color-text)" : "var(--color-danger-strong)";
 </script>
@@ -49,7 +53,10 @@
     >
       {vendor.spend}
     </span>
-    <span class="text-text-secondary whitespace-nowrap" style="font-size:12.5px">
+    <span
+      class="text-text-secondary whitespace-nowrap"
+      style="font-size:12.5px"
+    >
       {vendor.spendNote}
     </span>
     <span style="flex:1"></span>

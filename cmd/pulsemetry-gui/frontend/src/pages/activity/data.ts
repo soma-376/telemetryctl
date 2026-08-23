@@ -82,9 +82,6 @@ export const STAGE_STYLE: Record<string, StageStyle> = {
 // xl: 스테이지 이름 → 한국어 라벨
 export const stageKo = (name: string): string => STAGE_STYLE[name]?.ko ?? "";
 
-// an: Activity 헤더 데이터
-export const HEADER = { online: true, activeAgents: 3, tokensToday: "148k" };
-
 // Yr: 세션 목록 (번들에서 그대로 복사)
 export const SESSIONS: ActivitySession[] = [
   {

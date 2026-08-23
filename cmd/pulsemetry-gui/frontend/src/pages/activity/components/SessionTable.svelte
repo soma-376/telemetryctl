@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ActivitySession } from "./data";
+  import type { ActivitySession } from "../data";
   import SessionRow from "./SessionRow.svelte";
 
   let {

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { ActivitySession } from "./data";
-  import { rowDisplay } from "./data";
+  import type { ActivitySession } from "../data";
+  import { rowDisplay } from "../data";
 
   let {
     session,

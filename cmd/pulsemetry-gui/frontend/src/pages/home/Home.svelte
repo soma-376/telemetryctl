@@ -1,44 +1,47 @@
 <script lang="ts">
-  import { period, periodRangeText, deltaNoun } from "../../lib/period.svelte";
-  import { formatTokens } from "../../lib/format";
-  import {
-    connection,
-    liveTokensToday,
-    summaryFor,
-    vendorSyncedText,
-    vendorUsage,
-  } from "./data";
-  import Header from "./components/Header.svelte";
-  import PageTitle from "./components/PageTitle.svelte";
-  import MetricRow from "./components/MetricRow.svelte";
-  import VendorLimitsPanel from "./components/VendorLimitsPanel.svelte";
+  import { period, toDate } from "../../lib/period.svelte";
+  import { heroData, vendorRows, buildActivity, longLabel } from "./chart";
+  import UsageHero from "./components/UsageHero.svelte";
+  import VendorTable from "./components/VendorTable.svelte";
+  import ActivityList from "./components/ActivityList.svelte";
+  import type { AppSection } from "../../lib/navigation";
 
-  let { onOpenSettings }: { onOpenSettings?: () => void } = $props();
+  let {
+    onNavigate,
+  }: {
+    onNavigate?: (tab: AppSection) => void;
+  } = $props();
 
-  // ② 기간 스코프 — period 변경에 반응
+  // 기간 스코프 — period(전역 날짜 범위) 변경에 전부 반응한다
   const p = $derived(period.value);
-  const summary = $derived(summaryFor(p));
+  const hero = $derived(heroData(p.start, p.end));
+  const vendors = $derived(vendorRows(hero));
+  const activity = $derived(buildActivity(p.start, p.end));
 
-  // ① 라이브 — pill의 "tokens today"는 항상 오늘 기준
-  const tokensToday = formatTokens(liveTokensToday);
+  const rangeLong = $derived.by(() => {
+    if (p.start === p.end) return longLabel(p.start);
+    const sameMonth = toDate(p.start).getMonth() === toDate(p.end).getMonth();
+    return sameMonth
+      ? `${longLabel(p.start)} ~ ${toDate(p.end).getDate()}일`
+      : `${longLabel(p.start)} ~ ${longLabel(p.end)}`;
+  });
 </script>
-
-<Header
-  online={connection.online}
-  activeAgents={connection.activeAgents}
-  {tokensToday}
-  {onOpenSettings}
-/>
 
 <main
   class="mx-auto w-full flex-1"
-  style="max-width:var(--page-max-width);padding:14px 32px 10px"
+  style="max-width:var(--page-max-width);padding:14px 32px 6px"
 >
-  <PageTitle label={periodRangeText(p)} />
-
-  <MetricRow {summary} deltaNoun={deltaNoun(p)} />
-
-  <div style="margin-top:14px">
-    <VendorLimitsPanel vendors={vendorUsage} syncedText={vendorSyncedText} />
+  <div class="flex items-baseline" style="gap:12px;margin-bottom:14px">
+    <h1
+      class="text-text m-0 font-bold"
+      style="font-size:38px;letter-spacing:-0.035em;line-height:1"
+    >
+      Home
+    </h1>
+    <div class="text-text-muted" style="font-size:14px">({rangeLong})</div>
   </div>
+
+  <UsageHero {hero} />
+  <VendorTable {vendors} />
+  <ActivityList {activity} onViewAll={() => onNavigate?.("activity")} />
 </main>

@@ -2,25 +2,18 @@
   import { Events } from "@wailsio/runtime";
   import Home from "./pages/home/Home.svelte";
   import Activity from "./pages/activity/Activity.svelte";
-  import BottomNav, {
-    type Tab,
-  } from "./pages/home/components/BottomNav.svelte";
+  import Header from "./lib/components/shell/Header.svelte";
+  import Nav from "./lib/components/shell/Nav.svelte";
+  import type { AppSection } from "./lib/navigation";
   import SettingsModal from "./pages/settings/SettingsModal.svelte";
   import TrayQuickView from "./pages/tray/TrayQuickView.svelte";
 
-  // 같은 SPA 를 두 창이 나눠 쓴다: 메인 창은 "/", 트레이 퀵뷰 창은 "/?view=tray".
   const isTray =
     new URLSearchParams(window.location.search).get("view") === "tray";
 
-  // 라우터 없이 로컬 탭 상태로 페이지 전환. overview(Home)·activity(Activity) 구현,
-  // insights 는 후속 티켓(PROJ-62) 플레이스홀더.
-  // settings 는 페이지가 아니라 모달이다 — 탭을 눌러도 화면 전환 없이 모달만 연다.
-  let activeTab = $state<Tab>("overview");
+  let activeTab = $state<AppSection>("overview");
   let settingsOpen = $state(false);
-  const go = (tab: Tab) => {
-    if (tab === "settings") settingsOpen = true;
-    else activeTab = tab;
-  };
+  const go = (tab: AppSection) => (activeTab = tab);
 
   // 퀵뷰의 "트레이 설정" → Go 가 메인 창을 열고 이 이벤트를 쏜다.
   if (!isTray) {
@@ -40,10 +33,16 @@
     class="flex h-screen min-w-(--page-min-width) flex-col overflow-hidden bg-bg"
   >
     <div class="flex flex-1 flex-col overflow-y-auto">
+      <Header
+        activeAgents={3}
+        tokensToday="148k"
+        onOpenSettings={() => (settingsOpen = true)}
+      />
+
       {#if activeTab === "overview"}
-        <Home onOpenSettings={() => (settingsOpen = true)} />
+        <Home onNavigate={go} />
       {:else if activeTab === "activity"}
-        <Activity onOpenSettings={() => (settingsOpen = true)} />
+        <Activity />
       {:else}
         <main class="flex flex-1 flex-col items-center justify-center gap-2">
           <div
@@ -59,7 +58,7 @@
       {/if}
     </div>
 
-    <BottomNav active={activeTab} onSelect={go} />
+    <Nav active={activeTab} onSelect={go} />
   </div>
 
   <SettingsModal open={settingsOpen} onClose={() => (settingsOpen = false)} />

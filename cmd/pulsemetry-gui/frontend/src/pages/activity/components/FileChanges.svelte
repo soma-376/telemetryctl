@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { FileChange } from "./data";
+  import type { FileChange } from "../data";
 
   let { files }: { files: FileChange[] } = $props();
 </script>
