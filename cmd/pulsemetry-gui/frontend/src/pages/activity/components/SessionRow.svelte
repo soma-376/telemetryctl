@@ -89,11 +89,11 @@
     class="inline-flex items-center justify-self-start font-semibold whitespace-nowrap"
     style="gap:5px;font-size:11px;border-radius:6px;padding:4px 8px;background:{d
       .badge.bg};color:{d.badge.fg}"
-    ><span
-      class="inline-block"
-      style="width:{d.badge.dot};height:{d.badge
-        .dot};border-radius:50%;background:{d.badge.fg};animation:{d.dotAnim}"
-    ></span> {d.badge.label}</span
+    >{#if d.badge.dot}<span
+        class="inline-block"
+        style="width:6px;height:6px;border-radius:50%;background:{d.badge
+          .fg};animation:{d.dotAnim}"
+      ></span>{/if}{d.badge.label}</span
   >
 </div>
 
