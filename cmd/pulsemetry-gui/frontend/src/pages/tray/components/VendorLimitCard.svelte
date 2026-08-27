@@ -3,6 +3,7 @@
   import { headOf, limitTone } from "../tray";
   import type { TrayVendor } from "../types";
   import LimitWindowRow from "./LimitWindowRow.svelte";
+  import ChevronDownIcon from "../../../lib/icons/ChevronDownIcon.svelte";
 
   let { vendor }: { vendor: TrayVendor } = $props();
   let open = $state(false);
@@ -57,18 +58,13 @@
       <span class="whitespace-nowrap" style="font-size:9.5px;color:#b3aba0">
         {rest.length && !open ? `+${rest.length}` : ""}
       </span>
-      <svg
-        viewBox="0 0 24 24"
+      <ChevronDownIcon
+        size={12}
+        strokeWidth={2.4}
         class="flex-none"
-        style="width:12px;height:12px;color:#b3aba0;transform:rotate({open
-          ? 180
-          : 0}deg);transition:transform 200ms cubic-bezier(0.32,0.72,0,1)"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.4"
-        stroke-linecap="round"
-        stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg
-      >
+        style="color:#b3aba0"
+        rotated={open}
+      />
     </span>
   </div>
   <div class="bg-track" style="height:5px;border-radius:999px">

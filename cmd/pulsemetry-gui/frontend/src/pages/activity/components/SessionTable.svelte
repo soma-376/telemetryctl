@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ActivitySession } from "../data";
   import SessionRow from "./SessionRow.svelte";
+  import ChevronDownIcon from "../../../lib/icons/ChevronDownIcon.svelte";
 
   let {
     sessions,
@@ -43,14 +44,6 @@
     style="gap:7px;padding:14px;font-size:12.5px"
   >
     더 불러오기
-    <svg
-      viewBox="0 0 24 24"
-      style="width:14px;height:14px"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="2"
-      stroke-linecap="round"
-      stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg
-    >
+    <ChevronDownIcon strokeWidth={2} />
   </button>
 </div>

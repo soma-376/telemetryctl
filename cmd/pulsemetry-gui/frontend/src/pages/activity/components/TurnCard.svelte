@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { TurnDisplay } from "../data";
+  import ChevronDownIcon from "../../../lib/icons/ChevronDownIcon.svelte";
 
   let {
     turn,
@@ -78,18 +79,12 @@
       class="text-text-muted flex-none whitespace-nowrap"
       style="font-size:11px;font-variant-numeric:tabular-nums">{turn.meta}</span
     >
-    <svg
-      viewBox="0 0 24 24"
+    <ChevronDownIcon
+      size={12}
+      strokeWidth={2.4}
       class="text-text-muted flex-none"
-      style="width:12px;height:12px;transform:rotate({open
-        ? 180
-        : 0}deg);transition:transform 200ms cubic-bezier(0.32,0.72,0,1)"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="2.4"
-      stroke-linecap="round"
-      stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg
-    >
+      rotated={open}
+    />
   </div>
 
   {#if open}

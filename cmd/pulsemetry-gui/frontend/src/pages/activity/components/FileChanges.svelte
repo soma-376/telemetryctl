@@ -1,5 +1,6 @@
 <script lang="ts">
   import { FILE_CAP, type FileChange } from "../data";
+  import ChevronDownIcon from "../../../lib/icons/ChevronDownIcon.svelte";
 
   let {
     files,
@@ -58,17 +59,12 @@
       onclick={() => onToggle?.()}
     >
       {open ? "접기" : `파일 ${files.length}개 모두 보기`}
-      <svg
-        viewBox="0 0 24 24"
-        style="width:12px;height:12px;transform:rotate({open
-          ? 180
-          : 0}deg);transition:transform 200ms cubic-bezier(0.32,0.72,0,1)"
-        fill="none"
-        stroke="var(--color-text-muted)"
-        stroke-width="2.4"
-        stroke-linecap="round"
-        stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg
-      >
+      <ChevronDownIcon
+        size={12}
+        strokeWidth={2.4}
+        class="text-text-muted"
+        rotated={open}
+      />
     </button>
   {/if}
 </div>

@@ -12,6 +12,7 @@
   } from "../../period.svelte";
   import type { PeriodRange } from "../../types";
   import { TODAY, RETAIN_FROM } from "../../../pages/home/chart";
+  import ChevronDownIcon from "../../icons/ChevronDownIcon.svelte";
 
   // 날짜 범위 선택 — 팝업 안에서는 draft만 바꾸고 「적용」할 때 전역 period에 반영한다.
 
@@ -178,19 +179,12 @@
       <path d="M8 3v4M16 3v4M3 10h18" />
     </svg>
     {rangeShort}
-    <svg
-      viewBox="0 0 24 24"
-      style="width:13px;height:13px;transform:rotate({open
-        ? 180
-        : 0}deg);transition:transform 200ms cubic-bezier(0.32,0.72,0,1)"
-      fill="none"
-      stroke="var(--color-text-muted)"
-      stroke-width="2.2"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-    >
-      <path d="m6 9 6 6 6-6" />
-    </svg>
+    <ChevronDownIcon
+      size={13}
+      strokeWidth={2.2}
+      class="text-text-muted"
+      rotated={open}
+    />
   </button>
 
   {#if open}

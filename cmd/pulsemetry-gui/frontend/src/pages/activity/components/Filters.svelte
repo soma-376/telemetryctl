@@ -1,4 +1,6 @@
 <script lang="ts">
+  import ChevronDownIcon from "../../../lib/icons/ChevronDownIcon.svelte";
+
   // 날짜는 공용 Header의 DateRangePicker가 담당한다.
   // 나머지 필터는 아직 표시 전용(실데이터 연동 시 구현).
   const filters = ["모든 프로젝트", "All agents", "모든 상태"];
@@ -12,15 +14,11 @@
       style="gap:9px;border-radius:10px;padding:10px 14px;font-size:13px"
     >
       {` ${label} `}
-      <svg
-        viewBox="0 0 24 24"
-        style="width:14px;height:14px;margin-left:10px"
-        fill="none"
-        stroke="var(--color-text-muted)"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg
-      >
+      <ChevronDownIcon
+        strokeWidth={2}
+        class="text-text-muted"
+        style="margin-left:10px"
+      />
     </button>
   {/each}
   <div class="min-w-[12px] flex-1"></div>

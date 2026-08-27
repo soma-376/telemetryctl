@@ -2,6 +2,7 @@
   import { fade, fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { portal } from "../../../lib/portal";
+  import ChevronDownIcon from "../../../lib/icons/ChevronDownIcon.svelte";
   import { detailDisplay } from "../data";
   import KpiGrid from "./KpiGrid.svelte";
   import TurnFlow from "./TurnFlow.svelte";
@@ -202,15 +203,11 @@
             style="gap:9px;font-size:13px;padding:10px 15px;border-radius:9px"
           >
             다른 에이전트로 넘기기
-            <svg
-              viewBox="0 0 24 24"
-              style="width:13px;height:13px"
-              fill="none"
-              stroke="var(--color-text-muted)"
-              stroke-width="2.2"
-              stroke-linecap="round"
-              stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg
-            ></button
+            <ChevronDownIcon
+              size={13}
+              strokeWidth={2.2}
+              class="text-text-muted"
+            /></button
           >
           <button
             type="button"
