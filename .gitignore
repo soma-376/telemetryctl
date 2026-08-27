@@ -22,7 +22,8 @@ __pycache__/
 *.pyc
 
 # Editors and operating systems
-/.claude/
+/.claude/*
+!/.claude/settings.json
 /.idea/
 /.vscode/
 .DS_Store

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/your-org/pulsemetry/internal/store"
 )
 
 // Dim 은 rollup_hourly.dim 값이다. rollup.Dim 과 같은 어휘지만 타입을 여기 다시 두는 이유는
@@ -38,8 +40,9 @@ const (
 )
 
 const (
-	defaultBreakdownDays  = 7
-	maxBreakdownDays      = 400 // 세션 계층 보존 기간과 같다. 그보다 오래된 롤업은 없다
+	defaultBreakdownDays = 7
+	// maxBreakdownDays 는 고정 보존 기간과 같다. 그보다 오래된 롤업은 없다.
+	maxBreakdownDays      = store.DefaultRetentionDays
 	defaultBreakdownLimit = 50
 	maxBreakdownLimit     = 500
 	hoursPerDay           = 24

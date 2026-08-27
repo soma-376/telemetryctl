@@ -11,7 +11,7 @@ Codex와 Claude Code의 OpenTelemetry 설정을 조직 단위로 안전하게 �
 
 ```text
 .
-├── cmd/telemetryctl/          # CLI 진입점 (enroll·status·reconnect·daemon·stats·sessions·purge·local·version)
+├── cmd/telemetryctl/          # CLI 진입점 (enroll·status·reconnect·daemon·stats·sessions·purge·local·autostart·version)
 ├── contracts/                 # 서버와의 JSON Schema 계약 사본 (계약 테스트 기준)
 │   ├── enrollment-manifest.schema.json
 │   └── enrollment-envelope.schema.json
@@ -34,6 +34,7 @@ Codex와 Claude Code의 OpenTelemetry 설정을 조직 단위로 안전하게 �
     ├── store/                 #   SQLite 스키마·쓰기·보존 정책
     ├── dashboard/             #   화면별 조회 API (CLI·GUI 공용, Wails 의존 없음)
     ├── runtimeinfo/           #   runtime.json (비밀 없음: 주소·pid·데이터 경로)
+    ├── autostart/             #   로그인 시 데몬 자동 실행 등록 (launchd·systemd user unit)
     └── daemon/                #   위 패키지 배선 + 틱 루프 + graceful shutdown
 ```
 
@@ -60,6 +61,7 @@ telemetryctl reconnect [--server <url>]                # 텔레메트리 토큰 
 telemetryctl status                                    # 설치·로컬 파이프라인 상태 표시
 telemetryctl daemon [옵션]                             # foreground 데몬 (로컬 수신기 + 집계 + 상위 전달)
 telemetryctl local enable|disable [--port 4318]        # 벤더 설정을 로컬 수신기로 재배선/해제
+telemetryctl autostart enable|disable|status           # 로그인 시 데몬 자동 실행 등록/해제/조회
 telemetryctl stats [--since 7d] [--group vendor]       # 로컬 집계 조회
 telemetryctl sessions [--since 7d] [--status running]  # 로컬 세션 목록 조회
 telemetryctl purge --content [--before 2026-07-01]     # 보관된 프롬프트·툴 원문 삭제
@@ -83,20 +85,28 @@ Claude Code(`~/.claude/settings.json`)·Codex(`~/.codex/config.toml`)에 OTel �
 Collector 로도 전달합니다. **끄려면 `local disable` 입니다.**
 
 ```sh
-telemetryctl enroll --invite <코드>   # 설치 + 로컬 배선 (endpoint → http://localhost:4318)
-telemetryctl daemon &                 # 데몬을 띄웁니다 (자동 실행 등록은 후속 티켓)
+telemetryctl enroll --invite <코드>   # 설치 + 로컬 배선 + 자동 실행 등록 (endpoint → http://localhost:4318)
 telemetryctl sessions --since 1d
+telemetryctl autostart status         # 자동 실행 등록 상태 확인
 telemetryctl local disable            # 회사 Collector 직결로 복귀
 ```
 
-> **데몬이 떠 있지 않으면 텔레메트리가 로컬에도 회사에도 남지 않습니다.** `enroll` 이 이 상태를
-> 경고합니다. 자동 실행 등록 전까지는 `telemetryctl daemon` 을 직접 띄워야 합니다.
+> **데몬이 떠 있지 않으면 텔레메트리가 로컬에도 회사에도 남지 않습니다.** `enroll` 이 로그인 시
+> 자동 실행을 등록해(macOS LaunchAgent · 리눅스 systemd user unit) 이 상태를 막습니다. 등록은
+> best-effort 라 실패해도 `enroll` 은 성공하고 사실을 알립니다 — 그때는 `telemetryctl daemon` 을
+> 직접 띄우면 됩니다. 원치 않으면 `telemetryctl autostart disable` 입니다.
+>
+> 자동 실행은 **사용자 수준**이라 로그인할 때 시작하고 로그아웃하면 함께 종료합니다.
+> 비정상 종료일 때만 재시작하므로 직접 정지시키면 정지 상태를 유지합니다
+> ([ADR 0007](docs/adr/0007-데몬은-비정상-종료일-때만-자동-재시작한다.md)).
+> Windows(작업 스케줄러)는 후속 티켓이라 `telemetryctl daemon` 을 직접 띄워야 합니다.
 
 로컬 OTel 설정은 회사 manifest 와 무관하게 **고정**입니다 — 시그널 셋을 전부 켜고 원문·tool details
 수집도 켭니다(응답 원문 제외). 회사가 수집 범위를 좁혀도 로컬 화면이 비지 않게 하기 위해서입니다.
 그래도 **회사로 나가는 데이터는 배선 전후로 동일합니다** — 데몬이 회사 manifest 의 `signals` 로
-전달 여부를, `privacy` 로 제거 대상을 판단합니다. 프롬프트 원문은 로컬에만 16KB 캡으로 30일간
-보관되며 `--no-store-content`·`purge --content` 로 끄거나 지울 수 있습니다.
+전달 여부를, `privacy` 로 제거 대상을 판단합니다. 프롬프트 원문을 포함한 모든 로컬 데이터는
+400일간 보관됩니다. 원문은 항목당 16KB로 제한되며 `--no-store-content`·`purge --content` 로
+끄거나 지울 수 있습니다([ADR 0008](docs/adr/0008-로컬-데이터를-400일간-보존한다.md)).
 
 기존 설치자(이미 `enroll` 을 마친 사용자)는 바이너리를 교체해도 자동 전환되지 않습니다.
 `telemetryctl local enable` 로 명시적으로 켜세요.
@@ -154,9 +164,9 @@ CGO_ENABLED=0 go build ./...   # 배포 바이너리가 C 툴체인을 요구하
 
 1. **GUI 데스크탑 앱** (PROJ-35) — `gui/` 에 별도 `go.mod` 로 Wails v3 앱을 두고
    `internal/dashboard` 를 감쌉니다. 계약은 [로컬 파이프라인 문서](docs/local-pipeline.md) 6절
-2. **데몬 자동 실행 등록** (launchd / systemd user unit / 작업 스케줄러) — **차단성**. 배선이 기본 ON 이
-   된 지금(PROJ-45), 데몬이 떠 있지 않으면 텔레메트리가 로컬에도 회사에도 남지 않고 그 상태를 enroll 한
-   전원이 지나갑니다. 현재는 경고만 하고 있습니다 (ADR 0006 Negative 1행)
+2. **데몬 자동 실행 등록 — Windows** (PROJ-56, 작업 스케줄러). macOS·리눅스는 PROJ-55 에서
+   구현했습니다 (`internal/autostart`, [ADR 0007](docs/adr/0007-데몬은-비정상-종료일-때만-자동-재시작한다.md)).
+   Windows 에서는 `autostart` 명령이 미지원임을 알리고 `telemetryctl daemon` 을 직접 띄워야 합니다
 3. 토큰 rotation · heartbeat · 설정 재조회(`GET /v1/manifest`)
 4. `resource_attributes` → `OTEL_RESOURCE_ATTRIBUTES` 배선 (회사 단위 태깅)
 5. 설치 바이너리 PATH 등록, `uninstall`·`repair` (자격증명 파일에서 헤더 재주입)

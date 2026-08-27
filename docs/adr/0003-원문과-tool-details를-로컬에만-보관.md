@@ -3,6 +3,9 @@
 ## Status
 Accepted
 
+> 원문을 30일 보존한다는 조항과 완화책은 [ADR 0008](0008-로컬-데이터를-400일간-보존한다.md)로
+> 대체되었다. 로컬 저장과 상위 전달 제거 결정은 계속 유효하다.
+
 ## Context
 `docs/installation-architecture.md` §4.6 「민감 정보 수집 위험」은 MVP 기본값을 이렇게 고정해 두었다.
 

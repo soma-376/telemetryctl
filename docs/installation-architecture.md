@@ -490,8 +490,13 @@ http://localhost:4318
 다만 로컬 agent는 설치, 업데이트, 자동 실행, 장애 복구, 보안 관리가 추가되므로 MVP에는 과할 수 있다.
 
 > **PROJ-36 이후.** 이 「제품화 이후」 항목은 더 이상 미래형이 아니다. `telemetryctl daemon` 이 로컬
-> 수신기를 띄우고 `telemetryctl local enable` 이 opt-in 으로 재배선한다(기본 OFF). 자동 실행 등록만
-> 후속 티켓으로 남아 있다.
+> 수신기를 띄우고 ~~`telemetryctl local enable` 이 opt-in 으로 재배선한다(기본 OFF)~~ — PROJ-45(ADR 0006)
+> 부터 **`enroll` 이 자동으로 배선한다(opt-out, 기본 ON)**. ~~자동 실행 등록만 후속 티켓으로 남아 있다.~~
+>
+> **PROJ-55 이후.** 자동 실행 등록도 끝났다. `telemetryctl autostart enable` 이 macOS LaunchAgent 와
+> 리눅스 systemd user unit 을 등록하고 `enroll` 이 best-effort 로 호출한다
+> ([로컬 파이프라인 문서](local-pipeline.md) 7.7절, [ADR 0007](adr/0007-데몬은-비정상-종료일-때만-자동-재시작한다.md)).
+> Windows 작업 스케줄러만 후속 티켓으로 남아 있다.
 
 ---
 

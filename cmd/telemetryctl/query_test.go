@@ -150,7 +150,7 @@ func TestResolveLocalTargetPrecedence(t *testing.T) {
 	if err := installer.SaveState(statePath, &installer.State{
 		StateSchemaVersion: installer.StateSchemaVersion,
 		InstallationID:     "inst-1",
-		Local:              installer.Local{DataDir: stateDataDir, RetentionDays: 30, StoreContent: true},
+		Local:              installer.Local{DataDir: stateDataDir, StoreContent: true},
 	}); err != nil {
 		t.Fatalf("SaveState: %v", err)
 	}

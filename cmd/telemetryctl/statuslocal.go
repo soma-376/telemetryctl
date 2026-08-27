@@ -18,20 +18,30 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/your-org/pulsemetry/internal/autostart"
 	"github.com/your-org/pulsemetry/internal/credential"
 	"github.com/your-org/pulsemetry/internal/dashboard"
 	"github.com/your-org/pulsemetry/internal/receiver"
+	"github.com/your-org/pulsemetry/internal/store"
 )
 
 // healthTimeout 은 /healthz 확인 한 번의 상한이다. status 는 즉답해야 하는 명령이라
 // 데몬이 응답하지 않을 때 오래 매달리면 안 된다.
 const healthTimeout = 2 * time.Second
+
+// autostartTimeout 은 서비스 관리자 조회 한 번의 상한이다 (PROJ-55).
+//
+// healthTimeout 과 같은 이유로 짧다. launchctl·systemctl 은 보통 즉답하지만 관리자가
+// 바쁘거나 D-Bus 가 응답하지 않으면 매달릴 수 있고, status 가 그것 때문에 멈추면 안 된다.
+// 시간 초과는 오류가 아니라 "확인 실패" 한 줄로 보고한다.
+const autostartTimeout = 2 * time.Second
 
 // healthResponse 는 /healthz 응답 중 status 가 보여 주는 부분이다.
 // receiver 의 응답 타입은 비공개라 필요한 필드만 여기서 다시 선언한다.
@@ -68,8 +78,42 @@ func printLocalStatus(w io.Writer, t localTarget) {
 
 	printDatabaseStatus(w, st)
 	printDaemonStatus(w, st)
+	printAutostartStatus(w)
 	printIngestTokenStatus(w)
 	printDataStatus(w, st)
+}
+
+// printAutostartStatus 는 자동 실행 등록 상태를 출력한다 (PROJ-55).
+//
+// printDaemonStatus 바로 뒤에 두는 이유는 **그 지점에서 독자의 질문이 바뀌기 때문**이다.
+// 방금 "데몬: 실행 안 됨" 을 읽은 사람이 다음으로 묻는 것은 "왜, 그리고 돌아오긴 하나?"
+// 이고, 제자리에서 답하는 편이 화면 아래쪽의 별도 블록보다 낫다.
+//
+// **절대 멈추면 안 된다.** status 는 진단 명령이라 어떤 상태에서도 동작해야 한다
+// (이 파일 머리말). 미지원 환경·조회 실패·시간 초과는 전부 한 줄로 보고하고 넘어간다.
+func printAutostartStatus(w io.Writer) {
+	st, err := currentAutostartStatus()
+	if err != nil {
+		if errors.Is(err, autostart.ErrUnsupportedPlatform) {
+			// 실패한 것이 없다. Windows 사용자에게 경고 어조를 쓰지 않는다 (PROJ-56).
+			fmt.Fprintln(w, "    자동 실행: 지원하지 않는 환경 (Windows 는 후속 티켓입니다)")
+			return
+		}
+		fmt.Fprintf(w, "    자동 실행: 확인 실패 (%v)\n", err)
+		return
+	}
+
+	fmt.Fprintf(w, "    %s\n", autostartSummary(st))
+	if !st.Registered {
+		return
+	}
+	fmt.Fprintf(w, "    자동 실행 파일: %s\n", st.UnitPath)
+	switch {
+	case st.LogPath != "":
+		fmt.Fprintf(w, "    자동 실행 로그: %s\n", st.LogPath)
+	case st.Kind == autostart.KindSystemdUser:
+		fmt.Fprintf(w, "    자동 실행 로그: %s\n", autostart.JournalCommand)
+	}
 }
 
 // printLocalSettings 는 state.Local 이 담은 **의도** 를 보여 준다. 실제로 도는 값은
@@ -95,8 +139,8 @@ func printLocalSettings(w io.Writer, t localTarget) {
 		content = "켬"
 	}
 	fmt.Fprintf(w, "    재배선: %s\n", rewire)
-	fmt.Fprintf(w, "    수신 포트(설정): %d%s · 보존: %d일 · 원문 보관: %s\n",
-		port, portNote, l.RetentionDays, content)
+	fmt.Fprintf(w, "    수신 포트(설정): %d%s · 보존: 전체 %d일 (고정) · 원문 보관: %s\n",
+		port, portNote, store.DefaultRetentionDays, content)
 }
 
 func printDatabaseStatus(w io.Writer, st dashboard.Status) {
@@ -111,7 +155,7 @@ func printDatabaseStatus(w io.Writer, st dashboard.Status) {
 	}
 	fmt.Fprintf(w, "    DB: %s (%s · %s)\n", st.DatabasePath, formatBytes(st.DatabaseBytes), schema)
 	if st.RetentionDays > 0 {
-		fmt.Fprintf(w, "    보존(적용값): 이벤트 %d일\n", st.RetentionDays)
+		fmt.Fprintf(w, "    보존(적용값): 전체 %d일\n", st.RetentionDays)
 	}
 }
 

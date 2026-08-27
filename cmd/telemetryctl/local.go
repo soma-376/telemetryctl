@@ -6,7 +6,8 @@ package main
 // 다른 명령보다 수다스럽다 — 무엇이 어떻게 바뀌었고, 왜 그렇게 바뀌었고, 지금 상태가
 // 실제로 동작하는 상태인지까지 말한다. 특히 **데몬이 떠 있지 않은 채 재배선된 상태**는
 // 텔레메트리가 통째로 사라지는 상태라(계획서 「리스크」 1행) 반드시 경고해야 한다.
-// 데몬 자동 실행 등록은 후속 티켓이므로, 지금 할 수 있는 최선이 알리는 것이다.
+// PROJ-55 부터는 경고에 그치지 않고 `telemetryctl autostart enable` 이라는 실제 해법을
+// 안내한다 — 그리고 이미 등록돼 있다면 다른 조언을 준다 (warnDaemonNotRunning).
 
 import (
 	"flag"
@@ -108,7 +109,7 @@ func runLocalEnable(stdout, stderr io.Writer, target localTarget, portFlag int) 
 		fmt.Fprintln(stdout, "  경고: 기존 설정에서 회사 telemetry token 을 찾지 못했습니다."+
 			" `local disable` 이 되돌리지 못하면 `telemetryctl reconnect` 를 실행하세요.")
 	}
-	warnDaemonNotRunning(stdout, target.DataDir)
+	warnDaemonNotRunning(stdout, target.DataDir, currentAutostartHint())
 	return 0
 }
 
@@ -171,12 +172,16 @@ func resolveEnablePort(target localTarget, portFlag int) (port int, note string)
 // warnDaemonNotRunning 은 재배선했는데 받을 쪽이 없을 때 경고한다.
 //
 // 이 상태는 텔레메트리가 로컬에도 회사에도 남지 않는 상태다. 계획서 「리스크」 표 1행이
-// 지목한 바로 그 위험이고, 자동 실행 등록이 후속 티켓인 이상 알리는 것이 최선이다.
+// 지목한 바로 그 위험이다.
 //
 // PROJ-45 로 배선이 opt-out 이 되면서 이 경고의 청중이 늘었다 — 이제 `local enable` 을
 // 실행한 사람뿐 아니라 **enroll 한 모든 사람**이 이 상태를 지나간다. 그래서 localTarget
 // 이 아니라 dataDir 만 받는다. enroll 직후에는 아직 localTarget 을 만들 수 없다.
-func warnDaemonNotRunning(w io.Writer, dataDir string) {
+//
+// PROJ-55 부터 **자동 실행 힌트를 함께 받는다.** 등록돼 있는데도 데몬이 없는 상태와
+// 아예 등록되지 않은 상태는 다음에 할 일이 완전히 다르다 — 전자는 기동에 실패한 것이라
+// 볼 것이 로그이고, 후자는 등록하면 되는 것이다. 같은 문장을 주면 둘 중 한쪽은 늘 틀린다.
+func warnDaemonNotRunning(w io.Writer, dataDir string, hint autostartHint) {
 	running, detail := daemonRunning(dataDir)
 	if running {
 		fmt.Fprintln(w, "  데몬: 실행 중 (헬스체크 응답 확인)")
@@ -184,7 +189,18 @@ func warnDaemonNotRunning(w io.Writer, dataDir string) {
 	}
 	fmt.Fprintf(w, "  경고: 데몬이 실행 중이 아닙니다 (%s).\n", detail)
 	fmt.Fprintln(w, "        지금 상태로는 Claude Code·Codex 의 텔레메트리가 로컬에도 회사에도 남지 않습니다.")
-	fmt.Fprintln(w, "        `telemetryctl daemon` 을 실행하세요 (자동 실행 등록은 후속 티켓입니다).")
+	switch {
+	case hint.Registered:
+		fmt.Fprintln(w, "        자동 실행은 등록돼 있습니다 — 기동에 실패했을 수 있습니다.")
+		printAutostartLogHint(w, hint.Kind, hint.LogPath)
+		fmt.Fprintln(w, "        `telemetryctl autostart status` 로 등록 상태를 확인하세요.")
+	case hint.Unsupported:
+		fmt.Fprintln(w, "        이 환경은 자동 실행 등록을 지원하지 않습니다.")
+		fmt.Fprintln(w, "        `telemetryctl daemon` 을 직접 실행하세요.")
+	default:
+		fmt.Fprintln(w, "        `telemetryctl autostart enable` 로 로그인 시 자동 실행을 등록하세요.")
+		fmt.Fprintln(w, "        지금 바로 띄우려면 `telemetryctl daemon` 입니다.")
+	}
 	fmt.Fprintln(w, "        되돌리려면 `telemetryctl local disable` 입니다.")
 }
 
