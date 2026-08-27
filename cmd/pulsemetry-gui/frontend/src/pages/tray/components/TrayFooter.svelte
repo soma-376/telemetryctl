@@ -1,11 +1,17 @@
 <script lang="ts">
-  import { openMainWindow, quitApp } from "../../../lib/backend";
+  import { openMainWindow } from "../../../lib/backend";
   import SlidersIcon from "../../../lib/icons/SlidersIcon.svelte";
+  import PowerIcon from "../../../lib/icons/PowerIcon.svelte";
 
   let {
     settingsOpen,
     onSettings,
-  }: { settingsOpen: boolean; onSettings: () => void } = $props();
+    onRequestQuit,
+  }: {
+    settingsOpen: boolean;
+    onSettings: () => void;
+    onRequestQuit: () => void;
+  } = $props();
 </script>
 
 <footer
@@ -35,20 +41,10 @@
   <button
     type="button"
     title="종료"
-    onclick={quitApp}
+    onclick={onRequestQuit}
     class="border-border text-text-secondary hover:border-border-strong hover:bg-surface-hover flex flex-none cursor-pointer items-center justify-center border bg-transparent transition-colors duration-[120ms] ease-in-out"
     style="width:34px;height:34px;border-radius:9px"
   >
-    <svg
-      viewBox="0 0 24 24"
-      style="width:15px;height:15px"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="1.8"
-      stroke-linecap="round"
-    >
-      <path d="M12 4v8" />
-      <path d="M7.5 7A7 7 0 1 0 16.5 7" />
-    </svg>
+    <PowerIcon size={15} strokeWidth={1.8} />
   </button>
 </footer>

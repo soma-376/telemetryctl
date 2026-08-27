@@ -161,7 +161,7 @@
   <button
     type="button"
     onclick={toggle}
-    class="bg-surface text-text hover:border-border-strong flex cursor-pointer items-center border whitespace-nowrap"
+    class="bg-bg text-text hover:border-border-strong flex cursor-pointer items-center border whitespace-nowrap"
     style="gap:8px;border-radius:10px;padding:9px 14px;font-size:13px;border-color:{open
       ? 'var(--color-border-strong)'
       : 'var(--color-border)'}"

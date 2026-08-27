@@ -16,9 +16,14 @@
   } = $props();
 </script>
 
-<div class="bg-surface border-border border" style="border-radius:12px;padding:14px 16px">
+<div
+  class="bg-surface border-border border"
+  style="border-radius:12px;padding:14px 16px"
+>
   <div class="flex items-baseline" style="gap:9px;margin-bottom:12px">
-    <span class="text-text-secondary font-semibold" style="font-size:12.5px">턴 흐름</span>
+    <span class="text-text-secondary font-semibold" style="font-size:12.5px"
+      >턴 흐름</span
+    >
     <span class="text-text-muted" style="font-size:11.5px">{turnCount}</span>
   </div>
   <div class="flex" style="gap:2px;margin-bottom:9px">

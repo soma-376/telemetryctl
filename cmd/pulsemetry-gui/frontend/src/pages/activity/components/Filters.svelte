@@ -36,7 +36,8 @@
       stroke="var(--color-text-muted)"
       stroke-width="1.8"
       stroke-linecap="round"
-      ><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg
+      ><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"
+      ></path></svg
     >
     <span
       class="text-text-muted overflow-hidden text-ellipsis whitespace-nowrap"

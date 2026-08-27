@@ -2,6 +2,7 @@
   import Mascot from "../Mascot.svelte";
   import BellIcon from "../../icons/BellIcon.svelte";
   import SlidersIcon from "../../icons/SlidersIcon.svelte";
+  import PowerIcon from "../../icons/PowerIcon.svelte";
   import DateRangePicker from "../period/DateRangePicker.svelte";
 
   let {
@@ -9,66 +10,85 @@
     activeAgents,
     tokensToday,
     onOpenSettings,
+    onQuit,
   }: {
     online?: boolean;
     activeAgents: number;
     tokensToday: string;
     onOpenSettings?: () => void;
+    onQuit?: () => void;
   } = $props();
 </script>
 
+<!-- 하단 Nav 와 같은 언어: 배경 위에 떠 있는 카드 한 장.
+     바깥 여백은 Nav(12/32/18)를 뒤집어 창 가장자리 18, 본문 쪽 12로 대칭을 맞춘다. -->
 <header
-  class="mx-auto grid w-full flex-none items-center"
-  style="max-width:var(--page-max-width);grid-template-columns:1fr auto 1fr;gap:20px;padding:14px 32px 0"
+  class="mx-auto w-full flex-none"
+  style="max-width:var(--page-max-width);padding:18px 32px 12px"
 >
-  <div class="flex items-center" style="gap:12px">
-    <Mascot pose="view-front" height={42} />
-    <div class="flex flex-col" style="gap:4px">
-      <div class="text-text font-bold" style="font-size:18px;letter-spacing:-0.01em">
-        Pulsemetry
-      </div>
-      <div
-        class="text-text-secondary flex items-center"
-        style="gap:6px;font-size:12px"
-      >
-        <span
-          class="inline-block"
-          style="width:7px;height:7px;border-radius:50%;background:{online
-            ? 'var(--color-success)'
-            : 'var(--color-inactive)'}"
-        ></span>{online ? "모니터링 중" : "연결 끊김"}
+  <div
+    class="bg-surface border-border grid items-center border"
+    style="grid-template-columns:1fr auto 1fr;gap:20px;border-radius:16px;padding:8px 14px"
+  >
+    <div class="flex items-center" style="gap:12px">
+      <Mascot pose="view-front" height={42} />
+      <div class="flex flex-col" style="gap:4px">
+        <div class="text-text font-bold" style="font-size:18px;letter-spacing:-0.01em">
+          Pulsemetry
+        </div>
+        <div
+          class="text-text-secondary flex items-center"
+          style="gap:6px;font-size:12px"
+        >
+          <span
+            class="inline-block"
+            style="width:7px;height:7px;border-radius:50%;background:{online
+              ? 'var(--color-success)'
+              : 'var(--color-inactive)'}"
+          ></span>{online ? "모니터링 중" : "연결 끊김"}
+        </div>
       </div>
     </div>
-  </div>
 
-  <div
-    class="bg-surface border-border flex items-center border whitespace-nowrap"
-    style="gap:9px;border-radius:999px;padding:8px 16px;font-size:13.5px"
-  >
-    <span
-      class="inline-block"
-      style="width:8px;height:8px;border-radius:50%;background:{online
-        ? 'var(--color-success)'
-        : 'var(--color-inactive)'}"
-    ></span>
-    <span class="font-semibold">{activeAgents} agents active</span>
-    <span class="text-text-muted">•</span>
-    <span class="text-text-secondary">{tokensToday} tokens today</span>
-  </div>
-
-  <div class="text-text flex items-center justify-end" style="gap:14px">
-    <DateRangePicker />
-    <span class="text-text-secondary" title="알림 (준비 중)" style="cursor:default">
-      <BellIcon size={19} strokeWidth={1.7} />
-    </span>
-    <button
-      type="button"
-      title="설정"
-      onclick={onOpenSettings}
-      class="text-text flex cursor-pointer items-center justify-center border-none bg-transparent"
-      style="padding:0"
+    <!-- 카드 위에서는 흰 칩이 묻히므로 배경색으로 눌러 넣은 칩이 된다 -->
+    <div
+      class="bg-bg border-border flex items-center border whitespace-nowrap"
+      style="gap:9px;border-radius:999px;padding:8px 16px;font-size:13.5px"
     >
-      <SlidersIcon size={19} strokeWidth={1.7} knobFill="var(--color-bg)" />
-    </button>
+      <span
+        class="inline-block"
+        style="width:8px;height:8px;border-radius:50%;background:{online
+          ? 'var(--color-success)'
+          : 'var(--color-inactive)'}"
+      ></span>
+      <span class="font-semibold">{activeAgents} agents active</span>
+      <span class="text-text-muted">•</span>
+      <span class="text-text-secondary">{tokensToday} tokens today</span>
+    </div>
+
+    <div class="text-text flex items-center justify-end" style="gap:14px">
+      <DateRangePicker />
+      <span class="text-text-secondary" title="알림 (준비 중)" style="cursor:default">
+        <BellIcon size={19} strokeWidth={1.7} />
+      </span>
+      <button
+        type="button"
+        title="설정"
+        onclick={onOpenSettings}
+        class="text-text flex cursor-pointer items-center justify-center border-none bg-transparent"
+        style="padding:0"
+      >
+        <SlidersIcon size={19} strokeWidth={1.7} knobFill="var(--color-surface)" />
+      </button>
+      <button
+        type="button"
+        title="종료"
+        onclick={onQuit}
+        class="text-text-secondary hover:text-danger-strong flex cursor-pointer items-center justify-center border-none bg-transparent transition-colors duration-[120ms] ease-in-out"
+        style="padding:0"
+      >
+        <PowerIcon size={19} strokeWidth={1.7} />
+      </button>
+    </div>
   </div>
 </header>

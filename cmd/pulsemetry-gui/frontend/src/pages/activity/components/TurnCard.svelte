@@ -101,11 +101,13 @@
         <div class="flex items-baseline" style="gap:8px;margin-bottom:7px">
           <span
             class="text-text-muted font-semibold"
-            style="font-size:10.5px;letter-spacing:0.02em">보낸 프롬프트 원문</span
+            style="font-size:10.5px;letter-spacing:0.02em"
+            >보낸 프롬프트 원문</span
           >
           <span class="flex-1"></span>
-          <span class="text-text-muted whitespace-nowrap" style="font-size:10.5px"
-            >{turn.chars}</span
+          <span
+            class="text-text-muted whitespace-nowrap"
+            style="font-size:10.5px">{turn.chars}</span
           >
           <span
             class="cursor-pointer font-semibold whitespace-nowrap"
@@ -138,7 +140,10 @@
             >
               {stat.value}
             </div>
-            <div class="text-text-muted whitespace-nowrap" style="font-size:10.5px">
+            <div
+              class="text-text-muted whitespace-nowrap"
+              style="font-size:10.5px"
+            >
               {stat.name}
             </div>
           </div>
@@ -155,8 +160,9 @@
             style="font-size:10.5px;letter-spacing:0.02em">도구 호출</span
           >
           <span class="flex-1"></span>
-          <span class="text-text-muted whitespace-nowrap" style="font-size:10.5px"
-            >{turn.callNote}</span
+          <span
+            class="text-text-muted whitespace-nowrap"
+            style="font-size:10.5px">{turn.callNote}</span
           >
         </div>
         {#each turn.calls as call (call.time + call.tool + call.arg)}
@@ -166,7 +172,8 @@
           >
             <span
               class="text-text-muted whitespace-nowrap"
-              style="font-size:11px;font-variant-numeric:tabular-nums">{call.time}</span
+              style="font-size:11px;font-variant-numeric:tabular-nums"
+              >{call.time}</span
             >
             <span
               class="text-text-secondary overflow-hidden font-semibold text-ellipsis whitespace-nowrap"
@@ -196,7 +203,8 @@
           class="text-text-muted"
           style="font-size:10.5px;margin-top:8px;padding-top:8px;border-top:1px solid #f1ece4;line-height:1.6"
         >
-          출력 본문은 저장하지 않아요. 종료 코드 · 실패 수 · 오류 지문만 남습니다.
+          출력 본문은 저장하지 않아요. 종료 코드 · 실패 수 · 오류 지문만
+          남습니다.
         </div>
       </div>
     </div>

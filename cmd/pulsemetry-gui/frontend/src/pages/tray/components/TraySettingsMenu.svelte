@@ -1,9 +1,13 @@
 <script lang="ts">
-  import { openMainSettings, quitApp } from "../../../lib/backend";
+  import { openMainSettings } from "../../../lib/backend";
+  import PowerIcon from "../../../lib/icons/PowerIcon.svelte";
   import { TRAY_OPTIONS } from "../data";
   import type { TrayOptionKey } from "../types";
 
-  let { onClose }: { onClose: () => void } = $props();
+  let {
+    onClose,
+    onRequestQuit,
+  }: { onClose: () => void; onRequestQuit: () => void } = $props();
   let optionOn = $state<Record<TrayOptionKey, boolean>>({
     notify: true,
     badge: true,
@@ -91,24 +95,13 @@
   </button>
   <button
     type="button"
-    onclick={quitApp}
+    onclick={onRequestQuit}
     class="flex w-full cursor-pointer items-center border-none bg-transparent text-left font-semibold whitespace-nowrap"
     style="gap:9px;padding:9px 10px;border-radius:9px;font-size:12.5px;color:var(--color-danger-strong)"
     onmouseenter={(event) => (event.currentTarget.style.background = "#fcf3f3")}
     onmouseleave={(event) => (event.currentTarget.style.background = "transparent")}
   >
-    <svg
-      viewBox="0 0 24 24"
-      class="flex-none"
-      style="width:13px;height:13px"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="1.9"
-      stroke-linecap="round"
-    >
-      <path d="M12 4v8" />
-      <path d="M7.5 7A7 7 0 1 0 16.5 7" />
-    </svg>
+    <PowerIcon size={13} class="flex-none" />
     Pulsemetry 종료
   </button>
 </div>

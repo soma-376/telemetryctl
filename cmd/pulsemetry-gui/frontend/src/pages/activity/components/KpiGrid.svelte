@@ -16,7 +16,8 @@
       stroke="var(--color-text-secondary)"
       stroke-width="1.9"
       stroke-linecap="round"
-      ><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path></svg
+      ><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"
+      ></path></svg
     >
     <div
       class="text-text"
@@ -36,8 +37,7 @@
       stroke="var(--color-info)"
       stroke-width="1.9"
       stroke-linecap="round"
-      stroke-linejoin="round"
-      ><path d="M3 13h3l2.5-7 4 14 2.5-7H21"></path></svg
+      stroke-linejoin="round"><path d="M3 13h3l2.5-7 4 14 2.5-7H21"></path></svg
     >
     <div
       class="text-text"
@@ -78,7 +78,8 @@
       stroke="var(--color-danger)"
       stroke-width="1.9"
       stroke-linecap="round"
-      ><path d="M20 12a8 8 0 1 1-2.4-5.7"></path><path d="M20 4v4h-4"></path></svg
+      ><path d="M20 12a8 8 0 1 1-2.4-5.7"></path><path d="M20 4v4h-4"
+      ></path></svg
     >
     <div
       class="text-text"

@@ -27,7 +27,6 @@ export interface Pref {
 }
 
 export const PREFS: Pref[] = [
-  { key: "dark", icon: "◑", name: "다크 모드", desc: "어두운 테마로 표시합니다", kind: "toggle" },
   { key: "launch", icon: "⏻", name: "시작 프로그램", desc: "로그인 시 Pulsemetry 자동 실행", kind: "toggle" },
   { key: "retention", icon: "▤", name: "로컬 데이터 보관 기간", desc: "기간이 지난 기록은 자동 정리됩니다", kind: "select", value: "30일",
     dbPath: "~/.pulsemetry/pulsemetry.db", dbSize: "18.4 MB" },
@@ -36,7 +35,6 @@ export const PREFS: Pref[] = [
 ];
 
 export const PREF_DEFAULTS: Record<string, boolean> = {
-  dark: false,
   launch: true,
   notify: true,
   update: false,

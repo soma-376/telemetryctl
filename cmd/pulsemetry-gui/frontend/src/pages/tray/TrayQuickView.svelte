@@ -5,9 +5,17 @@
   import TrayInsight from "./components/TrayInsight.svelte";
   import TraySettingsMenu from "./components/TraySettingsMenu.svelte";
   import VendorLimits from "./components/VendorLimits.svelte";
+  import QuitDialog from "../../lib/components/dialog/QuitDialog.svelte";
   import { TRAY_SESSIONS, TRAY_SYNCED_TEXT, TRAY_VENDORS } from "./data";
 
   let settingsOpen = $state(false);
+  let quitOpen = $state(false);
+
+  // 종료 진입점이 푸터 버튼과 설정 메뉴 두 곳이라 확인 모달 진입을 한곳으로 모은다.
+  function requestQuit() {
+    settingsOpen = false;
+    quitOpen = true;
+  }
 </script>
 
 <div
@@ -25,9 +33,15 @@
   <TrayFooter
     {settingsOpen}
     onSettings={() => (settingsOpen = !settingsOpen)}
+    onRequestQuit={requestQuit}
   />
 
   {#if settingsOpen}
-    <TraySettingsMenu onClose={() => (settingsOpen = false)} />
+    <TraySettingsMenu
+      onClose={() => (settingsOpen = false)}
+      onRequestQuit={requestQuit}
+    />
   {/if}
+
+  <QuitDialog open={quitOpen} onClose={() => (quitOpen = false)} />
 </div>

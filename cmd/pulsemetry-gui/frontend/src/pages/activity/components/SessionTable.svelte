@@ -13,7 +13,10 @@
   } = $props();
 </script>
 
-<div class="bg-surface border-border overflow-hidden border" style="border-radius:14px">
+<div
+  class="bg-surface border-border overflow-hidden border"
+  style="border-radius:14px"
+>
   <div
     class="border-border text-text-muted grid items-center border-b font-semibold"
     style="grid-template-columns:14px 58px minmax(0,1.35fr) minmax(0,1fr) 62px 62px 62px 76px;gap:12px;padding:11px 18px;background:#faf7f2;font-size:11.5px;letter-spacing:0.02em"

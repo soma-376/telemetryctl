@@ -1,6 +1,7 @@
 <script lang="ts">
   import { fade, fly } from "svelte/transition";
-  import { sheetEase, easeOut } from "../../../lib/motion";
+  import { cubicOut } from "svelte/easing";
+  import { portal } from "../../../lib/portal";
   import { detailDisplay } from "../data";
   import KpiGrid from "./KpiGrid.svelte";
   import TurnFlow from "./TurnFlow.svelte";
@@ -75,11 +76,11 @@
 </script>
 
 {#if open}
-  <div class="fixed inset-0" style="z-index:60">
+  <div class="fixed inset-0" style="z-index:60" use:portal>
     <div
       class="absolute inset-0"
       style="background:rgba(27,26,24,0.28)"
-      transition:fade={{ duration: 180, easing: easeOut }}
+      transition:fade={{ duration: 180, easing: cubicOut }}
       role="button"
       tabindex="-1"
       aria-label="닫기"
@@ -90,14 +91,22 @@
     <div
       class="bg-surface absolute top-0 right-0 bottom-0 flex flex-col"
       style="width:min(720px,70vw);border-left:1px solid var(--color-border);box-shadow:-18px 0 44px rgba(27,26,24,0.13)"
-      transition:fly={{ x: "100%", duration: 280, opacity: 1, easing: sheetEase }}
+      transition:fly={{
+        x: "100%",
+        duration: 280,
+        opacity: 1,
+        easing: cubicOut,
+      }}
     >
-      <div class="flex-none" style="padding:20px 24px 16px;border-bottom:1px solid #f1ece4">
+      <div
+        class="flex-none"
+        style="padding:20px 24px 16px;border-bottom:1px solid #f1ece4"
+      >
         <div class="flex items-start" style="gap:14px;margin-bottom:14px">
           <div
             class="flex flex-none items-center justify-center"
-            style="width:40px;height:40px;border-radius:12px;background:{d.agentTile
-              .bg};color:{d.agentTile.fg};font-size:{d.agentTile
+            style="width:40px;height:40px;border-radius:12px;background:{d
+              .agentTile.bg};color:{d.agentTile.fg};font-size:{d.agentTile
               .size}px;font-weight:{d.agentTile.weight}"
           >
             {d.agentTile.glyph}
@@ -114,18 +123,22 @@
               style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;margin-bottom:8px"
             >
               <span class="text-text flex-none">{d.repo}</span>
-              <span class="text-text-muted flex-none" style="padding:0 5px">/</span>
+              <span class="text-text-muted flex-none" style="padding:0 5px"
+                >/</span
+              >
               <span
                 class="text-text-muted min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
-                style="flex:0 1 auto;direction:rtl;text-align:left"><bdi>{d.path}</bdi></span
+                style="flex:0 1 auto;direction:rtl;text-align:left"
+                ><bdi>{d.path}</bdi></span
               >
             </div>
             <div
               class="text-text-muted flex items-center whitespace-nowrap"
               style="gap:9px;font-size:12.5px"
             >
-              <span class="text-text-secondary flex-none" style="font-weight:500"
-                >{d.agentName}</span
+              <span
+                class="text-text-secondary flex-none"
+                style="font-weight:500">{d.agentName}</span
               >
               <span
                 class="flex-none font-semibold"
@@ -135,13 +148,13 @@
               <span
                 class="inline-flex flex-none items-center border font-semibold"
                 style="gap:6px;font-size:11.5px;border-radius:7px;padding:4px 9px;color:{d
-                  .character.fg};background:{d.character.bg};border-color:{d.character
-                  .border}"
+                  .character.fg};background:{d.character.bg};border-color:{d
+                  .character.border}"
               >
                 <span
                   class="flex-none"
-                  style="width:7px;height:7px;border-radius:2px;background:{d.character
-                    .dot}"
+                  style="width:7px;height:7px;border-radius:2px;background:{d
+                    .character.dot}"
                 ></span>{d.character.label}
               </span>
               <span class="overflow-hidden text-ellipsis">{d.range}</span>
@@ -179,7 +192,8 @@
               fill="none"
               stroke="currentColor"
               stroke-width="1.8"
-              stroke-linejoin="round"><path d="M8 5.5 18 12 8 18.5z"></path></svg
+              stroke-linejoin="round"
+              ><path d="M8 5.5 18 12 8 18.5z"></path></svg
             > 계속하기</button
           >
           <button
@@ -241,8 +255,9 @@
 
         <div>
           <div class="flex items-baseline" style="gap:9px;margin-bottom:9px">
-            <span class="text-text-secondary font-semibold" style="font-size:12.5px"
-              >턴별 프롬프트</span
+            <span
+              class="text-text-secondary font-semibold"
+              style="font-size:12.5px">턴별 프롬프트</span
             >
             <span class="flex-1"></span>
             <span
@@ -310,7 +325,8 @@
         >
         <span
           class="text-text-muted"
-          style="font-size:12.5px;font-variant-numeric:tabular-nums">{d.position}</span
+          style="font-size:12.5px;font-variant-numeric:tabular-nums"
+          >{d.position}</span
         >
         <span class="flex-1"></span>
         <span
@@ -334,7 +350,8 @@
             class="border-border border"
             style="font-family:ui-monospace,Menlo,monospace;border-radius:5px;padding:3px 6px"
             >K</span
-          > 이동
+          >
+          이동
           <span
             class="border-border border"
             style="font-family:ui-monospace,Menlo,monospace;border-radius:5px;padding:3px 6px;margin-left:6px"

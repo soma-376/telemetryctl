@@ -35,7 +35,8 @@
       >
         <span
           class="text-text-muted min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
-          style="flex:0 1 auto;direction:rtl;text-align:left"><bdi>{file.dir}</bdi></span
+          style="flex:0 1 auto;direction:rtl;text-align:left"
+          ><bdi>{file.dir}</bdi></span
         >
         <span class="text-text flex-none">{file.name}</span>
       </span>
