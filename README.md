@@ -156,7 +156,8 @@ CGO_ENABLED=0 go build ./...   # 배포 바이너리가 C 툴체인을 요구하
 ```
 
 자세한 설계는 [설치 아키텍처](docs/installation-architecture.md)와
-[로컬 파이프라인](docs/local-pipeline.md), 결정 배경은 [ADR](docs/adr/), 협업 규칙은
+[로컬 파이프라인](docs/local-pipeline.md), 데몬이 상위로 나가는 구간의 HTTP 계약은
+[상위 전달 계약](docs/telemetry-egress-contract.md), 결정 배경은 [ADR](docs/adr/), 협업 규칙은
 [개발 워크플로](docs/development-workflow.md)를 참고하세요. enrollment 서버 스펙은 서버 저장소를
 참조하세요.
 
