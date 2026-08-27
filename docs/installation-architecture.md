@@ -7,19 +7,19 @@
 목표 설치 경험은 다음과 같다.
 
 ```powershell
-irm https://get.your-service.com/windows | iex
+irm "https://get.your-service.com/windows?code=<초대코드>" | iex
 ```
 
 개발자는 위 명령어 한 줄만 실행하고, 설치 스크립트가 다음 작업을 자동으로 수행한다.
 
-1. 브라우저 기반 회사 계정 로그인
-2. 사용자 및 소속 회사 확인
-3. 설치별 인증 정보 발급
+1. 초대 코드로 enroll 호출 (별도 로그인 없음 — 코드가 곧 자격증명이다)
+2. 소속 회사 확인과 대상 멤버 `invited → active` 전환
+3. 설치 자격 봉투 수신 (`installation_id` · `installation_token` · `telemetry_token`)
 4. Codex 전역 OTel 설정 적용
 5. Claude Code 전역 OTel 설정 적용
 6. 기존 설정 충돌 및 백업 처리
 7. Collector 연결 상태 확인
-8. 설치 완료 상태 서버 등록
+8. 데몬 자동 실행 등록 (macOS·리눅스)
 
 ---
 
@@ -28,13 +28,13 @@ irm https://get.your-service.com/windows | iex
 ```text
 개발자
   │
-  │ irm https://get.your-service.com/windows | iex
+  │ irm "https://get.your-service.com/windows?code=<초대코드>" | iex
   ▼
 설치 스크립트
   │
-  ├─ 브라우저 로그인
-  ├─ Enrollment API 호출
-  ├─ 설치별 토큰 발급
+  ├─ 바이너리 내려받기 (GET /bin/{filename})
+  ├─ Enrollment API 호출 (초대 코드가 자격증명. 별도 로그인 없음)
+  ├─ 설치 자격 봉투 수신 (installation_token · telemetry_token)
   ├─ 기존 설정 검사 및 백업
   ├─ Codex config.toml 수정
   ├─ Claude Code settings.json 수정
@@ -81,65 +81,102 @@ install.ps1 -Endpoint "https://telemetry.company.com" -Token "..." -TenantId "..
 대신 공통 설치 명령어를 사용한다.
 
 ```powershell
-irm https://get.your-service.com/windows | iex
+irm "https://get.your-service.com/windows?code=<초대코드>" | iex
 ```
 
-설치 스크립트가 브라우저 로그인 이후 서버에서 해당 사용자와 회사에 맞는 설정을 받아온다.
+설치 스크립트가 초대 코드로 enroll 을 호출해 회사 manifest 와 이 설치의 자격을 받아온다.
+별도 로그인 단계는 없다.
 
 ---
 
-## 3.2 권장 Enrollment 흐름
+## 3.2 Enrollment 흐름
+
+**브라우저 로그인이 없다.** 초대 코드 자체가 자격증명이고, enroll 엔드포인트에는 인증이 붙지
+않는다(서버 명세 §4.2). 사람 계정·로그인은 아직 구현이 없는 영역이다.
 
 ```text
-1. 사용자가 설치 명령어 실행
-2. 설치 스크립트가 브라우저 로그인 페이지 실행
-3. 사용자가 회사 계정으로 로그인
-4. 서버가 tenant와 사용자 확인
-5. 서버가 installation 생성
-6. 설치별 ingest token 발급
-7. 설정 manifest 반환
-8. 설치 스크립트가 설정 파일에 적용
-9. 첫 telemetry 수신 여부 확인
+1. 관리자가 POST /v1/invitations 로 초대 코드를 발급한다 (X-Admin-Token 인증)
+2. 사용자가 초대 코드가 실린 한 줄 설치 명령을 실행한다
+     irm "<server>/windows?code=<초대코드>" | iex
+3. 서버가 코드를 정규식으로만 검증하고(DB 조회 없음 — 코드 탐색 오라클 방지)
+   코드가 박힌 부트스트랩 스크립트를 내려준다
+4. 스크립트가 OS·아키텍처를 판별해 GET /bin/{filename} 으로 바이너리를 받는다
+5. 스크립트가 `enroll --invite <코드> --server <주소>` 를 실행한다
+6. 서버가 초대 코드를 원자적으로 소비하고 installation 을 만든다
+   대상 멤버가 suspended 면 403 으로 끊고 롤백한다 — 코드는 살아 있다
+7. enroll 성공이 대상 멤버를 invited → active 로 전환한다
+   이 전환이 없으면 auth-proxy 가 이후 모든 텔레메트리를 401 로 막는다
+8. 서버가 봉투를 내려준다 — {installation_id, installation_token, telemetry_token, manifest}
+9. 클라이언트가 로컬 파이프라인을 배선한다
+   벤더 설정에는 로컬 ingest 토큰만 들어가고, 회사 telemetry token 은 OS 키링에 저장된다
+10. 데몬 자동 실행을 best-effort 로 등록한다 (macOS·리눅스, ADR 0007)
 ```
+
+초대 코드가 설치 명령 URL 에 노출되는 것은 **알고 수용한 위험**이다. 코드는 일회성이고
+enroll 이 원자적으로 소비하며, 서버는 코드의 존재 여부를 응답으로 알려 주지 않는다.
 
 ---
 
-## 3.3 서버가 반환할 설정 Manifest 예시
+## 3.3 서버가 반환하는 봉투와 Manifest
+
+기계 판독 원본은 `contracts/enrollment-envelope.schema.json` 과
+`contracts/enrollment-manifest.schema.json` 이다. 아래는 그 사본이 아니라 읽기용 예시다.
+
+**자격은 manifest 밖에 둔다(봉투 분리).** `installation_id` 와 두 토큰은 "설정" 이 아니라 이
+설치의 자격이다. 클라이언트는 `DisallowUnknownFields` 로 파싱하고 그 설정이 중첩 manifest 까지
+적용되므로, **manifest 안에 봉투 필드가 하나라도 있으면 설치가 그 자리에서 실패한다.**
 
 ```json
 {
-  "schema_version": 1,
-  "config_revision": 12,
-
   "installation_id": "ins_01JABC",
-  "installation_token": "inst_xxxxxxxxx",
+  "installation_token": "pit_...",
+  "telemetry_token": "ptt_...",
+  "manifest": {
+    "schema_version": 1,
+    "config_revision": 12,
 
-  "otlp": {
-    "endpoint": "https://telemetry.company.com",
-    "protocol": "http/protobuf",
-    "compression": "gzip",
-    "timeout_ms": 10000
-  },
+    "otlp": {
+      "endpoint": "https://telemetry.company.com",
+      "protocol": "http/protobuf",
+      "compression": "gzip",
+      "timeout_ms": 10000
+    },
 
-  "signals": {
-    "logs": true,
-    "metrics": true,
-    "traces": false
-  },
+    "signals": {
+      "logs": true,
+      "metrics": true,
+      "traces": false
+    },
 
-  "privacy": {
-    "collect_user_prompts": false,
-    "collect_assistant_responses": false,
-    "collect_tool_details": false,
-    "collect_tool_content": false,
-    "collect_user_email": false
-  },
+    "privacy": {
+      "collect_user_prompts": false,
+      "collect_assistant_responses": false,
+      "collect_tool_details": false,
+      "collect_tool_content": false,
+      "collect_user_email": false,
+      "collect_raw_api_bodies": false
+    },
 
-  "resource_attributes": {
-    "deployment.environment": "production"
+    "repository_allowlist": [],
+    "resource_attributes": {
+      "deployment.environment": "production"
+    }
   }
 }
 ```
+
+**토큰이 둘인 이유**는 역할이 다르기 때문이다.
+
+| 토큰 | 접두사 | 저장 위치 | 용도 | 교체 |
+|---|---|---|---|---|
+| `installation_token` | `pit_` | OS 키링 | 이 설치의 장기 신원. 재발급 요청의 근거 | 하지 않는다 |
+| `telemetry_token` | `ptt_` | OS 키링 (데몬이 상위 전송 시 `Authorization` 에 주입) | 텔레메트리 전송 | 언제든 재발급 |
+
+`telemetry_token` 은 **벤더 설정 파일로 나가지 않는다.** enroll 이 로컬 파이프라인을 배선하면서
+Codex·Claude 설정에는 로컬 ingest 토큰이 들어간다(§4.5 의 평문 노출 위험이 여기서 줄어든다).
+
+`config_revision` 은 서버가 저장된 `manifests.version` 으로 덮어써서 내려준다. tenant 당 활성
+manifest 는 최대 하나이고, 활성 manifest 가 없으면 enroll 은 409 `manifest_not_configured` 다.
 
 ---
 
@@ -241,16 +278,20 @@ installation_token
 
 MVP에서는 아래 정도면 충분하다.
 
-| 변수 | 범위 | 필수 여부 |
-|---|---|---:|
-| `otlp_endpoint` | 회사 | 필수 |
-| `installation_id` | 설치 | 필수 |
-| `installation_token` | 설치 | 필수 |
-| `enabled_signals` | 회사 | 필수 |
-| `privacy_policy` | 회사 | 필수 |
-| `config_revision` | 설치 | 필수 |
-| `installer_version` | 설치 | 권장 |
-| `repository_allowlist` | 회사 | 권장 |
+봉투(자격)와 manifest(설정)를 나눠서 본다.
+
+| 위치 | 필드 | 범위 | 필수 여부 |
+|---|---|---|---:|
+| 봉투 | `installation_id` | 설치 | 필수 |
+| 봉투 | `installation_token` | 설치 | 필수 |
+| 봉투 | `telemetry_token` | 설치 | 필수 |
+| manifest | `otlp.endpoint` | 회사 | 필수 |
+| manifest | `signals` | 회사 | 필수 |
+| manifest | `privacy` | 회사 | 필수 |
+| manifest | `schema_version` | 회사 | 필수 |
+| manifest | `config_revision` | 회사 | 필수 (서버가 `manifests.version` 으로 덮어쓴다) |
+| manifest | `repository_allowlist` | 회사 | 권장 |
+| 요청 | `client_version` | 설치 | 권장 (`installer_version` 은 deprecated) |
 
 ---
 
@@ -769,10 +810,12 @@ MVP에서는 로컬 장기 보관보다 제한된 메모리 queue 또는 짧은 
 다음 명령은 원격 코드를 즉시 실행한다.
 
 ```powershell
-irm https://get.your-service.com/windows | iex
+irm "https://get.your-service.com/windows?code=<초대코드>" | iex
 ```
 
 PoC에는 편리하지만 기업에서는 보안 검토 대상이 된다.
+초대 코드가 명령줄과 셸 히스토리에 남는 것도 이 절의 검토 대상에 포함된다 —
+일회성 코드이고 enroll 이 원자적으로 소비한다는 전제 위에서 수용한 위험이다.
 
 ### 대응 방안
 
@@ -865,7 +908,7 @@ token이 언제 발급·폐기됐는가
   │
   ▼
 Installer
-  ├─ 브라우저 로그인
+  ├─ 초대 코드로 enroll (별도 로그인 없음)
   ├─ Windows / WSL 탐지
   ├─ 기존 설정 충돌 검사
   ├─ 설정 백업
@@ -913,10 +956,13 @@ ClickHouse / PostgreSQL
 
 # 7. MVP 구현 범위
 
+> 이 목록은 **최초 MVP 계획**이다. 현재 구현 상태는 `README.md` 와 `docs/adr/` 를 본다 —
+> 체크 상태를 여기서 따로 관리하지 않는다.
+
 ## 반드시 구현
 
 - [ ] 공통 한 줄 설치 명령
-- [ ] 브라우저 로그인 또는 device code 인증
+- [ ] 초대 코드 기반 enroll (브라우저 로그인·device code 는 채택하지 않았다)
 - [ ] 설치별 `installation_id` 생성
 - [ ] 설치별 ingest-only token 발급
 - [ ] Codex 설정 파일 안전 병합
@@ -954,16 +1000,16 @@ ClickHouse / PostgreSQL
 ## 설치 명령어
 
 ```powershell
-irm https://get.your-service.com/windows | iex
+irm "https://get.your-service.com/windows?code=<초대코드>" | iex
 ```
 
 ## 사용자별 변수 전달
 
 ```text
-명령어 인자에 직접 삽입하지 않음
-→ 브라우저 로그인
-→ Enrollment API
-→ 회사 및 설치별 설정 manifest 수신
+초대 코드를 설치 URL 에 싣는다 (노출 위험을 알고 수용)
+→ 서버가 코드를 박은 부트스트랩 스크립트를 내려준다
+→ 스크립트가 enroll 호출
+→ 자격 봉투 + 회사 manifest 수신
 ```
 
 ## 인증
