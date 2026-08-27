@@ -20,10 +20,10 @@ import (
 // 새 설치(고친 문장을 실행)의 스키마가 갈리고, 그 차이는 어느 쪽에서도 드러나지 않는다.
 // 잘못된 마이그레이션은 다음 번호의 새 마이그레이션으로 바로잡는다.
 //
-// 예 — 후속 티켓이 분류 결과에 컬럼을 더할 때:
+// 예 — 후속 티켓이 LLM 호출에 컬럼을 더할 때:
 //
-//	{version: 3, name: "턴 분류 근거", stmts: []string{
-//		`ALTER TABLE turns ADD COLUMN work_type_reason TEXT`,
+//	{version: 4, name: "LLM 호출 메타데이터", stmts: []string{
+//		`ALTER TABLE llm_calls ADD COLUMN provider_request_id TEXT`,
 //	}},
 type migration struct {
 	version int
@@ -35,6 +35,7 @@ type migration struct {
 var migrations = []migration{
 	{version: 1, name: "초기 스키마", stmts: schemaV1},
 	{version: 2, name: "턴과 세션 단계", stmts: schemaV2},
+	{version: 3, name: "로컬 저장 모델 재생성", stmts: schemaV3},
 }
 
 // LatestSchemaVersion 은 이 바이너리가 아는 최신 스키마 버전이다.

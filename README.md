@@ -84,6 +84,10 @@ Claude Code(`~/.claude/settings.json`)·Codex(`~/.codex/config.toml`)에 OTel �
 직접 받고, 세션 단위로 조립·집계해 로컬 SQLite(`~/.pulsemetry/pulsemetry.db`)에 저장한 뒤 회사
 Collector 로도 전달합니다. **끄려면 `local disable` 입니다.**
 
+> **개발 브랜치 주의:** SQLite 스키마 v3는 기존 로컬 도메인 데이터를 삭제하고 새 모델을 만들지만
+> 데몬·CLI 런타임은 아직 v3로 전환되지 않았습니다. 후속 구현 전에는 로컬 수집·조회 명령이 실패하며,
+> 현재 스키마 계약과 파괴적 전환 범위는 [SQLite 스키마 문서](docs/sqlite-schema/README.md)를 따릅니다.
+
 ```sh
 telemetryctl enroll --invite <코드>   # 설치 + 로컬 배선 + 자동 실행 등록 (endpoint → http://localhost:4318)
 telemetryctl sessions --since 1d
@@ -163,13 +167,14 @@ enrollment 서버 스펙은 서버 저장소를 참조하세요.
 
 ## 다음 구현 대상
 
-1. **GUI 데스크탑 앱** (PROJ-35) — `gui/` 에 별도 `go.mod` 로 Wails v3 앱을 두고
+1. **SQLite v3 런타임 전환** — 새 세션·턴·이벤트·LLM 호출·도구 호출 모델에 맞춰 쓰기, 조회,
+   보존 로직을 교체하고 전체 테스트를 다시 통과시킵니다
+2. **GUI 데스크탑 앱** (PROJ-35) — `gui/` 에 별도 `go.mod` 로 Wails v3 앱을 두고
    `internal/dashboard` 를 감쌉니다. 계약은 [로컬 파이프라인 문서](docs/local-pipeline.md) 6절
-2. **데몬 자동 실행 등록 — Windows** (PROJ-56, 작업 스케줄러). macOS·리눅스는 PROJ-55 에서
+3. **데몬 자동 실행 등록 — Windows** (PROJ-56, 작업 스케줄러). macOS·리눅스는 PROJ-55 에서
    구현했습니다 (`internal/autostart`, [ADR 0007](docs/adr/0007-데몬은-비정상-종료일-때만-자동-재시작한다.md)).
    Windows 에서는 `autostart` 명령이 미지원임을 알리고 `telemetryctl daemon` 을 직접 띄워야 합니다
-3. 토큰 rotation · heartbeat · 설정 재조회(`GET /v1/manifest`)
-4. `resource_attributes` → `OTEL_RESOURCE_ATTRIBUTES` 배선 (회사 단위 태깅)
-5. 설치 바이너리 PATH 등록, `uninstall`·`repair` (자격증명 파일에서 헤더 재주입)
-6. turn 조립과 `turns.work_type`·`session_phases` 분류 결과 생성 및 Insights 카드
+4. 토큰 rotation · heartbeat · 설정 재조회(`GET /v1/manifest`)
+5. `resource_attributes` → `OTEL_RESOURCE_ATTRIBUTES` 배선 (회사 단위 태깅)
+6. 설치 바이너리 PATH 등록, `uninstall`·`repair` (자격증명 파일에서 헤더 재주입)
 7. Codex 텔레메트리 인증 배선 (현재 Codex 설정에는 토큰이 들어가지 않음)

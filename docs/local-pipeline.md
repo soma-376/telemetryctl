@@ -6,6 +6,12 @@
 Claude Code·Codex 의 시그널을 직접 받고, 정규화·집계해 로컬 SQLite 에 저장한 뒤 회사 Collector 로
 전달하는 구조다.
 
+> **v3 전환 중:** SQLite 스키마는 새 `vendors → sessions → turns → events` 모델로 교체됐지만,
+> 이 문서가 설명하는 쓰기·집계·조회 런타임은 아직 기존 모델을 사용한다. DB를 열면 v3 마이그레이션이
+> 기존 도메인 데이터를 삭제하므로 후속 런타임 전환 전에는 데몬·CLI 기능이 실패한다. 현재 동작을
+> 설명하는 아래 절과 ADR은 전환 전 구현 기록이며, 새 DDL 계약은 [SQLite 스키마](sqlite-schema/README.md)를
+> 우선한다.
+
 독자는 둘이다.
 
 - 이 저장소를 이어받는 개발자 — 2·3·4·5·7절
@@ -229,6 +235,9 @@ sqlite3 "$DB" "SELECT body FROM event_content WHERE kind='tool_input';" | grep -
 
 DDL, 테이블 관계, PRAGMA, 보존 계층, 마이그레이션 규칙은
 [SQLite 스키마 문서](sqlite-schema/README.md)로 분리했다. 테이블별 문서는 해당 목차에서 찾을 수 있다.
+
+스키마 버전 3은 기존 도메인 데이터를 보존하거나 백필하지 않는다. `meta`와 DB 파일만 유지하며,
+쓰기·조회·보존 런타임 전환은 이 변경의 범위 밖이다.
 
 이 절 번호는 GUI 계약과 운영 절을 가리키는 기존 링크가 깨지지 않도록 유지한다.
 
@@ -847,13 +856,12 @@ ls ~/.config/systemd/user 2>/dev/null | grep -i pulsemetry || echo "OK: 등록�
 
 ## 10. 범위 밖 · 후속 티켓
 
-1. **데몬 자동 실행 등록 — Windows** (PROJ-56, 작업 스케줄러). macOS·리눅스는 PROJ-55 에서 끝났다
+1. **SQLite v3 런타임 전환** — `vendors`, `sessions`, `turns`, `events`, `llm_calls`, `tool_calls`,
+   `file_changes`에 맞춰 디코드 결과의 ETL, 쓰기, 조회, 보존과 GUI 계약을 교체하고 전체 테스트를
+   복구한다
+2. **데몬 자동 실행 등록 — Windows** (PROJ-56, 작업 스케줄러). macOS·리눅스는 PROJ-55 에서 끝났다
    (7.7절, ADR 0007). Settings 「시작 프로그램」 토글은 `autostart.Manager` 를 감싸면 되고,
    등록 상태를 `state.json` 에 두지 않으므로 토글의 진실원은 OS 서비스 관리자 하나다
-2. **turn 조립 + 세션 단계 분류 + 작업 유형 분포** — 사용자 프롬프트를 경계로 `turns`를 채우고
-   `turns.work_type`과 `session_phases`에 분류 결과를 저장한다. 현재 스키마는 저장 자리만 제공하며
-   `session.Session`과 세션 UPSERT에는 turn·phase 생성 경로가 없다. 레거시 `sessions.phase_json`은
-   호환성을 위해 남기지만 신규 결과 저장소로 사용하지 않는다
 3. **Insights 경고 카드·제안** — 반복 실패 감지, 유사 프롬프트 탐지, 벤더 전환 분석
 4. **제목·요약 품질 개선** (`title_source='llm'`) — 프롬프트를 외부로 보내는 문제라 **별도 프라이버시
    검토가 선행**되어야 한다. ADR 0003 은 원문이 로컬을 떠나지 않는다는 전제 위에 서 있고, 그 전제를

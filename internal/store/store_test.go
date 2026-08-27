@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/your-org/pulsemetry/internal/session"
 )
 
 func TestOpenAppliesMigrations(t *testing.T) {
@@ -23,10 +21,9 @@ func TestOpenAppliesMigrations(t *testing.T) {
 		t.Fatalf("스키마 버전 = %d, want %d", got, want)
 	}
 
-	// 계획서 스키마의 테이블·가상 테이블이 전부 만들어졌는지 본다.
+	// meta 는 마이그레이션 러너가 유지하고, 나머지는 v3 DDL 의 도메인 테이블이다.
 	tables := []string{
-		"meta", "sessions", "turns", "session_phases", "session_files", "tool_events", "mcp_session_usage",
-		"vendors", "events", "event_content", "content_fts", "rollup_hourly",
+		"meta", "vendors", "sessions", "turns", "events", "llm_calls", "tool_calls", "file_changes",
 	}
 	for _, name := range tables {
 		var n int
@@ -39,86 +36,206 @@ func TestOpenAppliesMigrations(t *testing.T) {
 			t.Errorf("테이블 %s 가 없다", name)
 		}
 	}
-}
 
-// WITHOUT ROWID 는 계획서가 지정한 저장 형태다. 빠뜨려도 SQL 은 전부 동작하므로
-// 스키마 문자열을 직접 확인하는 수밖에 없다.
-func TestWithoutRowidTables(t *testing.T) {
-	db := openTestDB(t)
-	for _, name := range []string{"turns", "session_phases", "session_files", "mcp_session_usage", "rollup_hourly"} {
-		var ddl string
-		err := db.SQL().QueryRowContext(context.Background(),
-			`SELECT sql FROM sqlite_master WHERE type='table' AND name = ?`, name).Scan(&ddl)
-		if err != nil {
-			t.Fatalf("%s DDL 조회: %v", name, err)
+	legacy := []string{
+		"session_phases", "session_files", "tool_events", "mcp_session_usage",
+		"event_content", "content_fts", "rollup_hourly",
+	}
+	for _, name := range legacy {
+		var n int
+		if err := db.SQL().QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM sqlite_master WHERE name = ?`, name).Scan(&n); err != nil {
+			t.Fatalf("legacy sqlite_master 조회 (%s): %v", name, err)
 		}
-		if !contains(ddl, "WITHOUT ROWID") {
-			t.Errorf("%s 가 WITHOUT ROWID 가 아니다", name)
+		if n != 0 {
+			t.Errorf("v3 에 제거돼야 할 객체 %s 가 남았다", name)
 		}
 	}
 }
 
-func TestTurnAndPhaseSchema(t *testing.T) {
+func TestSchemaV3NamedIndexesAndForeignKeys(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 
-	rows, err := db.SQL().QueryContext(ctx, `PRAGMA index_info('idx_tool_events_turn')`)
-	if err != nil {
-		t.Fatalf("idx_tool_events_turn 조회: %v", err)
-	}
-	defer rows.Close()
-	var columns []string
-	for rows.Next() {
-		var seq, cid int
-		var name string
-		if err := rows.Scan(&seq, &cid, &name); err != nil {
-			t.Fatalf("idx_tool_events_turn 컬럼 조회: %v", err)
+	indexes := []string{"ux_turns_virtual", "ix_events_name", "ix_llm_turn", "ix_fc_tool"}
+	for _, name := range indexes {
+		var n int
+		if err := db.SQL().QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, name).Scan(&n); err != nil {
+			t.Fatalf("인덱스 조회 (%s): %v", name, err)
 		}
-		columns = append(columns, name)
+		if n != 1 {
+			t.Errorf("인덱스 %s = %d개, want 1", name, n)
+		}
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("idx_tool_events_turn 순회: %v", err)
+	var namedIndexCount int
+	if err := db.SQL().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL`).Scan(&namedIndexCount); err != nil {
+		t.Fatalf("명명 인덱스 계수: %v", err)
 	}
-	if got := strings.Join(columns, ","); got != "session_id,turn_index,ts" {
-		t.Fatalf("idx_tool_events_turn 컬럼 = %s", got)
+	if namedIndexCount != len(indexes) {
+		t.Fatalf("명명 인덱스 = %d개, want %d", namedIndexCount, len(indexes))
 	}
 
-	for _, id := range []string{"sess-1", "sess-2"} {
-		if _, err := db.Write(ctx, Batch{Sessions: []session.Session{newSession(id, baseTime)}}); err != nil {
-			t.Fatalf("세션 %s Write: %v", id, err)
-		}
-		if _, err := db.SQL().ExecContext(ctx, `
-			INSERT INTO turns (session_id, turn_index, started_at, last_event_at)
-			VALUES (?, 1, ?, ?)`, id, baseTime.Unix(), baseTime.Unix()); err != nil {
-			t.Fatalf("턴 %s INSERT: %v", id, err)
-		}
-		if _, err := db.SQL().ExecContext(ctx, `
-			INSERT INTO session_phases
-			  (session_id, phase_index, phase_type, start_turn_index, end_turn_index, started_at, last_event_at, turn_count)
-			VALUES (?, 1, 'implementation', 1, 1, ?, ?, 1)`, id, baseTime.Unix(), baseTime.Unix()); err != nil {
-			t.Fatalf("단계 %s INSERT: %v", id, err)
+	var unique, partial int
+	if err := db.SQL().QueryRowContext(ctx, `
+		SELECT "unique", partial FROM pragma_index_list('turns') WHERE name = 'ux_turns_virtual'`).
+		Scan(&unique, &partial); err != nil {
+		t.Fatalf("ux_turns_virtual 속성 조회: %v", err)
+	}
+	if unique != 1 || partial != 1 {
+		t.Fatalf("ux_turns_virtual = unique %d, partial %d", unique, partial)
+	}
+
+	fks := map[string]map[string]int{
+		"sessions":     {"vendors": 1},
+		"turns":        {"sessions": 1},
+		"events":       {"turns": 1},
+		"llm_calls":    {"turns": 1, "events": 1},
+		"tool_calls":   {"turns": 1, "events": 2},
+		"file_changes": {"tool_calls": 1},
+	}
+	for table, parents := range fks {
+		for parent, want := range parents {
+			var n int
+			if err := db.SQL().QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM pragma_foreign_key_list(?) WHERE "table" = ?`, table, parent).Scan(&n); err != nil {
+				t.Fatalf("외래 키 조회 (%s -> %s): %v", table, parent, err)
+			}
+			if n != want {
+				t.Errorf("%s -> %s 외래 키 = %d개, want %d", table, parent, n, want)
+			}
 		}
 	}
-	if _, err := db.SQL().ExecContext(ctx, `
-		INSERT INTO turns (session_id, turn_index, started_at, last_event_at)
-		VALUES ('sess-1', 1, ?, ?)`, baseTime.Unix(), baseTime.Unix()); err == nil {
-		t.Fatal("같은 세션의 중복 turn_index가 허용됐다")
+	var nonDefaultDeletes int
+	for table := range fks {
+		var n int
+		if err := db.SQL().QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM pragma_foreign_key_list(?) WHERE on_delete != 'NO ACTION'`, table).Scan(&n); err != nil {
+			t.Fatalf("외래 키 삭제 동작 조회 (%s): %v", table, err)
+		}
+		nonDefaultDeletes += n
 	}
-	if _, err := db.SQL().ExecContext(ctx, `
-		INSERT INTO session_phases
-		  (session_id, phase_index, phase_type, start_turn_index, end_turn_index, started_at, last_event_at)
-		VALUES ('sess-1', 1, 'review', 1, 1, ?, ?)`, baseTime.Unix(), baseTime.Unix()); err == nil {
-		t.Fatal("같은 세션의 중복 phase_index가 허용됐다")
+	if nonDefaultDeletes != 0 {
+		t.Fatalf("DDL에 없는 외래 키 삭제 동작 = %d개", nonDefaultDeletes)
 	}
 }
 
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
+func TestSchemaV3Columns(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	want := map[string][]string{
+		"vendors": {"vendor", "first_seen", "last_seen", "status"},
+		"sessions": {
+			"id", "vendor_id", "session_key", "title", "workspace_path", "user_email",
+			"user_account_id", "terminal_type", "started_at", "ended_at", "active_time_sec",
+		},
+		"turns": {
+			"id", "session_id", "turn_key", "turn_index", "client_version", "started_at",
+			"ended_at", "prompt_text", "ttft_ms",
+		},
+		"events": {
+			"id", "turn_id", "seq", "event_name", "occurred_at", "record_hash", "payload",
+		},
+		"llm_calls": {
+			"id", "turn_id", "source_event_id", "called_at", "model", "input_tokens",
+			"output_tokens", "cache_read_tokens", "cache_write_tokens", "reasoning_tokens",
+			"cost_usd", "duration_ms", "request_id",
+		},
+		"tool_calls": {
+			"id", "turn_id", "call_key", "decision_event_id", "result_event_id", "tool_name",
+			"target", "mcp_server", "called_at", "duration_ms", "blocked_on_user_ms", "success",
+			"decision", "decision_source", "input_size_bytes", "result_size_bytes", "error_type",
+			"error_message",
+		},
+		"file_changes": {
+			"id", "tool_call_id", "file_path", "operation", "renamed_from", "additions",
+			"deletions", "old_hash", "new_hash",
+		},
+	}
+
+	for table, expected := range want {
+		rows, err := db.SQL().QueryContext(ctx, `SELECT name FROM pragma_table_info(?) ORDER BY cid`, table)
+		if err != nil {
+			t.Fatalf("컬럼 조회 (%s): %v", table, err)
+		}
+		var got []string
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				rows.Close()
+				t.Fatalf("컬럼 스캔 (%s): %v", table, err)
+			}
+			got = append(got, name)
+		}
+		if err := rows.Close(); err != nil {
+			t.Fatalf("컬럼 조회 종료 (%s): %v", table, err)
+		}
+		if strings.Join(got, ",") != strings.Join(expected, ",") {
+			t.Errorf("%s 컬럼 = %v, want %v", table, got, expected)
 		}
 	}
-	return false
+}
+
+func TestSchemaV3Constraints(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	mustExec(t, db, `INSERT INTO vendors (vendor, first_seen, last_seen, status) VALUES ('codex', 1, 2, 'enabled')`)
+	expectConstraint(t, db, `INSERT INTO vendors (vendor, first_seen, last_seen, status) VALUES ('bad', 1, 2, 'unknown')`)
+	mustExec(t, db, `INSERT INTO sessions (id, vendor_id, session_key) VALUES (1, 'codex', 'session-1')`)
+	mustExec(t, db, `INSERT INTO sessions (id, vendor_id, session_key) VALUES (2, 'codex', 'session-2')`)
+	expectConstraint(t, db, `INSERT INTO sessions (vendor_id, session_key) VALUES ('codex', 'session-1')`)
+
+	mustExec(t, db, `INSERT INTO turns (id, session_id, turn_key, turn_index) VALUES (1, 1, 'turn-1', 1)`)
+	mustExec(t, db, `INSERT INTO turns (id, session_id, turn_key, turn_index) VALUES (2, 1, '__unattributed__', NULL)`)
+	mustExec(t, db, `INSERT INTO turns (id, session_id, turn_key, turn_index) VALUES (3, 2, '__unattributed__', NULL)`)
+	expectConstraint(t, db, `INSERT INTO turns (session_id, turn_key, turn_index) VALUES (1, 'turn-1', 2)`)
+	expectConstraint(t, db, `INSERT INTO turns (session_id, turn_key, turn_index) VALUES (1, 'turn-2', 1)`)
+	expectConstraint(t, db, `INSERT INTO turns (session_id, turn_key, turn_index) VALUES (1, 'virtual-2', NULL)`)
+
+	mustExec(t, db, `INSERT INTO events (id, turn_id, seq, event_name, record_hash, payload)
+		VALUES (1, 1, 1, 'response', 'hash-1', jsonb('{"ok":true}'))`)
+	mustExec(t, db, `INSERT INTO events (id, turn_id, seq, event_name, record_hash)
+		VALUES (2, 1, 2, 'tool_result', 'hash-2')`)
+	expectConstraint(t, db, `INSERT INTO events (turn_id, seq, event_name, record_hash)
+		VALUES (1, 2, 'duplicate-seq', 'hash-3')`)
+	expectConstraint(t, db, `INSERT INTO events (turn_id, seq, event_name, record_hash)
+		VALUES (1, 3, 'duplicate-hash', 'hash-1')`)
+	expectConstraint(t, db, `INSERT INTO events (turn_id, seq, event_name, record_hash, payload)
+		VALUES (1, 3, 'bad-jsonb', 'hash-3', x'0102')`)
+
+	mustExec(t, db, `INSERT INTO llm_calls (id, turn_id, source_event_id) VALUES (1, 1, 1)`)
+	expectConstraint(t, db, `INSERT INTO llm_calls (turn_id, source_event_id) VALUES (1, 1)`)
+	expectConstraint(t, db, `INSERT INTO tool_calls (turn_id, call_key) VALUES (1, 'call-empty')`)
+	mustExec(t, db, `INSERT INTO tool_calls (id, turn_id, call_key, decision_event_id) VALUES (1, 1, 'call-1', 2)`)
+	expectConstraint(t, db, `INSERT INTO tool_calls (turn_id, call_key, decision_event_id) VALUES (1, 'call-2', 2)`)
+	expectConstraint(t, db, `INSERT INTO tool_calls (turn_id, call_key, result_event_id) VALUES (1, 'call-1', 1)`)
+	mustExec(t, db, `INSERT INTO file_changes (tool_call_id, file_path, operation) VALUES (1, 'main.go', 'modify')`)
+	expectConstraint(t, db, `INSERT INTO file_changes (tool_call_id, file_path, operation) VALUES (1, 'main.go', 'move')`)
+
+	var n int
+	if err := db.SQL().QueryRowContext(ctx, `SELECT COUNT(*) FROM file_changes`).Scan(&n); err != nil {
+		t.Fatalf("file_changes 계수: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("file_changes = %d행, want 1", n)
+	}
+}
+
+func mustExec(t *testing.T, db *DB, query string, args ...any) {
+	t.Helper()
+	if _, err := db.SQL().ExecContext(context.Background(), query, args...); err != nil {
+		t.Fatalf("SQL 실행 실패: %v\n%s", err, query)
+	}
+}
+
+func expectConstraint(t *testing.T, db *DB, query string, args ...any) {
+	t.Helper()
+	if _, err := db.SQL().ExecContext(context.Background(), query, args...); err == nil {
+		t.Fatalf("제약 위반 SQL 이 성공했다:\n%s", query)
+	}
 }
 
 // foreign_keys PRAGMA 는 켜지 않아도 모든 SQL 이 성공한다. CASCADE 만 조용히 동작하지 않아서

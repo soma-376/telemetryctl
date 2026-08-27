@@ -10,19 +10,18 @@ import (
 	"github.com/your-org/pulsemetry/internal/session"
 )
 
-// 후속 티켓이 마이그레이션을 추가하는 절차 자체를 검사한다 — migrations 끝에 항목 하나를
-// 더하면 이미 만들어진 DB 가 데이터를 잃지 않고 따라 올라와야 한다.
+// v3 이후의 일반 증분 마이그레이션은 기존 데이터를 보존한다. v3 자체만 의도적으로
+// 파괴적이며 이후 마이그레이션까지 데이터 손실을 기본값으로 만들지는 않는다.
 func TestIncrementalMigration(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), DefaultFileName)
 
 	db, err := Open(ctx, path)
 	if err != nil {
-		t.Fatalf("Open v1: %v", err)
+		t.Fatalf("Open v3: %v", err)
 	}
-	if _, err := db.Write(ctx, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}}); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
+	mustExec(t, db, `INSERT INTO vendors (vendor, first_seen, last_seen, status) VALUES ('codex', 1, 2, 'enabled')`)
+	mustExec(t, db, `INSERT INTO sessions (id, vendor_id, session_key) VALUES (1, 'codex', 'sess-1')`)
 	db.Close()
 
 	// 후속 티켓이 추가할 마이그레이션을 흉내낸다.
@@ -36,7 +35,7 @@ func TestIncrementalMigration(t *testing.T) {
 
 	db, err = Open(ctx, path)
 	if err != nil {
-		t.Fatalf("Open v2: %v", err)
+		t.Fatalf("Open v4: %v", err)
 	}
 	defer db.Close()
 
@@ -48,105 +47,104 @@ func TestIncrementalMigration(t *testing.T) {
 		t.Fatalf("스키마 버전 = %d, want %d", got, LatestSchemaVersion())
 	}
 
-	var id string
+	var id int
+	var sessionKey string
 	var testColumn any
 	if err := db.SQL().QueryRowContext(ctx,
-		`SELECT session_id, test_column FROM sessions`).Scan(&id, &testColumn); err != nil {
+		`SELECT id, session_key, test_column FROM sessions`).Scan(&id, &sessionKey, &testColumn); err != nil {
 		t.Fatalf("새 컬럼 조회: %v", err)
 	}
-	if id != "sess-1" {
-		t.Fatalf("session_id = %q — 마이그레이션이 기존 데이터를 잃었다", id)
+	if id != 1 || sessionKey != "sess-1" {
+		t.Fatalf("session = (%d, %q) — 증분 마이그레이션이 기존 데이터를 잃었다", id, sessionKey)
 	}
 	if testColumn != nil {
 		t.Errorf("test_column = %v, want NULL", testColumn)
 	}
 }
 
-func TestMigrateV1ToV2PreservesDataWithoutBackfill(t *testing.T) {
+func TestMigrateV2ToV3RecreatesDomainSchema(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), DefaultFileName)
 	original := migrations
 	t.Cleanup(func() { migrations = original })
 
-	migrations = original[:1]
+	migrations = original[:2]
 	db, err := Open(ctx, path)
-	if err != nil {
-		t.Fatalf("Open v1: %v", err)
-	}
-	if _, err := db.Write(ctx, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}}); err != nil {
-		db.Close()
-		t.Fatalf("v1 Write: %v", err)
-	}
-	const legacyPhaseJSON = `[{"type":"legacy"}]`
-	if _, err := db.SQL().ExecContext(ctx,
-		`UPDATE sessions SET phase_json = ? WHERE session_id = 'sess-1'`, legacyPhaseJSON); err != nil {
-		db.Close()
-		t.Fatalf("v1 phase_json 설정: %v", err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("v1 Close: %v", err)
-	}
-
-	migrations = original
-	db, err = Open(ctx, path)
 	if err != nil {
 		t.Fatalf("Open v2: %v", err)
 	}
-	defer db.Close()
-
-	var phaseJSON string
-	if err := db.SQL().QueryRowContext(ctx,
-		`SELECT phase_json FROM sessions WHERE session_id = 'sess-1'`).Scan(&phaseJSON); err != nil {
-		t.Fatalf("기존 session 조회: %v", err)
+	if _, err := db.Write(ctx, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}}); err != nil {
+		db.Close()
+		t.Fatalf("v2 Write: %v", err)
 	}
-	if phaseJSON != legacyPhaseJSON {
-		t.Fatalf("phase_json = %q", phaseJSON)
+	if err := db.SetMeta(ctx, MetaInstallationID, "inst-1"); err != nil {
+		db.Close()
+		t.Fatalf("v2 meta 설정: %v", err)
 	}
-	var nullTurns int
-	if err := db.SQL().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM tool_events WHERE session_id = 'sess-1' AND turn_index IS NULL`).Scan(&nullTurns); err != nil {
-		t.Fatalf("기존 tool_events 조회: %v", err)
-	}
-	if nullTurns != 2 {
-		t.Fatalf("turn_index가 NULL인 기존 tool_events = %d, want 2", nullTurns)
-	}
-	if countRows(t, db, "turns") != 0 || countRows(t, db, "session_phases") != 0 {
-		t.Fatal("v2 마이그레이션이 기존 데이터에서 turn 또는 phase를 백필했다")
-	}
-}
-
-// 실패한 마이그레이션은 버전을 올리지 않는다. 올려 버리면 다음 기동이 반쯤 적용된 스키마를
-// 완성된 것으로 믿는다.
-func TestFailedMigrationDoesNotAdvanceVersion(t *testing.T) {
-	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), DefaultFileName)
-
-	db, err := Open(ctx, path)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	db.Close()
-
-	original := migrations
-	t.Cleanup(func() { migrations = original })
-	broken := original[len(original)-1].version + 1
-	migrations = append(append([]migration{}, original...), migration{
-		version: broken,
-		name:    "깨진 마이그레이션",
-		stmts: []string{
-			`ALTER TABLE sessions ADD COLUMN good_column TEXT`,
-			`ALTER TABLE 존재하지않는테이블 ADD COLUMN x TEXT`,
-		},
-	})
-
-	if _, err := Open(ctx, path); err == nil {
-		t.Fatal("깨진 마이그레이션인데 Open 이 성공했다")
+	if err := db.Close(); err != nil {
+		t.Fatalf("v2 Close: %v", err)
 	}
 
 	migrations = original
 	db, err = Open(ctx, path)
 	if err != nil {
-		t.Fatalf("복구 Open: %v", err)
+		t.Fatalf("Open v3: %v", err)
+	}
+	defer db.Close()
+
+	if countRows(t, db, "sessions") != 0 || countRows(t, db, "vendors") != 0 {
+		t.Fatal("v3 마이그레이션이 기존 도메인 데이터를 남겼다")
+	}
+	if value, ok, err := db.Meta(ctx, MetaInstallationID); err != nil || !ok || value != "inst-1" {
+		t.Fatalf("보존된 meta = (%q, %v, %v), want (inst-1, true, nil)", value, ok, err)
+	}
+	for _, name := range []string{"session_phases", "session_files", "tool_events", "mcp_session_usage", "event_content", "content_fts", "rollup_hourly"} {
+		var n int
+		if err := db.SQL().QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM sqlite_master WHERE name = ?`, name).Scan(&n); err != nil {
+			t.Fatalf("sqlite_master 조회 (%s): %v", name, err)
+		}
+		if n != 0 {
+			t.Errorf("v3 에서 제거한 객체 %s 가 남았다", name)
+		}
+	}
+}
+
+// 파괴적 v3 도 단일 트랜잭션이다. 마지막 생성 뒤 실패해도 삭제한 v2 테이블과 데이터,
+// local_schema_version 이 모두 원래 상태로 돌아와야 한다.
+func TestFailedV3MigrationRollsBackDropsAndVersion(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), DefaultFileName)
+	original := migrations
+	t.Cleanup(func() { migrations = original })
+
+	migrations = original[:2]
+	db, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open v2: %v", err)
+	}
+	if _, err := db.Write(ctx, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}}); err != nil {
+		db.Close()
+		t.Fatalf("v2 Write: %v", err)
+	}
+	db.Close()
+
+	brokenV3 := append(append([]string{}, schemaV3...),
+		`ALTER TABLE 존재하지않는테이블 ADD COLUMN x TEXT`)
+	migrations = append(append([]migration{}, original[:2]...), migration{
+		version: 3,
+		name:    "깨진 v3",
+		stmts:   brokenV3,
+	})
+
+	if _, err := Open(ctx, path); err == nil {
+		t.Fatal("깨진 v3 마이그레이션인데 Open 이 성공했다")
+	}
+
+	migrations = original[:2]
+	db, err = Open(ctx, path)
+	if err != nil {
+		t.Fatalf("v2 확인 Open: %v", err)
 	}
 	defer db.Close()
 
@@ -154,17 +152,23 @@ func TestFailedMigrationDoesNotAdvanceVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	if v != LatestSchemaVersion() {
-		t.Fatalf("스키마 버전 = %d, want %d — 실패한 마이그레이션이 버전을 올렸다", v, LatestSchemaVersion())
+	if v != 2 {
+		t.Fatalf("스키마 버전 = %d, want 2 — 실패한 v3가 버전을 올렸다", v)
 	}
-	// 첫 문장의 ALTER 도 롤백돼야 한다.
-	var n int
+	if countWhere(t, db, "sessions", "session_id = 'sess-1'") != 1 {
+		t.Fatal("실패한 v3가 기존 sessions 데이터를 복구하지 못했다")
+	}
+	var oldTables, newTables int
 	if err := db.SQL().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'good_column'`).Scan(&n); err != nil {
-		t.Fatalf("컬럼 확인: %v", err)
+		`SELECT COUNT(*) FROM sqlite_master WHERE name = 'event_content'`).Scan(&oldTables); err != nil {
+		t.Fatalf("v2 테이블 확인: %v", err)
 	}
-	if n != 0 {
-		t.Fatal("실패한 마이그레이션의 첫 문장이 롤백되지 않았다")
+	if err := db.SQL().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE name = 'llm_calls'`).Scan(&newTables); err != nil {
+		t.Fatalf("v3 테이블 확인: %v", err)
+	}
+	if oldTables != 1 || newTables != 0 {
+		t.Fatalf("롤백 후 old event_content=%d, new llm_calls=%d", oldTables, newTables)
 	}
 }
 

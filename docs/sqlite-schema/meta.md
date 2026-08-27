@@ -15,9 +15,9 @@
 | 키 | 값 형식 | 소유자와 의미 |
 |---|---|---|
 | `local_schema_version` | 10진수 정수 문자열 | 마이그레이션 러너가 기록하는 현재 로컬 스키마 버전 |
-| `installation_id` | 문자열 | enrollment 설치 ID 사본. `events.installation_id`와 같은 값 |
-| `retention_days` | 10진수 정수 문자열 | 이벤트 계층 보존 기간의 마지막 적용값 |
-| `last_rollup_at` | UTC unix 초 문자열 | 마지막 롤업 flush 시각 |
+| `installation_id` | 문자열 | enrollment 설치 ID 사본. v3 도메인 DDL에는 연결 컬럼이 없음 |
+| `retention_days` | 10진수 정수 문자열 | 기존 런타임이 기록한 보존 기간 값 |
+| `last_rollup_at` | UTC unix 초 문자열 | 기존 런타임이 기록한 마지막 롤업 flush 시각 |
 
 ## 키·관계·운영
 
@@ -27,6 +27,9 @@
 | 관계 | 다른 테이블과 외래 키 관계 없음 |
 | 보존 | prune 대상이 아니며 데이터베이스 수명 동안 유지 |
 | 변경 규칙 | 임의 키를 추가하지 않고 저장소가 허용하는 고정 키만 사용 |
+
+v3 파괴적 마이그레이션은 이 테이블을 삭제하지 않는다. 따라서 도메인 데이터는 비워져도 설치 ID와
+기존 런타임 메타데이터는 남는다.
 
 ## 참고용 DDL
 
