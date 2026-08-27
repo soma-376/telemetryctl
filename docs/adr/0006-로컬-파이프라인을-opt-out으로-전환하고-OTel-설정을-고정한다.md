@@ -96,9 +96,9 @@ ADR [0003](0003-원문과-tool-details를-로컬에만-보관.md) 이 정한 방
   `TestEnroll배선과enable배선이같은설정을만든다` 가 바이트 단위로 지킨다.
 
 ## Follow-up
-- ~~**데몬 자동 실행 등록 (launchd·systemd·Task Scheduler).** 이 ADR 의 Negative 첫 항목을 없애는 유일한 방법이고,
-  `README.md` 와 `docs/local-pipeline.md` 가 이미 차단성 선행 조건으로 지목해 둔 항목이다. 지금은 경고가 최선이다.~~
-  → **닫힘. PROJ-55 가 macOS·리눅스를 구현했다** (`internal/autostart`, ADR 0007). Windows 작업 스케줄러는 PROJ-56 이다.
+- **완료** — **데몬 자동 실행 등록 (launchd·systemd·Task Scheduler).** 이 ADR 의 Negative 첫 항목을 없애는 유일한 방법이고,
+  `README.md` 와 `docs/local-pipeline.md` 가 이미 차단성 선행 조건으로 지목해 둔 항목이었다.
+  **PROJ-55 가 macOS·리눅스를 구현했다** (`internal/autostart`, ADR 0007). Windows 작업 스케줄러는 PROJ-56 이다.
 - **기존 설치자 전환 정책 — 아직 열려 있다.** state schema 5는 PROJ-71에서 사용자 지정
   `local.retention_days`를 제거하는 데 사용됐으며, 기존 설치자의 `Local.Enabled`는 바꾸지 않는다(ADR 0008).
   따라서 이 follow-up은 여전히 열려 있고, 일괄 전환을 결정한다면 새 스키마 버전과 별도 결정이 필요하다.

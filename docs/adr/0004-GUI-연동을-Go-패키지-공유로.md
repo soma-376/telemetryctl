@@ -69,6 +69,6 @@ GUI 는 같은 저장소 안 `gui/` 디렉터리에 **별도 `go.mod`** 로 둔�
 - 데몬 쓰기와 GUI 읽기가 동시에 일어나므로 read-only 연결 조회를 `-race` 로 검증해야 한다.
 
 ## Follow-up
-- ~~**데몬 자동 실행** — GUI 를 켰는데 데몬이 꺼져 있는 상태를 근본적으로 줄인다. Settings 「시작 프로그램」 토글의 구현이기도 하다.~~ → **PROJ-55 에서 구현했다** (`internal/autostart`, ADR 0007). Settings 「시작 프로그램」 토글은 `autostart.Manager` 의 `Enable`·`Disable`·`Status` 를 그대로 감싸면 된다 — `internal/dashboard` 처럼 Wails 를 import 하지 않는 순수 Go 패키지이고, 등록 상태를 `state.json` 에 저장하지 않으므로 토글의 진실원은 OS 서비스 관리자 하나다. Windows 는 PROJ-56.
+- **완료** — **데몬 자동 실행**. GUI 를 켰는데 데몬이 꺼져 있는 상태를 근본적으로 줄이고, Settings 「시작 프로그램」 토글의 구현이기도 했다. **PROJ-55 에서 구현했다** (`internal/autostart`, ADR 0007). Settings 「시작 프로그램」 토글은 `autostart.Manager` 의 `Enable`·`Disable`·`Status` 를 그대로 감싸면 된다 — `internal/dashboard` 처럼 Wails 를 import 하지 않는 순수 Go 패키지이고, 등록 상태를 `state.json` 에 저장하지 않으므로 토글의 진실원은 OS 서비스 관리자 하나다. Windows 는 PROJ-56.
 - **Settings 의 Cloud 탭**(회사 서버 조회)은 이 ADR 의 범위 밖이다. 로컬 DB 가 아니라 회사 API 를 읽으므로 별도 경로가 필요하다.
 - `wails3 generate bindings` 를 CI 에 넣어 생성물이 최신인지 검증할지는 GUI 티켓에서 정한다.
