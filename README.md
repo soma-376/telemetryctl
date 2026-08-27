@@ -44,14 +44,20 @@ JSON Schema 이며, `internal/contract` 의 Go 타입이 이 스키마와 1:1 �
 
 ## 사용법
 
-한 줄 설치 (서버가 부트스트랩 스크립트를 내려줌 → 초대 코드 입력):
+한 줄 설치. **초대 코드를 URL 에 실어야 합니다** — 서버가 그 코드를 부트스트랩 스크립트에
+박아서 내려주고, 스크립트가 바이너리를 받아 `enroll` 까지 실행합니다. 코드가 없으면 서버가
+400 `invalid_request` 로 끊습니다.
 
 ```powershell
-irm <server>/windows | iex          # PowerShell
+irm "<server>/windows?code=<초대코드>" | iex          # PowerShell
 ```
 ```sh
-curl -fsSL <server>/unix | sh        # bash
+curl -fsSL "<server>/unix?code=<초대코드>" | sh        # bash
 ```
+
+설치된 바이너리 이름은 **`pulsemetry`** 입니다(`~/.pulsemetry/bin/pulsemetry`). 아래 예시는
+저장소 이름을 따라 `telemetryctl` 로 적지만, 한 줄 설치로 받은 환경에서는 `pulsemetry` 로 부릅니다.
+`go build ./cmd/telemetryctl` 로 직접 빌드하면 `telemetryctl` 이라는 이름이 나옵니다.
 
 또는 바이너리를 직접 실행:
 
