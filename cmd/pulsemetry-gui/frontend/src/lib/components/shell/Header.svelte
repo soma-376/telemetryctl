@@ -1,5 +1,6 @@
 <script lang="ts">
   import Mascot from "../Mascot.svelte";
+  import Dot from "../Dot.svelte";
   import BellIcon from "../../icons/BellIcon.svelte";
   import SlidersIcon from "../../icons/SlidersIcon.svelte";
   import PowerIcon from "../../icons/PowerIcon.svelte";
@@ -40,12 +41,9 @@
           class="text-text-secondary flex items-center"
           style="gap:6px;font-size:12px"
         >
-          <span
-            class="inline-block"
-            style="width:7px;height:7px;border-radius:50%;background:{online
-              ? 'var(--color-success)'
-              : 'var(--color-inactive)'}"
-          ></span>{online ? "모니터링 중" : "연결 끊김"}
+          <Dot
+            color={online ? "var(--color-success)" : "var(--color-inactive)"}
+          />{online ? "모니터링 중" : "연결 끊김"}
         </div>
       </div>
     </div>
@@ -55,12 +53,10 @@
       class="bg-bg border-border flex items-center border whitespace-nowrap"
       style="gap:9px;border-radius:999px;padding:8px 16px;font-size:13.5px"
     >
-      <span
-        class="inline-block"
-        style="width:8px;height:8px;border-radius:50%;background:{online
-          ? 'var(--color-success)'
-          : 'var(--color-inactive)'}"
-      ></span>
+      <Dot
+        size={8}
+        color={online ? "var(--color-success)" : "var(--color-inactive)"}
+      />
       <span class="font-semibold">{activeAgents} agents active</span>
       <span class="text-text-muted">•</span>
       <span class="text-text-secondary">{tokensToday} tokens today</span>

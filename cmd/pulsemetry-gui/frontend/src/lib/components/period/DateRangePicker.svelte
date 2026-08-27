@@ -13,6 +13,9 @@
   import type { PeriodRange } from "../../types";
   import { TODAY, RETAIN_FROM } from "../../../pages/home/chart";
   import ChevronDownIcon from "../../icons/ChevronDownIcon.svelte";
+  import CalendarIcon from "../../icons/CalendarIcon.svelte";
+  import ChevronLeftIcon from "../../icons/ChevronLeftIcon.svelte";
+  import ChevronRightIcon from "../../icons/ChevronRightIcon.svelte";
 
   // 날짜 범위 선택 — 팝업 안에서는 draft만 바꾸고 「적용」할 때 전역 period에 반영한다.
 
@@ -167,17 +170,7 @@
       ? 'var(--color-border-strong)'
       : 'var(--color-border)'}"
   >
-    <svg
-      viewBox="0 0 24 24"
-      style="width:15px;height:15px"
-      fill="none"
-      stroke="var(--color-text-secondary)"
-      stroke-width="1.7"
-      stroke-linecap="round"
-    >
-      <rect x="3" y="5" width="18" height="16" rx="3" />
-      <path d="M8 3v4M16 3v4M3 10h18" />
-    </svg>
+    <CalendarIcon class="text-text-secondary" />
     {rangeShort}
     <ChevronDownIcon
       size={13}
@@ -230,17 +223,7 @@
           class="text-text-secondary flex cursor-pointer items-center justify-center border-none bg-transparent hover:bg-[#f4f0e9]"
           style="width:26px;height:26px;border-radius:8px"
         >
-          <svg
-            viewBox="0 0 24 24"
-            style="width:13px;height:13px"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.4"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="m15 5-7 7 7 7" />
-          </svg>
+          <ChevronLeftIcon size={13} strokeWidth={2.4} />
         </button>
         <span class="text-center font-bold whitespace-nowrap" style="font-size:13px">
           {viewY}년 {viewM + 1}월
@@ -252,17 +235,7 @@
           class="text-text-secondary flex cursor-pointer items-center justify-center border-none bg-transparent hover:bg-[#f4f0e9]"
           style="width:26px;height:26px;border-radius:8px"
         >
-          <svg
-            viewBox="0 0 24 24"
-            style="width:13px;height:13px"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.4"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="m9 5 7 7-7 7" />
-          </svg>
+          <ChevronRightIcon size={13} strokeWidth={2.4} />
         </button>
       </div>
 

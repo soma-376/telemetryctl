@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { TrayLimitWindow } from "../types";
   import { limitTone } from "../tray";
+  import ProgressBar from "../../../lib/components/ProgressBar.svelte";
 
   let { window, accent }: { window: TrayLimitWindow; accent: string } =
     $props();
@@ -25,9 +26,5 @@
       >{window.remain}</span
     >
   </div>
-  <div class="bg-track" style="height:5px;border-radius:999px">
-    <div
-      style="height:100%;border-radius:999px;background:{tone.bar};width:{window.pct}%"
-    ></div>
-  </div>
+  <ProgressBar pct={window.pct} color={tone.bar} />
 </div>

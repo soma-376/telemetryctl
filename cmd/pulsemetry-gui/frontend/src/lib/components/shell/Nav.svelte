@@ -2,6 +2,7 @@
   import HomeIcon from "../../icons/HomeIcon.svelte";
   import ListIcon from "../../icons/ListIcon.svelte";
   import BarsIcon from "../../icons/BarsIcon.svelte";
+  import Pill from "../Pill.svelte";
   import type { AppSection } from "../../navigation";
 
   let {
@@ -47,12 +48,14 @@
     >
       <BarsIcon size={17} strokeWidth={1.8} />
       Insights
-      <span
-        class="bg-track text-text-muted font-semibold"
-        style="font-size:10.5px;border-radius:5px;padding:3px 6px"
-      >
-        준비 중
-      </span>
+      <Pill
+        label="준비 중"
+        fg="var(--color-text-muted)"
+        bg="var(--color-track)"
+        fontSize={10.5}
+        radius={5}
+        padding="3px 6px"
+      />
     </span>
   </div>
 </nav>

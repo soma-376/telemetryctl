@@ -1,7 +1,7 @@
 <script lang="ts">
   let {
-    size = 19,
-    strokeWidth = 1.9,
+    size = 14,
+    strokeWidth = 2.2,
     class: klass = "",
     style = "",
   }: {
@@ -17,13 +17,11 @@
   fill="none"
   stroke="currentColor"
   stroke-linecap="round"
-  stroke-linejoin="round"
   width={size}
   height={size}
   stroke-width={strokeWidth}
   class={klass}
   {style}
 >
-  <circle cx="12" cy="12" r="8.5" />
-  <path d="M12 7.5V12l3 2" />
+  <path d="m7 7 10 10M17 7 7 17" />
 </svg>

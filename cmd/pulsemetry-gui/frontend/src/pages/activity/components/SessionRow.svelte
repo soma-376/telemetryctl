@@ -1,6 +1,9 @@
 <script lang="ts">
   import type { ActivitySession } from "../data";
   import { rowDisplay } from "../data";
+  import AgentBadge from "../../../lib/components/AgentBadge.svelte";
+  import Dot from "../../../lib/components/Dot.svelte";
+  import Pill from "../../../lib/components/Pill.svelte";
 
   let {
     session,
@@ -30,21 +33,13 @@
   onclick={() => onOpen?.()}
   onkeydown={onKeydown}
 >
-  <span
-    class="inline-block"
-    style="width:9px;height:9px;border-radius:50%;background:{d.dot};animation:{d.dotAnim}"
-  ></span>
+  <Dot size={9} color={d.dot} pulse={d.running} />
   <span
     class="text-text-secondary"
     style="font-size:13px;font-variant-numeric:tabular-nums">{d.time}</span
   >
   <span class="flex min-w-0 items-center" style="gap:10px">
-    <span
-      class="flex flex-none items-center justify-center"
-      style="width:28px;height:28px;border-radius:9px;background:{d.agentTile
-        .bg};color:{d.agentTile.fg};font-size:{d.agentTile
-        .size}px;font-weight:{d.agentTile.weight}">{d.agentTile.glyph}</span
-    >
+    <AgentBadge agent={d.agentId} size={28} />
     <span style="min-width:0">
       <span
         class="text-text block overflow-hidden font-semibold text-ellipsis whitespace-nowrap"
@@ -85,16 +80,17 @@
     style="font-size:12.5px;text-align:right;font-variant-numeric:tabular-nums"
     >{d.cost}</span
   >
-  <span
-    class="inline-flex items-center justify-self-start font-semibold whitespace-nowrap"
-    style="gap:5px;font-size:11px;border-radius:6px;padding:4px 8px;background:{d
-      .badge.bg};color:{d.badge.fg}"
-    >{#if d.badge.dot}<span
-        class="inline-block"
-        style="width:6px;height:6px;border-radius:50%;background:{d.badge
-          .fg};animation:{d.dotAnim}"
-      ></span>{/if}{d.badge.label}</span
-  >
+  <Pill
+    class="justify-self-start"
+    label={d.badge.label}
+    fg={d.badge.fg}
+    bg={d.badge.bg}
+    radius={6}
+    padding="4px 8px"
+    gap={5}
+    dot={d.badge.dot}
+    pulse={d.running}
+  />
 </div>
 
 <style>

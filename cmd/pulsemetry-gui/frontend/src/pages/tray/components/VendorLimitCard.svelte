@@ -3,6 +3,8 @@
   import { headOf, limitTone } from "../tray";
   import type { TrayVendor } from "../types";
   import LimitWindowRow from "./LimitWindowRow.svelte";
+  import AgentBadge from "../../../lib/components/AgentBadge.svelte";
+  import ProgressBar from "../../../lib/components/ProgressBar.svelte";
   import ChevronDownIcon from "../../../lib/icons/ChevronDownIcon.svelte";
 
   let { vendor }: { vendor: TrayVendor } = $props();
@@ -26,13 +28,11 @@
     class="grid items-center"
     style="grid-template-columns:24px minmax(0,1fr) auto auto auto;gap:8px;margin-bottom:6px"
   >
-    <span
-      class="flex items-center justify-center"
-      style="width:24px;height:24px;border-radius:7px;background:{style.bg};color:{style.fg};font-size:{Math.min(
-        style.fontSm + 2,
-        15,
-      )}px;font-weight:{style.weight}">{style.glyph}</span
-    >
+    <AgentBadge
+      agent={vendor.id}
+      size={24}
+      fontSize={Math.min(style.fontSm + 2, 15)}
+    />
     <span class="flex items-baseline" style="gap:6px;min-width:0">
       <span class="text-text flex-none font-bold" style="font-size:12.5px">
         {style.name}
@@ -67,11 +67,7 @@
       />
     </span>
   </div>
-  <div class="bg-track" style="height:5px;border-radius:999px">
-    <div
-      style="height:100%;border-radius:999px;background:{tone.bar};width:{head.pct}%;transition:width 300ms ease"
-    ></div>
-  </div>
+  <ProgressBar pct={head.pct} color={tone.bar} animate />
 
   {#if open}
     <div style="margin-top:10px;padding-top:9px;border-top:1px solid #f1ece4">

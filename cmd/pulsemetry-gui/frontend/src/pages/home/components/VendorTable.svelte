@@ -1,5 +1,7 @@
 <script lang="ts">
   import { AGENT_STYLE } from "../../../lib/agents";
+  import AgentBadge from "../../../lib/components/AgentBadge.svelte";
+  import ProgressBar from "../../../lib/components/ProgressBar.svelte";
   import type { VendorRow } from "../chart";
 
   let { vendors }: { vendors: VendorRow[] } = $props();
@@ -18,15 +20,7 @@
         ? 'transparent'
         : '#f5f1ea'}"
     >
-      <span
-        class="flex items-center justify-center"
-        style="width:30px;height:30px;border-radius:9px;background:{style.bg};color:{style.fg};font-size:{Math.min(
-          style.fontMd,
-          15,
-        )}px;font-weight:{style.weight}"
-      >
-        {style.glyph}
-      </span>
+      <AgentBadge agent={v.id} size={30} />
       <span style="min-width:0">
         <span
           class="text-text block truncate font-semibold"
@@ -51,12 +45,12 @@
         {v.tokens}
       </span>
       <span class="flex items-center" style="min-width:0;gap:10px">
-        <span class="bg-track" style="flex:1;min-width:0;height:6px;border-radius:999px">
-          <span
-            class="block"
-            style="height:100%;border-radius:999px;background:{style.fg};width:{v.share}"
-          ></span>
-        </span>
+        <ProgressBar
+          pct={v.share}
+          color={style.fg}
+          height={6}
+          style="flex:1;min-width:0"
+        />
         <span
           class="text-text-secondary flex-none font-semibold whitespace-nowrap"
           style="font-size:11.5px;font-variant-numeric:tabular-nums"

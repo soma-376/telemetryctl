@@ -10,7 +10,9 @@
     id="recent-sessions-title"
     class="text-text-muted font-semibold"
     style="font-size:11px;letter-spacing:0.02em;margin-bottom:7px"
-  >최근 세션</h2>
+  >
+    최근 세션
+  </h2>
   {#each sessions as session (session.id)}
     <RecentSessionRow {session} />
   {/each}

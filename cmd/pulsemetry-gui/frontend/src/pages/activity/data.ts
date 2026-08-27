@@ -1,5 +1,5 @@
 import type { AgentId } from "../../lib/types";
-import { AGENT_STYLE, AGENT_NAMES } from "../../lib/agents";
+import { AGENT_NAMES } from "../../lib/agents";
 import { formatDuration } from "../../lib/format";
 
 // 세션 상태(진행 중/종료)와 스테이지(탐색/구현/디버깅/검증) 정의.
@@ -760,13 +760,12 @@ export const SESSIONS: ActivitySession[] = [
 
 // ml: 세션 행 표시 데이터 계산
 export function rowDisplay(e: ActivitySession, selected: boolean) {
-  const r = AGENT_STYLE[e.agentId];
   const n = STATE_STYLE[e.state];
   const running = e.state === "running";
   const stage = running ? e.stages[e.active] : undefined;
   return {
     dot: running ? "var(--color-accent)" : "var(--color-border-strong)",
-    dotAnim: running ? "livePulse 2s ease-out infinite" : "none",
+    running,
     rail: running ? "inset 3px 0 0 var(--color-accent)" : "none",
     bg: selected
       ? running
@@ -776,7 +775,7 @@ export function rowDisplay(e: ActivitySession, selected: boolean) {
         ? "#faf6ef" /* 모래빛 틴트 — 토큰 없음(sand-soft보다 옅음) */
         : "transparent",
     time: e.time,
-    agentTile: { bg: r.bg, fg: r.fg, glyph: r.glyph, size: r.fontSm, weight: r.weight },
+    agentId: e.agentId,
     title: e.title,
     agentName: AGENT_LABELS[e.agentId],
     stageText: stage ? " · " + stageKo(stage.name) : "",
@@ -818,7 +817,6 @@ export interface TurnDisplay {
 // bl: 세션 상세(드로어) 표시 데이터 계산
 export function detailDisplay(index: number) {
   const t = SESSIONS[index];
-  const r = AGENT_STYLE[t.agentId];
   const n = STATE_STYLE[t.state];
 
   const turns = t.turns;
@@ -838,7 +836,7 @@ export function detailDisplay(index: number) {
     repo: t.repo,
     path: t.path,
     agentName: AGENT_LABELS[t.agentId],
-    agentTile: { bg: r.bg, fg: r.fg, glyph: r.glyph, size: r.fontMd, weight: r.weight },
+    agentId: t.agentId,
     badge: { label: n.label, bg: n.bg, fg: n.fg },
     character: { label: cl.name + "형 세션", fg: cl.fg, bg: cl.bg, border: cl.border, dot: cl.bar },
     range: t.range,

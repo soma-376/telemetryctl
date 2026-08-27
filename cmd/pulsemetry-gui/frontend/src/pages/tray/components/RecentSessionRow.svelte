@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { AGENT_STYLE } from "../../../lib/agents";
   import { openMainWindow } from "../../../lib/backend";
+  import AgentBadge from "../../../lib/components/AgentBadge.svelte";
+  import Dot from "../../../lib/components/Dot.svelte";
   import type { TraySession } from "../types";
 
   let { session }: { session: TraySession } = $props();
-  const style = $derived(AGENT_STYLE[session.agentId]);
 </script>
 
 <button
@@ -15,22 +15,18 @@
     ? 'var(--color-sand)'
     : 'var(--color-border)'};border-radius:11px;padding:7px 11px;margin-bottom:7px"
 >
-  <span
-    style="width:7px;height:7px;border-radius:50%;background:{session.live
-      ? 'var(--color-sand)'
-      : 'var(--color-border-strong)'};animation:{session.live
-      ? 'livePulse 2s ease-out infinite'
-      : 'none'}"
-  ></span>
-  <span
-    class="flex items-center justify-center"
-    style="width:24px;height:24px;border-radius:7px;background:{style.bg};color:{style.fg};font-size:{style.fontSm}px;font-weight:{style.weight}"
-  >{style.glyph}</span>
+  <Dot
+    color={session.live
+      ? "var(--color-sand)"
+      : "var(--color-border-strong)"}
+    pulse={session.live}
+  />
+  <AgentBadge agent={session.agentId} size={24} />
   <span style="min-width:0">
     <span
       class="text-text block truncate font-semibold"
-      style="font-size:12.5px;margin-bottom:2px"
-    >{session.title}</span>
+      style="font-size:12.5px;margin-bottom:2px">{session.title}</span
+    >
     <span class="text-text-muted block truncate" style="font-size:10.5px">
       {session.sub}
     </span>

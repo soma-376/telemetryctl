@@ -1,4 +1,9 @@
 <script lang="ts">
+  import ClockIcon from "../../../lib/icons/ClockIcon.svelte";
+  import PulseIcon from "../../../lib/icons/PulseIcon.svelte";
+  import RefreshIcon from "../../../lib/icons/RefreshIcon.svelte";
+  import CheckIcon from "../../../lib/icons/CheckIcon.svelte";
+
   let { kpi }: { kpi: string[] } = $props();
 
   const tile = "bg-surface border-border border flex flex-col";
@@ -9,16 +14,11 @@
   style="grid-template-columns:repeat(4,minmax(0,1fr));gap:10px"
 >
   <div class={tile} style="border-radius:11px;padding:12px 13px">
-    <svg
-      viewBox="0 0 24 24"
-      style="width:16px;height:16px;margin-bottom:8px"
-      fill="none"
-      stroke="var(--color-text-secondary)"
-      stroke-width="1.9"
-      stroke-linecap="round"
-      ><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"
-      ></path></svg
-    >
+    <ClockIcon
+      size={16}
+      class="text-text-secondary"
+      style="margin-bottom:8px"
+    />
     <div
       class="text-text"
       style="font-size:19px;font-weight:700;letter-spacing:-0.02em;margin-bottom:4px"
@@ -30,15 +30,10 @@
     </div>
   </div>
   <div class={tile} style="border-radius:11px;padding:12px 13px">
-    <svg
-      viewBox="0 0 24 24"
-      style="width:16px;height:16px;margin-bottom:8px"
-      fill="none"
-      stroke="var(--color-info)"
-      stroke-width="1.9"
-      stroke-linecap="round"
-      stroke-linejoin="round"><path d="M3 13h3l2.5-7 4 14 2.5-7H21"></path></svg
-    >
+    <PulseIcon
+      size={16}
+      style="color:var(--color-info);margin-bottom:8px"
+    />
     <div
       class="text-text"
       style="font-size:19px;font-weight:700;letter-spacing:-0.02em;margin-bottom:4px"
@@ -71,16 +66,11 @@
     </div>
   </div>
   <div class={tile} style="border-radius:11px;padding:12px 13px">
-    <svg
-      viewBox="0 0 24 24"
-      style="width:16px;height:16px;margin-bottom:8px"
-      fill="none"
-      stroke="var(--color-danger)"
-      stroke-width="1.9"
-      stroke-linecap="round"
-      ><path d="M20 12a8 8 0 1 1-2.4-5.7"></path><path d="M20 4v4h-4"
-      ></path></svg
-    >
+    <RefreshIcon
+      size={16}
+      strokeWidth={1.9}
+      style="color:var(--color-danger);margin-bottom:8px"
+    />
     <div
       class="text-text"
       style="font-size:19px;font-weight:700;letter-spacing:-0.02em;margin-bottom:4px"
@@ -157,15 +147,7 @@
     class="flex flex-col border"
     style="background:var(--color-success-soft);border-color:#c9e7d6;border-radius:11px;padding:12px 13px"
   >
-    <svg
-      viewBox="0 0 24 24"
-      style="width:16px;height:16px;margin-bottom:8px"
-      fill="none"
-      stroke="var(--color-success)"
-      stroke-width="1.9"
-      stroke-linecap="round"
-      stroke-linejoin="round"><path d="M20 7 10 17l-6-6"></path></svg
-    >
+    <CheckIcon style="color:var(--color-success);margin-bottom:8px" />
     <div
       style="font-size:19px;font-weight:700;letter-spacing:-0.02em;margin-bottom:4px;color:#1b7c46"
     >

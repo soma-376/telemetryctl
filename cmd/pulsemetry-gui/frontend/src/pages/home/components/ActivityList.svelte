@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { AGENT_STYLE } from "../../../lib/agents";
+  import AgentBadge from "../../../lib/components/AgentBadge.svelte";
+  import Pill from "../../../lib/components/Pill.svelte";
   import type { ActivityData } from "../chart";
 
   let {
@@ -44,7 +45,6 @@
   </div>
 
   {#each activity.rows as t, i (t.date + t.time + t.title)}
-    {@const style = AGENT_STYLE[t.agent]}
     {@const st = STATUS[t.state]}
     <div
       class="grid items-center"
@@ -61,12 +61,7 @@
           {t.time}
         </span>
       </span>
-      <span
-        class="flex items-center justify-center"
-        style="width:28px;height:28px;border-radius:9px;background:{style.bg};color:{style.fg};font-size:{style.fontSm}px;font-weight:{style.weight}"
-      >
-        {style.glyph}
-      </span>
+      <AgentBadge agent={t.agent} size={28} />
       <span style="min-width:0">
         <span
           class="text-text block truncate font-semibold"
@@ -84,12 +79,12 @@
       >
         {t.tokens}
       </span>
-      <span
-        class="justify-self-end font-semibold whitespace-nowrap"
-        style="font-size:11px;border-radius:7px;padding:4px 9px;color:{st.fg};background:{st.bg}"
-      >
-        {st.label}
-      </span>
+      <Pill
+        class="justify-self-end"
+        label={st.label}
+        fg={st.fg}
+        bg={st.bg}
+      />
     </div>
   {/each}
 </div>

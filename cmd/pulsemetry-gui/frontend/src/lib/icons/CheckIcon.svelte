@@ -1,6 +1,6 @@
 <script lang="ts">
   let {
-    size = 19,
+    size = 16,
     strokeWidth = 1.9,
     class: klass = "",
     style = "",
@@ -24,6 +24,5 @@
   class={klass}
   {style}
 >
-  <circle cx="12" cy="12" r="8.5" />
-  <path d="M12 7.5V12l3 2" />
+  <path d="M20 7 10 17l-6-6" />
 </svg>

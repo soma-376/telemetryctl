@@ -4,6 +4,11 @@
   import { portal } from "../../../lib/portal";
   import ChevronDownIcon from "../../../lib/icons/ChevronDownIcon.svelte";
   import { detailDisplay } from "../data";
+  import AgentBadge from "../../../lib/components/AgentBadge.svelte";
+  import XIcon from "../../../lib/icons/XIcon.svelte";
+  import ChevronLeftIcon from "../../../lib/icons/ChevronLeftIcon.svelte";
+  import ChevronRightIcon from "../../../lib/icons/ChevronRightIcon.svelte";
+  import Pill from "../../../lib/components/Pill.svelte";
   import KpiGrid from "./KpiGrid.svelte";
   import TurnFlow from "./TurnFlow.svelte";
   import TurnCard from "./TurnCard.svelte";
@@ -104,14 +109,7 @@
         style="padding:20px 24px 16px;border-bottom:1px solid #f1ece4"
       >
         <div class="flex items-start" style="gap:14px;margin-bottom:14px">
-          <div
-            class="flex flex-none items-center justify-center"
-            style="width:40px;height:40px;border-radius:12px;background:{d
-              .agentTile.bg};color:{d.agentTile.fg};font-size:{d.agentTile
-              .size}px;font-weight:{d.agentTile.weight}"
-          >
-            {d.agentTile.glyph}
-          </div>
+          <AgentBadge agent={d.agentId} size={40} />
           <div class="min-w-0 flex-1">
             <div
               class="text-text overflow-hidden font-bold text-ellipsis whitespace-nowrap"
@@ -141,11 +139,14 @@
                 class="text-text-secondary flex-none"
                 style="font-weight:500">{d.agentName}</span
               >
-              <span
-                class="flex-none font-semibold"
-                style="font-size:11.5px;border-radius:7px;padding:4px 8px;background:{d
-                  .badge.bg};color:{d.badge.fg}">{d.badge.label}</span
-              >
+              <Pill
+                class="flex-none"
+                label={d.badge.label}
+                fg={d.badge.fg}
+                bg={d.badge.bg}
+                fontSize={11.5}
+                padding="4px 8px"
+              />
               <span
                 class="inline-flex flex-none items-center border font-semibold"
                 style="gap:6px;font-size:11.5px;border-radius:7px;padding:4px 9px;color:{d
@@ -170,14 +171,7 @@
             onclick={() => onClose?.()}
             onkeydown={onCloseKeydown}
           >
-            <svg
-              viewBox="0 0 24 24"
-              style="width:14px;height:14px"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.2"
-              stroke-linecap="round"><path d="m7 7 10 10M17 7 7 17"></path></svg
-            >
+            <XIcon />
           </div>
         </div>
 
@@ -293,15 +287,11 @@
           style="gap:8px;font-size:13px;padding:10px 15px;border-radius:9px"
           onclick={() => onPrev?.()}
         >
-          <svg
-            viewBox="0 0 24 24"
-            style="width:13px;height:13px"
-            fill="none"
-            stroke="var(--color-text-secondary)"
-            stroke-width="2.2"
-            stroke-linecap="round"
-            stroke-linejoin="round"><path d="m15 5-7 7 7 7"></path></svg
-          > 이전</button
+          <ChevronLeftIcon
+            size={13}
+            strokeWidth={2.2}
+            class="text-text-secondary"
+          /> 이전</button
         >
         <button
           type="button"
@@ -310,15 +300,11 @@
           onclick={() => onNext?.()}
         >
           다음
-          <svg
-            viewBox="0 0 24 24"
-            style="width:13px;height:13px"
-            fill="none"
-            stroke="var(--color-text-secondary)"
-            stroke-width="2.2"
-            stroke-linecap="round"
-            stroke-linejoin="round"><path d="m9 5 7 7-7 7"></path></svg
-          ></button
+          <ChevronRightIcon
+            size={13}
+            strokeWidth={2.2}
+            class="text-text-secondary"
+          /></button
         >
         <span
           class="text-text-muted"

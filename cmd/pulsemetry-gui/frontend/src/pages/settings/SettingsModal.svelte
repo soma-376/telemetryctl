@@ -3,9 +3,13 @@
   import { AGENT_STYLE } from "../../lib/agents";
   import Mascot from "../../lib/components/Mascot.svelte";
   import AgentBadge from "../../lib/components/AgentBadge.svelte";
+  import Dot from "../../lib/components/Dot.svelte";
+  import Pill from "../../lib/components/Pill.svelte";
   import SlidersIcon from "../../lib/icons/SlidersIcon.svelte";
   import RefreshIcon from "../../lib/icons/RefreshIcon.svelte";
   import ChevronDownIcon from "../../lib/icons/ChevronDownIcon.svelte";
+  import XIcon from "../../lib/icons/XIcon.svelte";
+  import CheckIcon from "../../lib/icons/CheckIcon.svelte";
   import {
     HEALTH,
     PREFS,
@@ -78,16 +82,7 @@
           class="border-border text-text-secondary hover:border-border-strong flex flex-none cursor-pointer items-center justify-center border bg-transparent transition-colors duration-[120ms] ease-in-out"
           style="width:28px;height:28px;border-radius:9px"
         >
-          <svg
-            viewBox="0 0 24 24"
-            style="width:13px;height:13px"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.2"
-            stroke-linecap="round"
-          >
-            <path d="m7 7 10 10M17 7 7 17" />
-          </svg>
+          <XIcon size={13} />
         </button>
       </div>
 
@@ -130,9 +125,7 @@
                 class="grid items-center"
                 style="grid-template-columns:7px minmax(0,1fr) auto;gap:9px;padding:6px 0"
               >
-                <span
-                  style="width:7px;height:7px;border-radius:50%;background:var(--color-success)"
-                ></span>
+                <Dot color="var(--color-success)" />
                 <span class="text-text truncate font-semibold" style="font-size:12px">
                   {h.name}
                 </span>
@@ -247,7 +240,7 @@
               CONNECTIONS.length,
             )}"
           >
-            <AgentBadge agent={c.id} size="md" />
+            <AgentBadge agent={c.id} size={32} />
             <span style="min-width:0">
               <span
                 class="block truncate font-semibold"
@@ -274,12 +267,13 @@
                   연결
                 </button>
               {/if}
-              <span
-                class="font-semibold whitespace-nowrap"
-                style="font-size:11.5px;border-radius:7px;padding:5px 10px;color:{st.fg};background:{st.bg}"
-              >
-                {st.label}
-              </span>
+              <Pill
+                label={st.label}
+                fg={st.fg}
+                bg={st.bg}
+                fontSize={11.5}
+                padding="5px 10px"
+              />
             </span>
           </div>
         {/each}
@@ -357,18 +351,11 @@
                 ? 'var(--color-accent-soft)'
                 : 'var(--color-inactive-soft)'}"
             >
-              <svg
-                viewBox="0 0 24 24"
-                class="flex-none"
-                style="width:10px;height:10px"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.8"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d={c.sent ? "M20 7 10 17l-6-6" : "m7 7 10 10M17 7 7 17"} />
-              </svg>
+              {#if c.sent}
+                <CheckIcon size={10} strokeWidth={2.8} class="flex-none" />
+              {:else}
+                <XIcon size={10} strokeWidth={2.8} class="flex-none" />
+              {/if}
               {c.sent ? "전송" : "제외"}
             </span>
           </div>
@@ -395,10 +382,7 @@
               class="text-text-secondary flex items-center"
               style="gap:7px;font-size:11.5px"
             >
-              <span
-                class="flex-none"
-                style="width:6px;height:6px;border-radius:50%;background:var(--color-success)"
-              ></span>
+              <Dot size={6} color="var(--color-success)" />
               {TRANSPORT.status}
             </div>
           </div>

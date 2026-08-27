@@ -3,7 +3,13 @@
     size = 14,
     strokeWidth = 2,
     class: klass = "",
-  }: { size?: number; strokeWidth?: number; class?: string } = $props();
+    style = "",
+  }: {
+    size?: number;
+    strokeWidth?: number;
+    class?: string;
+    style?: string;
+  } = $props();
 </script>
 
 <svg
@@ -16,6 +22,7 @@
   height={size}
   stroke-width={strokeWidth}
   class={klass}
+  {style}
 >
   <path d="M20 12a8 8 0 1 1-2.4-5.7" />
   <path d="M20 4.5V9h-4.5" />
