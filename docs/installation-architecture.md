@@ -45,14 +45,23 @@ irm "https://get.your-service.com/windows?code=<초대코드>" | iex
   ▼
 Codex / Claude Code
   │
+  │ OTLP/HTTP → localhost. 벤더 설정에 들어가는 것은 로컬 ingest 토큰뿐이다
+  ▼
+telemetryctl 데몬  (로컬 인라인 프록시 — ADR 0001·0006, 기본 ON)
+  │
+  ├─ 로컬 집계·저장 (SQLite)
+  ├─ 프롬프트 원문·tool 상세 제거 (ADR 0003)
+  └─ 회사 telemetry token(ptt_) 을 Authorization 에 주입 (OS 키링에서 꺼낸다)
+  │
   │ OTLP/HTTP + HTTPS
   ▼
-Authentication Gateway
+auth-proxy  (ai-telemetry-pipeline)
   │
-  ├─ installation token 검증
-  ├─ tenant_id 결정
-  ├─ rate limit
-  └─ 요청 크기 제한
+  ├─ telemetry token(ptt_) 검증 — HMAC-SHA256 해시로 enrollment.telemetry_tokens 조회
+  ├─ installation · member · tenant 가 모두 활성일 때만 통과
+  ├─ 신원 헤더 4종 부여 (x-pulsemetry-token-id · -tenant-id · -installation-id · -member-id)
+  ├─ 요청 크기 제한 (MAX_OTLP_BODY_SIZE, 기본 10 MiB)
+  └─ rate limit — 아직 구현이 없다
   │
   ▼
 OpenTelemetry Collector
@@ -974,11 +983,17 @@ Installer
 Codex / Claude Code
   │
   ▼
-Authentication Gateway
-  ├─ token → tenant_id
+telemetryctl 데몬 (로컬 인라인 프록시)
+  ├─ 로컬 집계·저장
+  ├─ 원문·tool 상세 제거
+  └─ 회사 telemetry token 주입
+  │
+  ▼
+auth-proxy
+  ├─ telemetry token → tenant_id
   ├─ rate limit
   ├─ request size limit
-  └─ installation 상태 확인
+  └─ installation·member·tenant 활성 확인
   │
   ▼
 Collector
