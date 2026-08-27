@@ -12,7 +12,7 @@ irm "https://get.your-service.com/windows?code=<초대코드>" | iex
 
 개발자는 위 명령어 한 줄만 실행하고, 설치 스크립트가 다음 작업을 자동으로 수행한다.
 
-1. 초대 코드로 enroll 호출 (별도 로그인 없음 — 코드가 곧 자격증명이다)
+1. 초대 코드로 enroll 호출 (코드가 곧 자격증명이다 — 이 흐름에는 로그인이 없다)
 2. 소속 회사 확인과 대상 멤버 `invited → active` 전환
 3. 설치 자격 봉투 수신 (`installation_id` · `installation_token` · `telemetry_token`)
 4. Codex 전역 OTel 설정 적용
@@ -20,6 +20,8 @@ irm "https://get.your-service.com/windows?code=<초대코드>" | iex
 6. 기존 설정 충돌 및 백업 처리
 7. Collector 연결 상태 확인
 8. 데몬 자동 실행 등록 (macOS·리눅스)
+
+사용자 **회원가입·로그인은 이 설치 흐름과 별개로 진행되는 다른 흐름**이다. §3.2 를 본다.
 
 ---
 
@@ -33,7 +35,7 @@ irm "https://get.your-service.com/windows?code=<초대코드>" | iex
 설치 스크립트
   │
   ├─ 바이너리 내려받기 (GET /bin/{filename})
-  ├─ Enrollment API 호출 (초대 코드가 자격증명. 별도 로그인 없음)
+  ├─ Enrollment API 호출 (초대 코드가 자격증명 — 이 흐름에 로그인 없음)
   ├─ 설치 자격 봉투 수신 (installation_token · telemetry_token)
   ├─ 기존 설정 검사 및 백업
   ├─ Codex config.toml 수정
@@ -64,6 +66,9 @@ OpenTelemetry Collector
 Adapter → Enrichment → ClickHouse
 ```
 
+위 그림은 **설치 흐름**만 그린 것이다. 사용자 회원가입·로그인은 여기에 없는 별개 흐름이며
+§3.2 (b) 가 다룬다.
+
 ---
 
 # 3. 회사·사용자별 변수 처리
@@ -85,14 +90,21 @@ irm "https://get.your-service.com/windows?code=<초대코드>" | iex
 ```
 
 설치 스크립트가 초대 코드로 enroll 을 호출해 회사 manifest 와 이 설치의 자격을 받아온다.
-별도 로그인 단계는 없다.
+이 흐름에는 로그인 단계가 없다 — 사용자 로그인은 별개 흐름이며 §3.2 (b) 가 다룬다.
 
 ---
 
-## 3.2 Enrollment 흐름
+## 3.2 설치 흐름과 로그인 흐름은 별개다
 
-**브라우저 로그인이 없다.** 초대 코드 자체가 자격증명이고, enroll 엔드포인트에는 인증이 붙지
-않는다(서버 명세 §4.2). 사람 계정·로그인은 아직 구현이 없는 영역이다.
+`pulsemetry-backend` ADR 0007(`Accepted`) 이 둘을 나눠 적고 있다 —
+「사용자가 telemetryctl 를 설치하는 플로우」와 「**(동시에)** 사용자가 telemetryctl 인증을
+위하여 회원가입을 하는 플로우」. enroll 은 로그인을 기다리지 않고, 로그인은 enroll 의
+자격증명을 쓰지 않는다.
+
+### (a) 설치·enroll 흐름 — 현재 구현됨
+
+**enroll 엔드포인트에는 인증이 없다.** 초대 코드 자체가 자격증명이다
+(backend 명세 §2 엔드포인트 표, §4.2).
 
 ```text
 1. 관리자가 POST /v1/invitations 로 초대 코드를 발급한다 (X-Admin-Token 인증)
@@ -109,11 +121,53 @@ irm "https://get.your-service.com/windows?code=<초대코드>" | iex
 8. 서버가 봉투를 내려준다 — {installation_id, installation_token, telemetry_token, manifest}
 9. 클라이언트가 로컬 파이프라인을 배선한다
    벤더 설정에는 로컬 ingest 토큰만 들어가고, 회사 telemetry token 은 OS 키링에 저장된다
-10. 데몬 자동 실행을 best-effort 로 등록한다 (macOS·리눅스, ADR 0007)
+10. 데몬 자동 실행을 best-effort 로 등록한다 (macOS·리눅스, **이 레포** ADR 0007)
 ```
+
+**설계에 있으나 아직 없는 두 단계.** `pulsemetry-backend` ADR 0007 Context 는 1번과 2번 사이에 **초대 링크가 담긴
+메일 발송**과 **OS 를 감지해 설치 명령어를 안내하는 페이지**를 둔다. backend 명세 §1 이
+"초대 이메일 발송" 을 범위 밖으로 두고 §2 엔드포인트 표에도 안내 페이지가 없어서, 지금은
+관리자가 코드를 직접 전달한다.
 
 초대 코드가 설치 명령 URL 에 노출되는 것은 **알고 수용한 위험**이다. 코드는 일회성이고
 enroll 이 원자적으로 소비하며, 서버는 코드의 존재 여부를 응답으로 알려 주지 않는다.
+
+### (b) 회원가입·로그인 흐름 — 채택됐으나 미구현
+
+`pulsemetry-backend` ADR 0007 이 정한 흐름이다. **아직 구현이 없다** — backend 명세 §1 이
+"사용자 로그인" 을 범위 밖으로 둔다. 범위 밖이라는 것은 설계에 없다는 뜻이 아니라
+**그 서버 명세가 다루지 않는다**는 뜻이다.
+
+```text
+1. 관리자가 대시보드에서 사용자 정보를 등록하고 초대한다
+2. 초대 링크가 담긴 메일이 발송된다
+3. 사용자가 회원가입 링크로 이동해 id + pw + 초대 코드를 입력한다
+4. 회원가입이 끝나면 (a) 대로 CLI 를 내려받는다
+5. CLI 설치 후 사용자가 로그인한다 — 웹 페이지를 띄워 로그인하고
+   콜백 URL 로 CLI 에 AT 와 RT 를 전달한다
+   (Codex·Claude Code 를 CLI 에서 로그인하는 방식과 같다)
+6. CLI 가 해당 사용자가 소속된 부서의 manifest 를 적용한다
+```
+
+여기서 쓰는 토큰은 설치 자격증명(`pit_`·`ptt_`)과 성격이 다르다.
+
+| | 형태 | 담는 것 | 폐기 |
+|---|---|---|---|
+| AT | 단수명 **JWT** | tenant · member · role + **적용 중인 manifest revision** | 만료로 자동 |
+| RT | DB 에 저장하는 **불투명 토큰** | — | 사용 시 회전. 서버가 폐기할 수 있다 |
+
+manifest 재동기화 응답이 **새 AT·RT 를 함께 내려준다.** manifest 갱신과 토큰 재발급이 한 응답,
+한 트랜잭션이다. 새 토큰이 곧 manifest 적용이 끝났다는 증거이고, 적용에 실패한 클라이언트는
+낡은 토큰을 든 채 계속 거부된다(fail-closed).
+
+**아직 정해지지 않은 것** — 전부 ADR 0007 Follow-up 에 있고, 이 레포와 함께 정하기로 돼 있다.
+
+- 콜백 주소 규칙과 PKCE 적용 여부 (별도 ADR 로 미뤄져 있다)
+- AT 클레임 스키마(발급자·수명·revision 필드명)와 재동기화 응답 봉투
+- 데몬 → 서버 구간이 사용자 AT 를 실을지, 지금처럼 installation 귀속 `telemetry_token` 을
+  유지할지. **현재는 `telemetry_token` 이다.**
+- fail-closed 의 한계 — 클라이언트에서 새 AT 저장과 manifest 반영은 원자적이지 않다.
+  반영 완료 후에만 새 AT 를 저장하는 프로토콜을 계약으로 정의해야 한다.
 
 ---
 
@@ -908,7 +962,7 @@ token이 언제 발급·폐기됐는가
   │
   ▼
 Installer
-  ├─ 초대 코드로 enroll (별도 로그인 없음)
+  ├─ 초대 코드로 enroll (이 흐름에 로그인 없음 — §3.2 (b) 참고)
   ├─ Windows / WSL 탐지
   ├─ 기존 설정 충돌 검사
   ├─ 설정 백업
@@ -962,7 +1016,9 @@ ClickHouse / PostgreSQL
 ## 반드시 구현
 
 - [ ] 공통 한 줄 설치 명령
-- [ ] 초대 코드 기반 enroll (브라우저 로그인·device code 는 채택하지 않았다)
+- [ ] 초대 코드 기반 enroll — 설치 흐름에는 로그인이 없다 (§3.2 (a))
+- [ ] 웹 로그인 — 콜백 URL 로 AT·RT 전달 (`pulsemetry-backend` ADR 0007 채택, 미구현.
+      콜백 주소 규칙과 PKCE 적용 여부는 별도 ADR)
 - [ ] 설치별 `installation_id` 생성
 - [ ] 설치별 ingest-only token 발급
 - [ ] Codex 설정 파일 안전 병합
