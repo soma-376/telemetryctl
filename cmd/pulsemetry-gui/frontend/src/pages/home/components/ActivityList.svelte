@@ -7,9 +7,15 @@
     onViewAll,
   }: { activity: ActivityData; onViewAll?: () => void } = $props();
 
+  // 종료는 성공/실패 판단 없이 "끝났다"는 사실만 담는다 — 초록은 성공으로 읽히고,
+  // 작업 유형(검증) 배지가 이미 쓰고 있어 색이 겹친다. Activity 의 STATE_STYLE 과 같은 규칙.
   const STATUS = {
     running: { label: "진행 중", fg: "#8b6b36", bg: "var(--color-sand-soft)" },
-    done: { label: "완료", fg: "#2f7e55", bg: "var(--color-success-soft)" },
+    done: {
+      label: "종료",
+      fg: "var(--color-text-secondary)",
+      bg: "var(--color-inactive-soft)",
+    },
   } as const;
 
   const note = $derived(

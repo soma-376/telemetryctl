@@ -1,5 +1,6 @@
 import { AGENT_STYLE } from "../../lib/agents";
 import type { AgentId } from "../../lib/types";
+import { formatDuration } from "../../lib/format";
 
 // 홈 히어로 차트 — 기간에 따라 버킷 밀도를 바꾸는 스택 바 (디자인 Overview v3).
 // 실데이터 연동 전까지는 날짜 시드 해시로 안정적인 합성값을 만든다:
@@ -282,7 +283,7 @@ export function heroData(start: string, end: string): HeroData {
     avgValue: `${Math.round(grandTotal / (items.filter((b) => b.elapsed).length || 1))}k`,
     totalTokens: grandTotal,
     totalCost: `$${cost.toFixed(2)}`,
-    totalTime: `${Math.floor(minutes / 60)}h ${pad(minutes % 60)}m`,
+    totalTime: formatDuration(minutes),
     peakNote: `최다 ${items[peakIdx].label || items[peakIdx].key} · ${
       items[peakIdx].parts[0] + items[peakIdx].parts[1] + items[peakIdx].parts[2]
     }k`,
@@ -383,8 +384,7 @@ function sessionsOn(isoDate: string): ActivityRow[] {
     const mm = Math.floor(hash(seed + "m") * 60);
     const mins = 12 + Math.floor(hash(seed + "d") * 60);
     const running = isoDate === TODAY && i < 2;
-    const dur =
-      mins >= 60 ? `${Math.floor(mins / 60)}h ${pad(mins % 60)}m` : `${mins}m`;
+    const dur = formatDuration(mins);
     const stage = running ? STAGES[Math.floor(hash(seed + "g") * STAGES.length)] : "";
     out.push({
       date: isoDate,

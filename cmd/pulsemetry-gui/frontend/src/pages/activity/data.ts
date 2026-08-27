@@ -1,5 +1,6 @@
 import type { AgentId } from "../../lib/types";
 import { AGENT_STYLE, AGENT_NAMES } from "../../lib/agents";
+import { formatDuration } from "../../lib/format";
 
 // 세션 상태(진행 중/종료)와 스테이지(탐색/구현/디버깅/검증) 정의.
 // 종료는 성공/실패 판단 없이 "끝났다"는 사실만 담는다 — 성공으로 읽히는 초록을 쓰지 않고,
@@ -843,7 +844,7 @@ export function detailDisplay(index: number) {
     range: t.range,
     kpi: t.kpi,
     turnCount:
-      turns.length + "턴 · " + Math.floor(totalMins / 60) + "h " + (totalMins % 60) + "m",
+      turns.length + "턴 · " + formatDuration(totalMins),
     legend: TURN_KINDS.map((k) => ({
       name: TURN_STYLE[k].name,
       color: TURN_STYLE[k].bar,
