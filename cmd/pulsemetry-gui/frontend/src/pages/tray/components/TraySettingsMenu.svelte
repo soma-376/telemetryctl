@@ -10,8 +10,6 @@
   }: { onClose: () => void; onRequestQuit: () => void } = $props();
   let optionOn = $state<Record<TrayOptionKey, boolean>>({
     notify: true,
-    badge: true,
-    hideIdle: false,
     launch: true,
   });
 
@@ -41,14 +39,17 @@
       style="grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:8px 10px;border-radius:9px"
     >
       <span style="min-width:0">
-        <span class="text-text block truncate font-semibold" style="font-size:12.5px">
+        <span
+          class="text-text block truncate font-semibold"
+          style="font-size:12.5px"
+        >
           {option.name}
         </span>
         {#if option.desc}
           <span
             class="text-text-muted block truncate"
-            style="font-size:10.5px;margin-top:2px"
-          >{option.desc}</span>
+            style="font-size:10.5px;margin-top:2px">{option.desc}</span
+          >
         {/if}
       </span>
       <span
@@ -89,7 +90,9 @@
     >
       <path d="M14 5h5v5" />
       <path d="M19 5 11 13" />
-      <path d="M17.5 14v4.5a1.5 1.5 0 0 1-1.5 1.5H6a1.5 1.5 0 0 1-1.5-1.5V8A1.5 1.5 0 0 1 6 6.5h4.5" />
+      <path
+        d="M17.5 14v4.5a1.5 1.5 0 0 1-1.5 1.5H6a1.5 1.5 0 0 1-1.5-1.5V8A1.5 1.5 0 0 1 6 6.5h4.5"
+      />
     </svg>
     전체 설정 열기…
   </button>
@@ -99,7 +102,8 @@
     class="flex w-full cursor-pointer items-center border-none bg-transparent text-left font-semibold whitespace-nowrap"
     style="gap:9px;padding:9px 10px;border-radius:9px;font-size:12.5px;color:var(--color-danger-strong)"
     onmouseenter={(event) => (event.currentTarget.style.background = "#fcf3f3")}
-    onmouseleave={(event) => (event.currentTarget.style.background = "transparent")}
+    onmouseleave={(event) =>
+      (event.currentTarget.style.background = "transparent")}
   >
     <PowerIcon size={13} class="flex-none" />
     Pulsemetry 종료

@@ -27,7 +27,7 @@ export interface TraySession {
   live: boolean;
 }
 
-export type TrayOptionKey = "notify" | "badge" | "hideIdle" | "launch";
+export type TrayOptionKey = "notify" | "launch";
 
 export interface TrayOption {
   key: TrayOptionKey;

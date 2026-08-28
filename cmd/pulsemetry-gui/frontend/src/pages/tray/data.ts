@@ -87,12 +87,6 @@ export const TRAY_SESSIONS: TraySession[] = [
 
 export const TRAY_OPTIONS: TrayOption[] = [
   { key: "notify", name: "한도 알림", desc: "20% 아래로 떨어지면 알림" },
-  { key: "badge", name: "메뉴바에 % 표시", desc: "아이콘 옆에 남은 한도" },
-  {
-    key: "hideIdle",
-    name: "유휴 시 아이콘 숨기기",
-    desc: "활동이 없으면 숨김",
-  },
   { key: "launch", name: "로그인 시 자동 실행", desc: "" },
 ];
 
