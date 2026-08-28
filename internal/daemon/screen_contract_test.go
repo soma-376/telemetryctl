@@ -24,6 +24,7 @@ import (
 	"database/sql"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -548,7 +549,8 @@ func TestScreenContract_SurfacesAgreeOnTheSameSession(t *testing.T) {
 	recent := home.Recent[0]
 
 	// Activity 한 줄과 세션 상세는 같은 SessionRow 를 낸다.
-	if row.SessionRow != detail.Session {
+	// EndedAt 이 포인터라 == 는 주소를 본다. 값 비교여야 한다.
+	if !reflect.DeepEqual(row.SessionRow, detail.Session) {
 		t.Errorf("Activity 줄과 세션 상세가 다르다:\nactivity = %+v\ndetail   = %+v",
 			row.SessionRow, detail.Session)
 	}
