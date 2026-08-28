@@ -373,3 +373,42 @@ func seedTimelessSession(t *testing.T, db *DB, occurredAt event.UnixSec) {
 		}
 	}
 }
+
+// 원문 픽스처가 심는 값들이다. 서로 겹치지 않아야 purge 가 무엇을 지웠는지 컬럼별로 갈린다.
+const (
+	secretPrompt  = "비밀 프롬프트 원문"
+	secretError   = "/Users/jy/secret/열-수-없는-파일"
+	secretPayload = "원본이벤트본문"
+)
+
+// seedRawContent 는 v3 에서 원문이 남을 수 있는 세 컬럼을 모두 채운다.
+//
+// events.payload 는 쓰기 경로가 항상 NULL 로 두므로(insertEventSQL) SQL 로 직접 심는다.
+// purge 가 "지금 채워지지 않는 컬럼" 을 빠뜨리면 나중에 그 컬럼을 쓰기 시작하는 순간
+// 조용히 원문이 남게 된다.
+func seedRawContent(t *testing.T, db *DB, at time.Time) {
+	t.Helper()
+	mustWrite(t, db, Batch{
+		Sessions: []session.Session{newSession("sess-1", at)},
+		Events: []EventRecord{
+			evrec("claude_code.user_prompt", at, 0, inTurn("p1"), promptBody(secretPrompt)),
+			evrec("claude_code.tool_result", at, 1, inTurn("p1"),
+				call("claude_code:toolu_1"), toolName("Read"), succeeded(false),
+				errMessage("EACCES", secretError)),
+		},
+	})
+
+	if _, err := db.SQL().ExecContext(context.Background(),
+		`UPDATE events SET payload = jsonb(?) WHERE event_name = 'claude_code.user_prompt'`,
+		`{"body":"`+secretPayload+`"}`); err != nil {
+		t.Fatalf("payload 심기: %v", err)
+	}
+}
+
+// mustExecTest 는 픽스처를 손보는 SQL 을 실행한다.
+func mustExecTest(t *testing.T, db *DB, query string, args ...any) {
+	t.Helper()
+	if _, err := db.SQL().ExecContext(context.Background(), query, args...); err != nil {
+		t.Fatalf("%s: %v", query, err)
+	}
+}

@@ -186,35 +186,147 @@ func placeholders(n int) string {
 	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }
 
+// PurgeResult 는 purge --content 가 비운 원문 수다.
+//
+// 합계 하나가 아니라 컬럼별로 나누는 이유는 사용자가 "무엇이 사라졌는가" 를 확인할 수
+// 있어야 하기 때문이다. 되돌릴 수 없는 명령이라 "3행 지움" 만으로는 옳게 동작했는지
+// 아무도 판정하지 못한다.
+type PurgeResult struct {
+	// Prompts 는 turns.prompt_text 다 — 사용자가 친 프롬프트 원문.
+	Prompts int64
+	// Payloads 는 events.payload 다 — 원본 이벤트 JSONB.
+	Payloads int64
+	// ErrorMessages 는 tool_calls.error_message 다 — 경로·명령이 섞여 나오는 벤더 오류 문자열.
+	ErrorMessages int64
+}
+
+// Total 은 비운 행의 총합이다.
+func (r PurgeResult) Total() int64 { return r.Prompts + r.Payloads + r.ErrorMessages }
+
+// purgeStep 은 원문이 담기는 컬럼 하나다.
+//
+// UPDATE 문과 계수 SELECT 를 같은 조각에서 만든다. 두 곳에 조건을 따로 쓰면 "지우겠다고
+// 말한 수" 와 "실제로 지운 수" 가 조용히 갈린다.
+type purgeStep struct {
+	name   string
+	table  string
+	column string
+	// scope 는 --before 가 붙었을 때 더할 조건이다. 시각 컬럼이 NULL 이면 소속 턴의 시각으로
+	// 판정하고, 그것마저 없으면 조건이 NULL 이라 대상에서 빠진다 — 구간 삭제가 자기 구간을
+	// 넘지 않게 하는 쪽이 맞다. 전체 삭제(--before 없음)는 어차피 다 지운다.
+	scope string
+	dst   func(*PurgeResult) *int64
+}
+
+// where 는 이 컬럼의 대상 조건이다.
+//
+// IS NOT NULL 이 계수의 핵심이다. 이미 비어 있는 행까지 세면 사용자에게 보고되는 수가
+// 부풀고, 두 번 돌렸을 때 "또 지웠다" 고 말하게 된다.
+func (s purgeStep) where(scoped bool) string {
+	w := ` WHERE "` + s.column + `" IS NOT NULL`
+	if scoped {
+		w += ` AND ` + s.scope
+	}
+	return w
+}
+
+func (s purgeStep) update(scoped bool) string {
+	return `UPDATE ` + s.table + ` SET "` + s.column + `" = NULL` + s.where(scoped)
+}
+
+func (s purgeStep) count(scoped bool) string {
+	return `SELECT COUNT(*) FROM ` + s.table + s.where(scoped)
+}
+
+// purgeSteps 는 v3 에서 원문이 남는 자리 **전부** 다.
+//
+// v1 의 event_content 처럼 통째로 지울 테이블이 없다. 원문은 세 컬럼에 흩어져 있고
+// 나머지 컬럼(수치·모델·도구 이름·오류 타입)은 원문이 아니므로 남는다 — 행을 지우면
+// 집계가 함께 사라진다. 그래서 DELETE 가 아니라 UPDATE ... SET NULL 이다.
+var purgeSteps = []purgeStep{
+	{
+		name: "프롬프트", table: "turns", column: "prompt_text",
+		scope: `COALESCE(started_at, ended_at) < ?`,
+		dst:   func(r *PurgeResult) *int64 { return &r.Prompts },
+	},
+	{
+		name: "이벤트 payload", table: "events", column: "payload",
+		scope: `COALESCE(occurred_at,
+		  (SELECT COALESCE(t.started_at, t.ended_at) FROM turns t WHERE t.id = events.turn_id)) < ?`,
+		dst: func(r *PurgeResult) *int64 { return &r.Payloads },
+	},
+	{
+		name: "도구 오류 메시지", table: "tool_calls", column: "error_message",
+		scope: `COALESCE(called_at,
+		  (SELECT COALESCE(t.started_at, t.ended_at) FROM turns t WHERE t.id = tool_calls.turn_id)) < ?`,
+		dst: func(r *PurgeResult) *int64 { return &r.ErrorMessages },
+	},
+}
+
 // PurgeContent 는 원문만 지운다 (telemetryctl purge --content [--before]).
 //
-// v3 에서 원문이 남는 자리는 turns.prompt_text 하나뿐이다 — 응답·tool_input·tool_result 는
-// 저장될 컬럼 자체가 없다. 턴·이벤트 행과 수치는 그대로이므로 집계는 변하지 않고 원문 검색만
-// 불가능해진다.
+// v3 에서 원문이 남는 자리는 turns.prompt_text · events.payload · tool_calls.error_message
+// 세 곳이다. 행을 지우지 않고 컬럼만 NULL 로 만든다 — 세션·턴·이벤트 행과 수치는 그대로라
+// 집계는 변하지 않고 원문 검색만 불가능해진다.
+//
+// 세 문장은 **한 트랜잭션**이다. 하나만 성공하고 끝나면 사용자는 "지웠다" 는 보고를 받고도
+// 다른 컬럼에 원문이 남은 DB 를 갖게 된다.
 //
 // before 가 제로값이면 전부 지운다.
-func (d *DB) PurgeContent(ctx context.Context, before time.Time) (int64, error) {
-	query := `UPDATE turns SET prompt_text = NULL WHERE prompt_text IS NOT NULL`
-	var args []any
-	if !before.IsZero() {
-		query += ` AND started_at IS NOT NULL AND started_at < ?`
-		args = []any{int64(event.SecFromTime(before))}
-	}
+func (d *DB) PurgeContent(ctx context.Context, before time.Time) (PurgeResult, error) {
+	var res PurgeResult
+	scoped, args := purgeScope(before)
 
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, fmt.Errorf("store: purge 트랜잭션 시작: %w", err)
+		return res, fmt.Errorf("store: purge 트랜잭션 시작: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // 커밋 후에는 ErrTxDone 이라 무시한다
 
-	n, err := exec(ctx, tx, query, args...)
-	if err != nil {
-		return 0, fmt.Errorf("store: prompt_text purge: %w", err)
+	for _, step := range purgeSteps {
+		n, err := exec(ctx, tx, step.update(scoped), args...)
+		if err != nil {
+			return PurgeResult{}, fmt.Errorf("store: %s purge: %w", step.name, err)
+		}
+		*step.dst(&res) = n
 	}
+
 	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("store: purge 커밋: %w", err)
+		return PurgeResult{}, fmt.Errorf("store: purge 커밋: %w", err)
 	}
-	return n, nil
+	return res, nil
+}
+
+// ContentCounts 는 같은 조건으로 **지워질** 행을 미리 센다. purge 가 지우기 전에 무엇이
+// 사라지는지 말할 수 있어야 한다.
+func (d *DB) ContentCounts(ctx context.Context, before time.Time) (PurgeResult, error) {
+	return contentCounts(ctx, d.db, before)
+}
+
+// ContentCounts 는 read-only 핸들용이다. 쓰기 핸들을 열기 전에 현황을 읽는 경로가 쓴다.
+func (r *ReadOnly) ContentCounts(ctx context.Context, before time.Time) (PurgeResult, error) {
+	return contentCounts(ctx, r.db, before)
+}
+
+func contentCounts(ctx context.Context, q rowQuerier, before time.Time) (PurgeResult, error) {
+	var res PurgeResult
+	scoped, args := purgeScope(before)
+	for _, step := range purgeSteps {
+		var n int64
+		if err := q.QueryRowContext(ctx, step.count(scoped), args...).Scan(&n); err != nil {
+			return PurgeResult{}, fmt.Errorf("store: %s 계수: %w", step.name, err)
+		}
+		*step.dst(&res) = n
+	}
+	return res, nil
+}
+
+// purgeScope 는 --before 경계를 SQL 인자로 옮긴다. 제로값이면 구간 제한이 없다.
+func purgeScope(before time.Time) (bool, []any) {
+	if before.IsZero() {
+		return false, nil
+	}
+	return true, []any{int64(event.SecFromTime(before))}
 }
 
 func exec(ctx context.Context, tx *sql.Tx, query string, args ...any) (int64, error) {

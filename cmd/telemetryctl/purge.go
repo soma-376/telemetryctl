@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/your-org/pulsemetry/internal/runtimeinfo"
 	"github.com/your-org/pulsemetry/internal/store"
 )
 
@@ -105,35 +106,48 @@ func runPurge(stdout, stderr io.Writer, stdin io.Reader, canPrompt bool, args []
 	}
 	defer db.Close() //nolint:errcheck // 삭제는 커밋됐고 닫기 실패에 되돌릴 것이 없다
 
-	n, err := db.PurgeContent(ctx, cutoff)
+	res, err := db.PurgeContent(ctx, cutoff)
 	if err != nil {
 		fmt.Fprintln(stderr, "오류:", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "원문 %s행을 지웠습니다.\n", formatInt(n))
+	fmt.Fprintf(stdout, "원문 %s행을 지웠습니다.\n", formatInt(res.Total()))
+	fmt.Fprintln(stdout, purgeBreakdown(res))
 	return 0
 }
 
-// printPurgePlan 은 지우기 **전에** 현황과 경계를 알린다.
+// purgeBreakdown 은 컬럼별 내역이다. 되돌릴 수 없는 명령이라 합계 하나만으로는
+// 무엇이 사라졌는지 아무도 판정하지 못한다.
+func purgeBreakdown(r store.PurgeResult) string {
+	return fmt.Sprintf("  프롬프트 %s · 이벤트 payload %s · 도구 오류 메시지 %s",
+		formatInt(r.Prompts), formatInt(r.Payloads), formatInt(r.ErrorMessages))
+}
+
+// printPurgePlan 은 지우기 **전에** 무엇이 사라지는지 알린다.
+//
+// 계수는 실제 삭제와 **같은 조건**으로 store 가 센다 (ContentCounts). 조회 계층을 거치면
+// "지우겠다고 말한 수" 와 "실제로 지운 수" 가 갈릴 수 있고, 그 차이는 되돌릴 수 없는
+// 명령에서 가장 나쁜 종류의 오차다.
 func printPurgePlan(ctx context.Context, w io.Writer, t localTarget, cutoff time.Time) error {
-	reader, err := openReader(t)
+	reader, err := store.OpenReadOnly(t.DBPath)
 	if err != nil {
 		return err
 	}
 	defer reader.Close() //nolint:errcheck // 조회 전용 핸들이다
 
-	st, err := reader.Status(ctx)
+	counts, err := reader.ContentCounts(ctx, cutoff)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "DB: %s\n", st.DatabasePath)
-	fmt.Fprintf(w, "보관 중인 원문: %s행 (이벤트 %s건)\n",
-		formatInt(st.Counts.EventContent), formatInt(st.Counts.Events))
-	if st.Daemon.Found && st.Daemon.Running {
+	fmt.Fprintf(w, "DB: %s\n", reader.Path())
+	fmt.Fprintf(w, "지울 원문: %s행\n", formatInt(counts.Total()))
+	fmt.Fprintln(w, purgeBreakdown(counts))
+
+	if st, err := runtimeinfo.Load(runtimeinfo.PathIn(t.DataDir)); err == nil && st.Found && !st.Stale {
 		// WAL 이라 동시 접근 자체는 안전하다. 그래도 알려야 하는 이유는 결과가 달라
 		// 보이기 때문이다 — 지운 직후에도 새 원문이 계속 쌓인다.
 		fmt.Fprintf(w, "데몬이 실행 중입니다 (pid %d). 동시 삭제는 안전하지만 이후 도착하는 원문은 계속 쌓입니다.\n",
-			st.Daemon.PID)
+			st.Info.PID)
 	}
 	if cutoff.IsZero() {
 		fmt.Fprintln(w, "대상: 보관된 원문 전체 (구간 제한 없음)")
@@ -141,7 +155,7 @@ func printPurgePlan(ctx context.Context, w io.Writer, t localTarget, cutoff time
 		fmt.Fprintf(w, "대상: %s (%s) 이전 원문\n",
 			cutoff.In(time.Local).Format(timeLayout), zoneLabel(cutoff))
 	}
-	fmt.Fprintln(w, "이벤트 수치와 롤업은 남고 원문 검색만 불가능해집니다. 되돌릴 수 없습니다.")
+	fmt.Fprintln(w, "세션·턴·이벤트 행과 집계 수치는 남고 원문만 사라집니다. 되돌릴 수 없습니다.")
 	return nil
 }
 

@@ -129,48 +129,6 @@ func TestPruneKeepsSessionsWithoutTimestamps(t *testing.T) {
 	}
 }
 
-// v3 에서 원문이 남는 자리는 turns.prompt_text 하나다.
-func TestPurgeContentClearsPromptText(t *testing.T) {
-	db := openTestDB(t)
-	seedRetention(t, db, baseTime)
-
-	if n := countWhere(t, db, "turns", "prompt_text IS NOT NULL"); n != 2 {
-		t.Fatalf("사전 조건 실패: 프롬프트가 있는 턴 = %d행", n)
-	}
-
-	n, err := db.PurgeContent(context.Background(), time.Time{})
-	if err != nil {
-		t.Fatalf("PurgeContent: %v", err)
-	}
-	if n != 2 {
-		t.Fatalf("지운 행 = %d, want 2", n)
-	}
-	if got := countWhere(t, db, "turns", "prompt_text IS NOT NULL"); got != 0 {
-		t.Fatalf("원문이 %d행 남았다", got)
-	}
-	// 턴·이벤트 행과 수치는 그대로다 — 집계가 변하면 안 된다.
-	if countRows(t, db, "turns") != 2 || countRows(t, db, "events") != 4 {
-		t.Fatal("purge 가 원문 말고 다른 것을 지웠다")
-	}
-}
-
-// --before 는 그 시각 이전에 시작한 턴만 지운다.
-func TestPurgeContentBefore(t *testing.T) {
-	db := openTestDB(t)
-	seedRetention(t, db, baseTime)
-
-	n, err := db.PurgeContent(context.Background(), baseTime.Add(-24*time.Hour))
-	if err != nil {
-		t.Fatalf("PurgeContent: %v", err)
-	}
-	if n != 1 {
-		t.Fatalf("지운 행 = %d, want 1", n)
-	}
-	if got := scanOne(t, db, `SELECT prompt_text FROM turns WHERE turn_key = 'p-new'`); got != "최근 프롬프트" {
-		t.Fatalf("최근 프롬프트가 지워졌다: %v", got)
-	}
-}
-
 // 컷오프 경계는 열려 있다 — 컷오프와 정확히 같은 시각의 행은 남는다.
 // 경계가 한쪽으로 밀리면 매일 하루치가 조용히 더(또는 덜) 지워진다.
 func TestPruneCutoffBoundary(t *testing.T) {
@@ -323,4 +281,177 @@ func TestPruneSecondRunChangesNothing(t *testing.T) {
 			t.Fatalf("%s 가 두 번째 실행에서 바뀌었다:\n%s\n원래:\n%s", table, got, want)
 		}
 	}
+}
+
+// purge --content 는 v3 에서 원문이 남는 **세 컬럼 전부** 를 비운다.
+// 행을 지우지 않으므로 집계는 그대로다.
+func TestPurgeContentClearsEveryRawColumn(t *testing.T) {
+	db := openTestDB(t)
+	seedRawContent(t, db, baseTime)
+
+	// 전제: 세 원문이 실제로 DB 에 있다. 없으면 아래 단언이 공허하게 통과한다.
+	for _, secret := range []string{secretPrompt, secretError, secretPayload} {
+		if hits := findText(t, db, secret); len(hits) == 0 {
+			t.Fatalf("픽스처가 %q 를 심지 못했다", secret)
+		}
+	}
+
+	res, err := db.PurgeContent(context.Background(), time.Time{})
+	if err != nil {
+		t.Fatalf("PurgeContent: %v", err)
+	}
+	if res.Prompts != 1 || res.Payloads != 1 || res.ErrorMessages != 1 {
+		t.Fatalf("PurgeResult = %+v", res)
+	}
+
+	// DB **어디에도** 남지 않아야 한다. 비운 세 컬럼만 확인하면 다른 자리에 남은 사본을
+	// 영원히 놓친다.
+	for _, secret := range []string{secretPrompt, secretError, secretPayload} {
+		if hits := findText(t, db, secret); len(hits) > 0 {
+			t.Fatalf("%q 가 %v 에 남았다", secret, hits)
+		}
+	}
+
+	// 행과 수치는 그대로다 — 집계가 변하면 안 된다.
+	for table, want := range map[string]int{
+		"sessions": 1, "turns": 1, "events": 2, "tool_calls": 1, "vendors": 1,
+	} {
+		if got := countRows(t, db, table); got != want {
+			t.Errorf("%s = %d행, want %d — purge 가 원문 말고 다른 것을 지웠다", table, got, want)
+		}
+	}
+	// 원문이 아닌 필드는 남는다. tool_calls 는 오류 메시지만 잃고 오류 타입은 유지한다.
+	if got := scanOne(t, db, `SELECT error_type FROM tool_calls`); got != "EACCES" {
+		t.Errorf("error_type = %v — 원문이 아닌 값이 사라졌다", got)
+	}
+	if got := scanOne(t, db, `SELECT tool_name FROM tool_calls`); got != "Read" {
+		t.Errorf("tool_name = %v", got)
+	}
+}
+
+// 계수는 이미 비어 있는 행을 포함하지 않는다. 포함하면 두 번째 실행이 "또 지웠다" 고 말한다.
+func TestPurgeResultExcludesAlreadyEmptyRows(t *testing.T) {
+	db := openTestDB(t)
+	seedRawContent(t, db, baseTime)
+
+	first, err := db.PurgeContent(context.Background(), time.Time{})
+	if err != nil {
+		t.Fatalf("첫 PurgeContent: %v", err)
+	}
+	if first.Total() != 3 {
+		t.Fatalf("첫 실행 = %+v, want 합계 3", first)
+	}
+
+	second, err := db.PurgeContent(context.Background(), time.Time{})
+	if err != nil {
+		t.Fatalf("두 번째 PurgeContent: %v", err)
+	}
+	if second.Total() != 0 {
+		t.Fatalf("두 번째 실행이 %+v 를 더 지웠다고 보고했다", second)
+	}
+}
+
+// ContentCounts 는 실제 삭제와 같은 조건이어야 한다. 갈리면 "지우겠다" 와 "지웠다" 가 달라진다.
+func TestContentCountsMatchesPurge(t *testing.T) {
+	tests := []struct {
+		name   string
+		before time.Time
+	}{
+		{name: "구간 제한 없음"},
+		{name: "구간 안", before: baseTime.Add(time.Hour)},
+		{name: "구간 밖", before: baseTime.Add(-time.Hour)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := openTestDB(t)
+			seedRawContent(t, db, baseTime)
+
+			planned, err := db.ContentCounts(context.Background(), tt.before)
+			if err != nil {
+				t.Fatalf("ContentCounts: %v", err)
+			}
+			done, err := db.PurgeContent(context.Background(), tt.before)
+			if err != nil {
+				t.Fatalf("PurgeContent: %v", err)
+			}
+			if planned != done {
+				t.Fatalf("예고 %+v ≠ 실제 %+v", planned, done)
+			}
+		})
+	}
+}
+
+// --before 는 그 시각 이전 원문만 지운다. 시각 컬럼이 NULL 이면 소속 턴의 시각으로 판정한다.
+func TestPurgeContentBefore(t *testing.T) {
+	seedTwoTurns := func(t *testing.T, db *DB) {
+		t.Helper()
+		old := baseTime.Add(-48 * time.Hour)
+		mustWrite(t, db, Batch{
+			Sessions: []session.Session{newSession("sess-1", old)},
+			Events: []EventRecord{
+				evrec("claude_code.user_prompt", old, 0, inTurn("p-old"), promptBody("오래된 프롬프트")),
+				evrec("claude_code.user_prompt", baseTime, 1, inTurn("p-new"), promptBody("최근 프롬프트")),
+			},
+		})
+	}
+
+	t.Run("경계 이전 턴만 비운다", func(t *testing.T) {
+		db := openTestDB(t)
+		seedTwoTurns(t, db)
+
+		res, err := db.PurgeContent(context.Background(), baseTime.Add(-24*time.Hour))
+		if err != nil {
+			t.Fatalf("PurgeContent: %v", err)
+		}
+		if res.Prompts != 1 {
+			t.Fatalf("지운 프롬프트 = %d, want 1", res.Prompts)
+		}
+		if got := scanOne(t, db, `SELECT prompt_text FROM turns WHERE turn_key = 'p-new'`); got != "최근 프롬프트" {
+			t.Fatalf("최근 프롬프트가 지워졌다: %v", got)
+		}
+	})
+
+	// events.occurred_at 과 tool_calls.called_at 은 선택 컬럼이다. NULL 이라고 구간 판정에서
+	// 빠지면 그 행의 원문은 --before 로 영원히 지울 수 없다.
+	t.Run("시각이 NULL 이면 소속 턴의 시각으로 판정한다", func(t *testing.T) {
+		db := openTestDB(t)
+		seedRawContent(t, db, baseTime)
+		mustExecTest(t, db, `UPDATE events SET occurred_at = NULL`)
+		mustExecTest(t, db, `UPDATE tool_calls SET called_at = NULL`)
+
+		res, err := db.PurgeContent(context.Background(), baseTime.Add(time.Hour))
+		if err != nil {
+			t.Fatalf("PurgeContent: %v", err)
+		}
+		if res.Payloads != 1 || res.ErrorMessages != 1 {
+			t.Fatalf("PurgeResult = %+v — 턴 시각으로 판정하지 못했다", res)
+		}
+	})
+
+	// 턴에도 시각이 없으면 구간을 판정할 근거가 없다. 구간 삭제가 자기 구간을 넘지 않는 쪽이
+	// 맞다 — 전부 지우려면 --before 없이 부르면 된다.
+	t.Run("턴 시각도 없으면 구간 삭제에서 빠진다", func(t *testing.T) {
+		db := openTestDB(t)
+		seedRawContent(t, db, baseTime)
+		mustExecTest(t, db, `UPDATE events SET occurred_at = NULL`)
+		mustExecTest(t, db, `UPDATE tool_calls SET called_at = NULL`)
+		mustExecTest(t, db, `UPDATE turns SET started_at = NULL, ended_at = NULL`)
+
+		res, err := db.PurgeContent(context.Background(), baseTime.Add(time.Hour))
+		if err != nil {
+			t.Fatalf("PurgeContent: %v", err)
+		}
+		if res.Total() != 0 {
+			t.Fatalf("판정 근거가 없는 행을 지웠다: %+v", res)
+		}
+
+		// 구간 제한 없는 전체 삭제는 그래도 다 지운다.
+		all, err := db.PurgeContent(context.Background(), time.Time{})
+		if err != nil {
+			t.Fatalf("전체 PurgeContent: %v", err)
+		}
+		if all.Total() != 3 {
+			t.Fatalf("전체 삭제 = %+v, want 합계 3", all)
+		}
+	})
 }
