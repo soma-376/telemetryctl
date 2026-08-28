@@ -16,7 +16,7 @@ func TestVendors(t *testing.T) {
 	recent := testNow.Add(-2 * time.Hour)
 	old := testNow.Add(-72 * time.Hour)
 
-	f.write(store.Batch{
+	f.write(testBatch{
 		Events: []store.EventRecord{
 			{Event: newEvent("s-recent", recent, 1)},
 			{Event: newEvent("s-recent", recent.Add(time.Minute), 2)},
@@ -85,7 +85,7 @@ func TestMCPUsage(t *testing.T) {
 	sessions = append(sessions, newSession("s-ancient", testNow.Add(-200*time.Hour), func(s *session.Session) {
 		s.MCP = []session.MCPUsage{{ServerName: "github", Connected: true, ToolCalls: 99}}
 	}))
-	f.write(store.Batch{Sessions: sessions})
+	f.write(testBatch{Sessions: sessions})
 
 	rows, err := f.reader.MCPUsage(context.Background(), 3)
 	if err != nil {
@@ -143,7 +143,7 @@ func TestMCPUsageDefaultWindow(t *testing.T) {
 				s.MCP = []session.MCPUsage{{ServerName: "github", Connected: true}}
 			}))
 	}
-	f.write(store.Batch{Sessions: sessions})
+	f.write(testBatch{Sessions: sessions})
 
 	rows, err := f.reader.MCPUsage(context.Background(), 0)
 	if err != nil {

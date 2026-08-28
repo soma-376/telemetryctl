@@ -29,6 +29,9 @@ var stringAttrs = map[string]func(*event.Attributes, string){
 	"gen_ai.request.model": func(a *event.Attributes, v string) { a.Model = v },
 
 	"type": func(a *event.Attributes, v string) { a.Type = v },
+	// Codex 는 스트리밍 이벤트의 종류를 kind 로 보낸다 (response.completed 등).
+	// llm_calls 승격 규칙이 이 값을 보므로 같은 컬럼으로 모은다.
+	"kind": func(a *event.Attributes, v string) { a.Type = v },
 
 	"tool_name": func(a *event.Attributes, v string) { a.ToolName = v },
 	"tool.name": func(a *event.Attributes, v string) { a.ToolName = v },

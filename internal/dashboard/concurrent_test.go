@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/your-org/pulsemetry/internal/event"
-	"github.com/your-org/pulsemetry/internal/rollup"
 	"github.com/your-org/pulsemetry/internal/session"
 	"github.com/your-org/pulsemetry/internal/store"
 )
@@ -20,9 +19,9 @@ func TestConcurrentReadWhileDaemonWrites(t *testing.T) {
 	ctx := context.Background()
 
 	// 조회가 빈 DB 를 도는 것을 막기 위한 초기 데이터.
-	f.write(store.Batch{
+	f.write(testBatch{
 		Sessions: []session.Session{newSession("s-seed", testNow.Add(-time.Hour))},
-		Rollups:  []rollup.Row{rollupRow(testNow, rollup.DimTotal, "", rollup.Bucket{CostUSD: 1})},
+		Rollups:  []testRollupRow{rollupRow(testNow, testDimTotal, "", testRollupBucket{CostUSD: 1})},
 		Events:   []store.EventRecord{prompt("s-seed", testNow.Add(-time.Hour), 0, "인증 토큰 검증")},
 	})
 
@@ -37,17 +36,17 @@ func TestConcurrentReadWhileDaemonWrites(t *testing.T) {
 		defer close(writeDone)
 		for i := 1; i <= rounds; i++ {
 			at := testNow.Add(-time.Duration(i) * time.Minute)
-			batch := store.Batch{
+			batch := testBatch{
 				Sessions: []session.Session{
 					newSession("s-"+string(rune('a'+i%20)), at, func(s *session.Session) {
 						s.Files = []session.File{{PathHash: "h", Name: "apply.go", Edits: 1, LastTS: event.SecFromTime(at)}}
 						s.MCP = []session.MCPUsage{{ServerName: "github", Connected: true}}
 					}),
 				},
-				Rollups: []rollup.Row{rollupRow(at, rollup.DimVendor, "claude_code", rollup.Bucket{CostUSD: 0.1, Prompts: 1})},
+				Rollups: []testRollupRow{rollupRow(at, testDimVendor, "claude_code", testRollupBucket{CostUSD: 0.1, Prompts: 1})},
 				Events:  []store.EventRecord{prompt("s-seed", at, i, "인증 토큰 검증 및 전달")},
 			}
-			if _, err := f.db.Write(ctx, batch); err != nil {
+			if _, err := f.db.Write(ctx, store.Batch{Sessions: batch.Sessions, Events: batch.Events}); err != nil {
 				t.Errorf("Write %d: %v", i, err)
 				return
 			}

@@ -5,19 +5,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/your-org/pulsemetry/internal/rollup"
 	"github.com/your-org/pulsemetry/internal/session"
-	"github.com/your-org/pulsemetry/internal/store"
 )
 
 // 「Agent 사용 비율」 — rollup_hourly WHERE dim='vendor'.
 func TestBreakdownByVendor(t *testing.T) {
 	f := newFixture(t)
 	at := time.Date(2026, 8, 10, 1, 0, 0, 0, time.UTC)
-	f.write(store.Batch{Rollups: []rollup.Row{
-		rollupRow(at, rollup.DimVendor, "claude_code", rollup.Bucket{CostUSD: 9, Prompts: 30}),
-		rollupRow(at, rollup.DimVendor, "codex", rollup.Bucket{CostUSD: 3, Prompts: 10}),
-		rollupRow(at, rollup.DimTotal, "", rollup.Bucket{CostUSD: 12, Prompts: 40}),
+	f.write(testBatch{Rollups: []testRollupRow{
+		rollupRow(at, testDimVendor, "claude_code", testRollupBucket{CostUSD: 9, Prompts: 30}),
+		rollupRow(at, testDimVendor, "codex", testRollupBucket{CostUSD: 3, Prompts: 10}),
+		rollupRow(at, testDimTotal, "", testRollupBucket{CostUSD: 12, Prompts: 40}),
 	}})
 
 	rows, err := f.reader.Breakdown(context.Background(), BreakdownQuery{Dim: DimVendor, TZ: seoul})
@@ -42,10 +40,10 @@ func TestBreakdownByVendor(t *testing.T) {
 func TestBreakdownLabelsProjectHash(t *testing.T) {
 	f := newFixture(t)
 	at := time.Date(2026, 8, 10, 1, 0, 0, 0, time.UTC)
-	f.write(store.Batch{
-		Rollups: []rollup.Row{
-			rollupRow(at, rollup.DimProject, "hash-a", rollup.Bucket{CostUSD: 2}),
-			rollupRow(at, rollup.DimProject, "hash-unknown", rollup.Bucket{CostUSD: 1}),
+	f.write(testBatch{
+		Rollups: []testRollupRow{
+			rollupRow(at, testDimProject, "hash-a", testRollupBucket{CostUSD: 2}),
+			rollupRow(at, testDimProject, "hash-unknown", testRollupBucket{CostUSD: 1}),
 		},
 		Sessions: []session.Session{
 			newSession("s1", testNow.Add(-2*time.Hour), func(s *session.Session) {
@@ -77,9 +75,9 @@ func TestBreakdownLabelsProjectHash(t *testing.T) {
 // 통과하지 못한다.
 func TestBreakdownHourOfDayUsesLocalHours(t *testing.T) {
 	f := newFixture(t)
-	f.write(store.Batch{Rollups: []rollup.Row{
-		rollupRow(time.Date(2026, 8, 9, 18, 0, 0, 0, time.UTC), rollup.DimTotal, "", rollup.Bucket{Prompts: 7}),
-		rollupRow(time.Date(2026, 8, 10, 1, 0, 0, 0, time.UTC), rollup.DimTotal, "", rollup.Bucket{Prompts: 2}),
+	f.write(testBatch{Rollups: []testRollupRow{
+		rollupRow(time.Date(2026, 8, 9, 18, 0, 0, 0, time.UTC), testDimTotal, "", testRollupBucket{Prompts: 7}),
+		rollupRow(time.Date(2026, 8, 10, 1, 0, 0, 0, time.UTC), testDimTotal, "", testRollupBucket{Prompts: 2}),
 	}})
 	ctx := context.Background()
 
@@ -111,11 +109,11 @@ func TestBreakdownHourOfDayUsesLocalHours(t *testing.T) {
 
 func TestBreakdownByDayFillsGaps(t *testing.T) {
 	f := newFixture(t)
-	f.write(store.Batch{Rollups: []rollup.Row{
+	f.write(testBatch{Rollups: []testRollupRow{
 		// 서울 기준 08-10 (오늘)
-		rollupRow(time.Date(2026, 8, 10, 1, 0, 0, 0, time.UTC), rollup.DimTotal, "", rollup.Bucket{CostUSD: 3}),
+		rollupRow(time.Date(2026, 8, 10, 1, 0, 0, 0, time.UTC), testDimTotal, "", testRollupBucket{CostUSD: 3}),
 		// 서울 기준 08-08
-		rollupRow(time.Date(2026, 8, 8, 3, 0, 0, 0, time.UTC), rollup.DimTotal, "", rollup.Bucket{CostUSD: 1}),
+		rollupRow(time.Date(2026, 8, 8, 3, 0, 0, 0, time.UTC), testDimTotal, "", testRollupBucket{CostUSD: 1}),
 	}})
 
 	rows, err := f.reader.Breakdown(context.Background(), BreakdownQuery{TZ: seoul, Days: 3, Bucket: BucketDay})
@@ -161,9 +159,9 @@ func TestBreakdownRejectsUnknownInput(t *testing.T) {
 // dim 을 비우면 total 로 본다 — 가장 흔한 호출이 기본값이어야 한다.
 func TestBreakdownDefaultsToTotal(t *testing.T) {
 	f := newFixture(t)
-	f.write(store.Batch{Rollups: []rollup.Row{
-		rollupRow(time.Date(2026, 8, 10, 1, 0, 0, 0, time.UTC), rollup.DimTotal, "", rollup.Bucket{CostUSD: 5}),
-		rollupRow(time.Date(2026, 8, 10, 1, 0, 0, 0, time.UTC), rollup.DimVendor, "codex", rollup.Bucket{CostUSD: 5}),
+	f.write(testBatch{Rollups: []testRollupRow{
+		rollupRow(time.Date(2026, 8, 10, 1, 0, 0, 0, time.UTC), testDimTotal, "", testRollupBucket{CostUSD: 5}),
+		rollupRow(time.Date(2026, 8, 10, 1, 0, 0, 0, time.UTC), testDimVendor, "codex", testRollupBucket{CostUSD: 5}),
 	}})
 
 	rows, err := f.reader.Breakdown(context.Background(), BreakdownQuery{TZ: seoul})

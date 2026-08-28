@@ -7,9 +7,7 @@ import (
 	"time"
 
 	"github.com/your-org/pulsemetry/internal/event"
-	"github.com/your-org/pulsemetry/internal/rollup"
 	"github.com/your-org/pulsemetry/internal/session"
-	"github.com/your-org/pulsemetry/internal/store"
 )
 
 // seedTZBoundary 는 "오늘" 의 경계를 시간대마다 다르게 잡아야만 통과하는 데이터를 넣는다.
@@ -23,17 +21,17 @@ import (
 //
 // 네 버킷을 아래처럼 놓으면 두 시간대의 합계가 어느 하나도 겹치지 않는다.
 func seedTZBoundary(f *fixture) {
-	rows := []rollup.Row{
+	rows := []testRollupRow{
 		// 서울의 오늘 아침 이전(= 서울 어제) / UTC 로도 어제
-		rollupRow(time.Date(2026, 8, 9, 2, 0, 0, 0, time.UTC), rollup.DimTotal, "", rollup.Bucket{CostUSD: 2, Prompts: 2}),
+		rollupRow(time.Date(2026, 8, 9, 2, 0, 0, 0, time.UTC), testDimTotal, "", testRollupBucket{CostUSD: 2, Prompts: 2}),
 		// 서울의 오늘 시작 직후(= 08-10 03:00 KST) / UTC 로는 어제
-		rollupRow(time.Date(2026, 8, 9, 18, 0, 0, 0, time.UTC), rollup.DimTotal, "", rollup.Bucket{CostUSD: 4, Prompts: 4}),
+		rollupRow(time.Date(2026, 8, 9, 18, 0, 0, 0, time.UTC), testDimTotal, "", testRollupBucket{CostUSD: 4, Prompts: 4}),
 		// 두 시간대 모두 오늘
-		rollupRow(time.Date(2026, 8, 10, 1, 0, 0, 0, time.UTC), rollup.DimTotal, "", rollup.Bucket{CostUSD: 1, Prompts: 1}),
+		rollupRow(time.Date(2026, 8, 10, 1, 0, 0, 0, time.UTC), testDimTotal, "", testRollupBucket{CostUSD: 1, Prompts: 1}),
 		// 서울의 어제 / UTC 로는 그저께 (어느 쪽 UTC 구간에도 안 들어간다)
-		rollupRow(time.Date(2026, 8, 8, 20, 0, 0, 0, time.UTC), rollup.DimTotal, "", rollup.Bucket{CostUSD: 8, Prompts: 8}),
+		rollupRow(time.Date(2026, 8, 8, 20, 0, 0, 0, time.UTC), testDimTotal, "", testRollupBucket{CostUSD: 8, Prompts: 8}),
 	}
-	f.write(store.Batch{Rollups: rows})
+	f.write(testBatch{Rollups: rows})
 }
 
 // UTC 자정으로 잘라 답하는 구현은 이 테스트를 통과할 수 없다.
@@ -188,32 +186,32 @@ func TestPreviousDaySpansDSTDay(t *testing.T) {
 func TestTodayDeltaPercent(t *testing.T) {
 	tests := []struct {
 		name          string
-		today         rollup.Bucket
-		yesterday     rollup.Bucket
+		today         testRollupBucket
+		yesterday     testRollupBucket
 		wantDelta     float64
 		wantHasBase   bool
 		wantTodayCost float64
 	}{
 		{
 			name:          "증가",
-			today:         rollup.Bucket{CostUSD: 15},
-			yesterday:     rollup.Bucket{CostUSD: 10},
+			today:         testRollupBucket{CostUSD: 15},
+			yesterday:     testRollupBucket{CostUSD: 10},
 			wantDelta:     50,
 			wantHasBase:   true,
 			wantTodayCost: 15,
 		},
 		{
 			name:          "감소",
-			today:         rollup.Bucket{CostUSD: 5},
-			yesterday:     rollup.Bucket{CostUSD: 10},
+			today:         testRollupBucket{CostUSD: 5},
+			yesterday:     testRollupBucket{CostUSD: 10},
 			wantDelta:     -50,
 			wantHasBase:   true,
 			wantTodayCost: 5,
 		},
 		{
 			name:          "오늘 0",
-			today:         rollup.Bucket{},
-			yesterday:     rollup.Bucket{CostUSD: 4},
+			today:         testRollupBucket{},
+			yesterday:     testRollupBucket{CostUSD: 4},
 			wantDelta:     -100,
 			wantHasBase:   true,
 			wantTodayCost: 0,
@@ -221,16 +219,16 @@ func TestTodayDeltaPercent(t *testing.T) {
 		{
 			// 0 으로 나누면 +Inf 이고 encoding/json 이 Inf 를 직렬화하지 못해 조회 전체가 깨진다.
 			name:          "어제 0 이면 증감률이 정의되지 않는다",
-			today:         rollup.Bucket{CostUSD: 3},
-			yesterday:     rollup.Bucket{},
+			today:         testRollupBucket{CostUSD: 3},
+			yesterday:     testRollupBucket{},
 			wantDelta:     0,
 			wantHasBase:   false,
 			wantTodayCost: 3,
 		},
 		{
 			name:          "둘 다 0",
-			today:         rollup.Bucket{},
-			yesterday:     rollup.Bucket{},
+			today:         testRollupBucket{},
+			yesterday:     testRollupBucket{},
 			wantDelta:     0,
 			wantHasBase:   false,
 			wantTodayCost: 0,
@@ -239,14 +237,14 @@ func TestTodayDeltaPercent(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
-			var rows []rollup.Row
+			var rows []testRollupRow
 			if !tc.today.IsZero() {
-				rows = append(rows, rollupRow(time.Date(2026, 8, 10, 1, 0, 0, 0, time.UTC), rollup.DimTotal, "", tc.today))
+				rows = append(rows, rollupRow(time.Date(2026, 8, 10, 1, 0, 0, 0, time.UTC), testDimTotal, "", tc.today))
 			}
 			if !tc.yesterday.IsZero() {
-				rows = append(rows, rollupRow(time.Date(2026, 8, 9, 1, 0, 0, 0, time.UTC), rollup.DimTotal, "", tc.yesterday))
+				rows = append(rows, rollupRow(time.Date(2026, 8, 9, 1, 0, 0, 0, time.UTC), testDimTotal, "", tc.yesterday))
 			}
-			f.write(store.Batch{Rollups: rows})
+			f.write(testBatch{Rollups: rows})
 
 			got, err := f.reader.Today(context.Background(), utc)
 			if err != nil {
@@ -271,8 +269,8 @@ func TestTodayDeltaPercent(t *testing.T) {
 
 func TestTodayCardsCoverFourMetrics(t *testing.T) {
 	f := newFixture(t)
-	f.write(store.Batch{Rollups: []rollup.Row{
-		rollupRow(time.Date(2026, 8, 10, 1, 0, 0, 0, time.UTC), rollup.DimTotal, "", rollup.Bucket{
+	f.write(testBatch{Rollups: []testRollupRow{
+		rollupRow(time.Date(2026, 8, 10, 1, 0, 0, 0, time.UTC), testDimTotal, "", testRollupBucket{
 			CostUSD: 2, InputTokens: 100, OutputTokens: 50, CacheReadTokens: 900,
 			SessionsStarted: 3, ActiveSeconds: 120,
 		}),
@@ -303,7 +301,7 @@ func TestTodayActiveAgents(t *testing.T) {
 	running := func(s *session.Session) { s.Status = session.StatusRunning; s.EndedAt = event.Opt[event.UnixSec]{} }
 	codex := func(s *session.Session) { s.Vendor = "codex" }
 
-	f.write(store.Batch{Sessions: []session.Session{
+	f.write(testBatch{Sessions: []session.Session{
 		newSession("s1", testNow.Add(-time.Hour), running),
 		newSession("s2", testNow.Add(-30*time.Minute), running),
 		newSession("s3", testNow.Add(-20*time.Minute), running, codex),

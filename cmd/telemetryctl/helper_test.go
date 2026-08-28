@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/your-org/pulsemetry/internal/event"
-	"github.com/your-org/pulsemetry/internal/rollup"
 	"github.com/your-org/pulsemetry/internal/session"
 	"github.com/your-org/pulsemetry/internal/store"
 )
@@ -45,7 +44,6 @@ func seed(t *testing.T, dataDir string, at time.Time) {
 	}()
 
 	sec := event.SecFromTime(at)
-	hour := event.HourOf(event.NanoFromTime(at))
 
 	batch := store.Batch{
 		Sessions: []session.Session{
@@ -69,20 +67,6 @@ func seed(t *testing.T, dataDir string, at time.Time) {
 				InputTokens: 400, OutputTokens: 90, Prompts: 1,
 			},
 		},
-		Rollups: []rollup.Row{
-			{Hour: hour, Dim: rollup.DimTotal, Key: "", Bucket: rollup.Bucket{
-				CostUSD: 1.75, InputTokens: 1600, OutputTokens: 430, CacheReadTokens: 90,
-				Prompts: 4, ToolCalls: 9, SessionsStarted: 2,
-			}},
-			{Hour: hour, Dim: rollup.DimVendor, Key: "claude_code", Bucket: rollup.Bucket{
-				CostUSD: 1.25, InputTokens: 1200, OutputTokens: 340, CacheReadTokens: 60,
-				Prompts: 3, ToolCalls: 7, SessionsStarted: 1,
-			}},
-			{Hour: hour, Dim: rollup.DimVendor, Key: "codex", Bucket: rollup.Bucket{
-				CostUSD: 0.5, InputTokens: 400, OutputTokens: 90, CacheReadTokens: 30,
-				Prompts: 1, ToolCalls: 2, SessionsStarted: 1,
-			}},
-		},
 		Events: []store.EventRecord{{
 			Event: event.Event{
 				Vendor: "claude_code", InstallationID: "inst-1",
@@ -97,28 +81,13 @@ func seed(t *testing.T, dataDir string, at time.Time) {
 	}
 }
 
-// seedProjectRollup 은 dim='project' 롤업 한 행을 넣는다. key 가 해시라 표에 이름이
-// 나오려면 dashboard 가 sessions 에서 project_name 을 찾아 붙여야 한다.
+// seedProjectRollup 은 프로젝트 차원 집계의 씨앗이다.
+//
+// v3 에는 rollup_hourly 가 없고 조회 시점 GROUP BY 로 만든다 (ADR 0009). 이 헬퍼가 무엇을
+// 넣어야 하는지는 조회 계층을 v3 로 옮기는 PROJ-87 이 정한다 — 지금은 세션만 넣는다.
 func seedProjectRollup(t *testing.T, dataDir string, at time.Time) {
 	t.Helper()
-	db, err := store.Open(context.Background(), store.PathIn(dataDir))
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
-	defer func() {
-		if err := db.Close(); err != nil {
-			t.Errorf("store.Close: %v", err)
-		}
-	}()
-
-	_, err = db.Write(context.Background(), store.Batch{Rollups: []rollup.Row{{
-		Hour: event.HourOf(event.NanoFromTime(at)),
-		Dim:  rollup.DimProject, Key: "hash-a",
-		Bucket: rollup.Bucket{CostUSD: 1.25, Prompts: 3, ToolCalls: 7, SessionsStarted: 1},
-	}}})
-	if err != nil {
-		t.Fatalf("store.Write: %v", err)
-	}
+	seed(t, dataDir, at)
 }
 
 // runResult 는 명령 하나의 stdout·stderr·종료 코드다.

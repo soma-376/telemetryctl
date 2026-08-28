@@ -7,7 +7,6 @@ import (
 
 	"github.com/your-org/pulsemetry/internal/event"
 	"github.com/your-org/pulsemetry/internal/session"
-	"github.com/your-org/pulsemetry/internal/store"
 )
 
 func seedSessions(f *fixture) {
@@ -15,7 +14,7 @@ func seedSessions(f *fixture) {
 		s.Status = session.StatusRunning
 		s.EndedAt = event.Opt[event.UnixSec]{}
 	}
-	f.write(store.Batch{Sessions: []session.Session{
+	f.write(testBatch{Sessions: []session.Session{
 		newSession("s-old", testNow.Add(-72*time.Hour)),
 		newSession("s-mid", testNow.Add(-24*time.Hour), func(s *session.Session) {
 			s.Vendor = "codex"
@@ -147,7 +146,7 @@ func TestSessionDetail(t *testing.T) {
 			{ServerName: "postgres", ConnectFailures: 3},
 		}
 	})
-	f.write(store.Batch{Sessions: []session.Session{s}})
+	f.write(testBatch{Sessions: []session.Session{s}})
 
 	got, err := f.reader.Session(context.Background(), "s-detail")
 	if err != nil {
@@ -221,7 +220,7 @@ func TestSessionToolTimelineTruncates(t *testing.T) {
 			ToolName: "Read",
 		}
 	}
-	f.write(store.Batch{Sessions: []session.Session{
+	f.write(testBatch{Sessions: []session.Session{
 		newSession("s-long", testNow.Add(-time.Hour), func(s *session.Session) { s.Tools = tools }),
 	}})
 
