@@ -1,8 +1,19 @@
 <script lang="ts">
   import type { HeroData } from "../chart";
+  import { labelStep } from "../chart";
+  import EmptyState from "../../../lib/components/EmptyState.svelte";
 
   // 히어로 카드 — 스택 바 자체가 벤더 분해라 별도 총계/점유율 카드가 필요 없다.
   let { hero }: { hero: HeroData } = $props();
+
+  // 라벨을 몇 개 걸러 보여줄지는 컬럼 폭을 알아야 정할 수 있어 렌더 폭을 잰다.
+  let plotWidth = $state(0);
+  const step = $derived(
+    labelStep(
+      hero.bars.map((b) => b.label),
+      plotWidth / (hero.bars.length || 1),
+    ),
+  );
 </script>
 
 <div
@@ -67,42 +78,66 @@
         <span style="flex:1"></span>
         <span class="text-text-muted" style="font-size:11.5px">{hero.peakNote}</span>
       </div>
-      <div
-        class="grid items-end"
-        style="flex:1;grid-template-columns:{hero.gridCols};gap:{hero.gridGap};min-height:148px"
-      >
-        {#each hero.bars as b, i (i)}
-          <div class="flex flex-col items-center" style="gap:8px">
+      <!-- 막대는 기간마다 버킷 수만큼 생성되고 값만 0이 된다. 따라서 비어 있음의
+           판정은 bars.length 가 아니라 grandTotal 이다. -->
+      {#if hero.grandTotal === 0}
+        <EmptyState
+          title="이 기간에 기록된 사용량이 없어요"
+          description={"다른 기간을 선택하거나, CLI 가 연결되어 있는지 확인해보세요."}
+        />
+      {:else}
+        <div
+          class="grid items-stretch"
+          style="flex:1;grid-template-columns:{hero.gridCols};gap:{hero.gridGap};min-height:148px"
+        >
+          {#each hero.bars as b, i (i)}
+            <div class="flex h-full flex-col items-center" style="gap:8px">
+              <span
+                class="font-semibold whitespace-nowrap"
+                style="font-size:{b.valueSize};color:{b.valueFg};font-variant-numeric:tabular-nums"
+              >
+                {b.total}
+              </span>
+              <!-- 값 → 높이 매핑은 flex-grow 로 한다. 위 여백과 채움이 비율대로
+                   공간을 나누므로 픽셀 계산도, 반올림 누적도 없다. -->
+              <span class="flex w-full flex-col" style="flex:1;min-height:0">
+                <span style="flex:{100 - b.fillPct} 1 0"></span>
+                <span class="flex w-full flex-col" style="flex:{b.fillPct} 1 0">
+                  {#each b.parts as pt, j (j)}
+                    <!-- 조각 사이 2px 간격은 gap 이 아니라 border 로 낸다. gap 은
+                         고정 픽셀이라 막대가 짧아지면 합이 넘치지만, border 는
+                         box-sizing:border-box 아래에서 조각 안쪽을 깎는다. -->
+                    <span
+                      class="w-full"
+                      style="flex:{pt.weight} 1 0;background:{pt.color};border-radius:{pt.radius};{j >
+                      0
+                        ? 'border-top:2px solid var(--color-surface)'
+                        : ''}"
+                    ></span>
+                  {/each}
+                </span>
+              </span>
+            </div>
+          {/each}
+        </div>
+        <div
+          bind:clientWidth={plotWidth}
+          class="grid"
+          style="grid-template-columns:{hero.gridCols};gap:{hero.gridGap};margin-top:9px;padding-top:9px;border-top:1px solid #f1ece4"
+        >
+          {#each hero.bars as b, i (i)}
+            {@const isLast = i === hero.bars.length - 1}
             <span
-              class="font-semibold whitespace-nowrap"
-              style="font-size:{b.valueSize};color:{b.valueFg};font-variant-numeric:tabular-nums"
+              class="text-center whitespace-nowrap"
+              style="font-size:11px;color:{b.labelFg};font-weight:{b.labelWeight};overflow:visible"
             >
-              {b.total}
+              {isLast || (i % step === 0 && hero.bars.length - 1 - i >= step)
+                ? b.label
+                : ""}
             </span>
-            <span class="flex w-full flex-col justify-end" style="gap:2px">
-              {#each b.parts as pt, j (j)}
-                <span
-                  class="w-full flex-none"
-                  style="height:{pt.height};background:{pt.color};border-radius:{pt.radius}"
-                ></span>
-              {/each}
-            </span>
-          </div>
-        {/each}
-      </div>
-      <div
-        class="grid"
-        style="grid-template-columns:{hero.gridCols};gap:{hero.gridGap};margin-top:9px;padding-top:9px;border-top:1px solid #f1ece4"
-      >
-        {#each hero.bars as b, i (i)}
-          <span
-            class="text-center whitespace-nowrap"
-            style="font-size:11px;color:{b.labelFg};font-weight:{b.labelWeight};overflow:visible"
-          >
-            {b.label}
-          </span>
-        {/each}
-      </div>
+          {/each}
+        </div>
+      {/if}
     </div>
   </div>
 </div>

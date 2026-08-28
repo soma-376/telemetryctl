@@ -17,7 +17,10 @@ export type SeriesKey = (typeof SERIES)[number];
 export const RETAIN_DAYS = 400;
 export const HOURLY_DAYS = 90;
 
-const VENDOR_META: Record<SeriesKey, { plan: string; topModel: string; rate: number }> = {
+const VENDOR_META: Record<
+  SeriesKey,
+  { plan: string; topModel: string; rate: number }
+> = {
   claude: { plan: "Max 20x", topModel: "Sonnet 4.5", rate: 0.0274 },
   codex: { plan: "Pro", topModel: "GPT-5.3-Codex", rate: 0.0287 },
   gemini: { plan: "Ultra", topModel: "Gemini 3.1 Pro", rate: 0.015 },
@@ -28,7 +31,8 @@ const MIN_PER_K = 3.73;
 
 // ── ISO 날짜 유틸 (문자열 기반이라 period.svelte.ts 의 Date 유틸과 별도) ──────
 const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
-const toIso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const toIso = (d: Date) =>
+  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const parseIso = (s: string) => {
   const p = s.split("-").map(Number);
   return new Date(p[0], p[1] - 1, p[2]);
@@ -89,7 +93,8 @@ function dayUsage(isoDate: string): Parts {
 }
 
 function hourUsage(isoDate: string, hour: number): Parts {
-  if (isoDate > TODAY || (isoDate === TODAY && hour > NOW_HOUR)) return [0, 0, 0];
+  if (isoDate > TODAY || (isoDate === TODAY && hour > NOW_HOUR))
+    return [0, 0, 0];
   const peakish = hour >= 12 && hour <= 18 ? 1.6 : 0.55;
   const seed = `${isoDate}h${hour}`;
   return splitUsage(seed, Math.round(4 * peakish * (0.3 + hash(seed) * 1.3)));
@@ -213,7 +218,8 @@ export function unitText(unit: Rung["unit"], size: number) {
       caption: `${size > 1 ? `${size}일` : "일별"} 단위 · 벤더 구성`,
       avg: `${size > 1 ? `${size}일` : "일"} 평균`,
     };
-  if (unit === "week") return { caption: "주 단위 · 벤더 구성", avg: "주 평균" };
+  if (unit === "week")
+    return { caption: "주 단위 · 벤더 구성", avg: "주 평균" };
   return { caption: "월 단위 · 벤더 구성", avg: "월 평균" };
 }
 
@@ -226,7 +232,38 @@ export interface HeroBar {
   valueFg: string;
   labelFg: string;
   labelWeight: number;
-  parts: { color: string; height: string; radius: string }[];
+  /** 최대 버킷 대비 막대 높이(0~100). 픽셀이 아니라 비율이라 플롯 크기를 따라간다. */
+  fillPct: number;
+  /** weight 는 원값 — 렌더에서 flex-grow 로 넘겨 조각 비율을 flexbox 가 배분한다. */
+  parts: { color: string; weight: number; radius: string }[];
+}
+
+/**
+ * 라벨을 몇 개 걸러 보여줄지. 막대 개수가 아니라 실제로 들어갈 폭으로 정한다 —
+ * 개수로 어림하면 긴 라벨("12월 31일")이 겹치거나 자리가 남는데도 지워진다.
+ * 컬럼 폭은 렌더 시점에만 알 수 있어 컴포넌트가 재서 넘긴다.
+ */
+export function labelStep(
+  labels: string[],
+  colWidth: number,
+  fontSize = 11,
+): number {
+  if (colWidth <= 0) return 1;
+  const widest = labels.reduce(
+    (m, s) => Math.max(m, textWidth(s, fontSize)),
+    0,
+  );
+  if (widest === 0) return 1;
+  return Math.max(1, Math.ceil((widest + 6) / colWidth));
+}
+
+// 한글·CJK 는 글자당 약 1em, 그 외는 약 0.6em 으로 근사한다.
+function textWidth(s: string, fontSize: number): number {
+  let w = 0;
+  for (const ch of s) {
+    w += /[　-鿿가-힯]/.test(ch) ? fontSize : fontSize * 0.6;
+  }
+  return w;
 }
 
 export interface HeroData {
@@ -246,18 +283,23 @@ export interface HeroData {
   cents: number[];
 }
 
-const PLOT_PX = 130;
-
 export function heroData(start: string, end: string): HeroData {
   const bk = buildBuckets(start, end);
   const items = bk.items;
   const text = unitText(bk.unit, bk.size);
 
   const maxBucket =
-    items.reduce((m, b) => Math.max(m, b.parts[0] + b.parts[1] + b.parts[2]), 0) || 1;
-  const perVendor = SERIES.map((_, i) => items.reduce((s, b) => s + b.parts[i], 0));
+    items.reduce(
+      (m, b) => Math.max(m, b.parts[0] + b.parts[1] + b.parts[2]),
+      0,
+    ) || 1;
+  const perVendor = SERIES.map((_, i) =>
+    items.reduce((s, b) => s + b.parts[i], 0),
+  );
   const grandTotal = perVendor.reduce((s, v) => s + v, 0);
-  const cents = SERIES.map((k, i) => Math.round(perVendor[i] * VENDOR_META[k].rate * 100));
+  const cents = SERIES.map((k, i) =>
+    Math.round(perVendor[i] * VENDOR_META[k].rate * 100),
+  );
   const cost = cents.reduce((s, c) => s + c, 0) / 100;
   const minutes = Math.round(grandTotal * MIN_PER_K);
   const peakIdx = items.reduce(
@@ -270,12 +312,11 @@ export function heroData(start: string, end: string): HeroData {
   );
 
   // 바가 많으면 라벨을 솎아낸다 — 마지막 라벨은 항상 남긴다.
-  const step = items.length > 18 ? 4 : items.length > 11 ? 2 : 1;
+  // 값 라벨은 의도적으로 선별한다 — 모든 막대에 숫자를 얹으면 읽히지 않는다.
   const dense = items.length > 14;
   // 한 달 안에서는 월 접두가 소음이다.
   const sameMonth = parseIso(start).getMonth() === parseIso(end).getMonth();
   const shortLabel = bk.unit === "day" && sameMonth && items.length > 11;
-  const last = items.length - 1;
 
   return {
     caption: text.caption,
@@ -285,28 +326,40 @@ export function heroData(start: string, end: string): HeroData {
     totalCost: `$${cost.toFixed(2)}`,
     totalTime: formatDuration(minutes),
     peakNote: `최다 ${items[peakIdx].label || items[peakIdx].key} · ${
-      items[peakIdx].parts[0] + items[peakIdx].parts[1] + items[peakIdx].parts[2]
+      items[peakIdx].parts[0] +
+      items[peakIdx].parts[1] +
+      items[peakIdx].parts[2]
     }k`,
     gridCols: `repeat(${items.length},minmax(0,1fr))`,
     gridGap: `${items.length > 18 ? 4 : items.length > 11 ? 6 : 10}px`,
-    legend: SERIES.map((k) => ({ name: AGENT_STYLE[k].name, color: AGENT_STYLE[k].fg })),
+    legend: SERIES.map((k) => ({
+      name: AGENT_STYLE[k].name,
+      color: AGENT_STYLE[k].fg,
+    })),
     perVendor,
     grandTotal,
     cents,
     bars: items.map((b, bi) => {
-      const shown = bi === last || (bi % step === 0 && (step === 1 || last - bi > 1));
       const total = b.parts[0] + b.parts[1] + b.parts[2];
       const peak = bi === peakIdx;
-      const stackPx = total ? Math.max(4, Math.round((total / maxBucket) * PLOT_PX)) : 0;
+      // 높이는 픽셀이 아니라 비율로 넘긴다. 렌더는 flex-grow 로 배분하므로
+      // 플롯이 커지면 같이 커지고, 조각 합이 막대 높이를 넘을 수 없다.
       const parts = SERIES.map((k, i) => ({ k, v: b.parts[i] }))
         .filter((p) => p.v > 0)
         .map((p, i, arr) => ({
           color: AGENT_STYLE[p.k].fg,
-          height: `${Math.max(3, Math.round((p.v / total) * stackPx))}px`,
-          radius: i === 0 ? "4px 4px 0 0" : i === arr.length - 1 ? "0 0 3px 3px" : "0",
+          weight: p.v,
+          radius:
+            i === 0
+              ? "4px 4px 0 0"
+              : i === arr.length - 1
+                ? "0 0 3px 3px"
+                : "0",
         }));
       return {
-        label: shown ? (shortLabel ? `${parseIso(b.key).getDate()}일` : b.label) : "",
+        // 라벨 솎아내기는 컬럼 폭을 아는 렌더 시점에 정한다(labelStep).
+        label: shortLabel ? `${parseIso(b.key).getDate()}일` : b.label,
+        fillPct: total ? (total / maxBucket) * 100 : 0,
         total: !total || (dense && !peak) ? "" : `${total}k`,
         valueSize: dense ? "10px" : "11px",
         valueFg: peak ? "var(--color-text)" : "var(--color-text-muted)",
@@ -332,7 +385,9 @@ export interface VendorRow {
 export function vendorRows(hero: HeroData): VendorRow[] {
   return SERIES.map((k, i) => {
     const tok = hero.perVendor[i];
-    const share = hero.grandTotal ? Math.round((tok / hero.grandTotal) * 100) : 0;
+    const share = hero.grandTotal
+      ? Math.round((tok / hero.grandTotal) * 100)
+      : 0;
     return {
       id: k,
       plan: VENDOR_META[k].plan,
@@ -385,7 +440,9 @@ function sessionsOn(isoDate: string): ActivityRow[] {
     const mins = 12 + Math.floor(hash(seed + "d") * 60);
     const running = isoDate === TODAY && i < 2;
     const dur = formatDuration(mins);
-    const stage = running ? STAGES[Math.floor(hash(seed + "g") * STAGES.length)] : "";
+    const stage = running
+      ? STAGES[Math.floor(hash(seed + "g") * STAGES.length)]
+      : "";
     out.push({
       date: isoDate,
       time: `${pad(hh)}:${pad(mm)}`,
