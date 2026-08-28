@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"path/filepath"
 	"strings"
@@ -106,8 +107,11 @@ func TestFlushFailureRetriesInsteadOfLosing(t *testing.T) {
 
 // TestAssemblerPruneStopsSnapshotResurrection 은 계약 4 를 고정한다.
 //
-// 조립기 메모리를 정리하지 않으면 보존 정책이 지운 타임라인을 다음 스냅샷이 통째로
-// 되살린다. 시계를 sessionTTL 너머로 밀어 정리가 실제로 일어나는지 본다.
+// 조립기 메모리를 정리하지 않으면 세션 맵이 무한히 자라고, 보존 정책이 지운 세션을 다음
+// 스냅샷이 되살린다. 시계를 sessionTTL 너머로 밀어 정리가 실제로 일어나는지 본다.
+//
+// **정리는 반드시 저장 뒤에 온다.** 앞에 두면 마감되는 순간 이미 TTL 을 넘긴 세션
+// (데몬이 몇 시간 잠들었다 깨는 경우)이 스냅샷에 들어가기 전에 사라져 한 번도 저장되지 못한다.
 func TestAssemblerPruneStopsSnapshotResurrection(t *testing.T) {
 	db := openTestStore(t)
 	defer db.Close()
@@ -121,13 +125,12 @@ func TestAssemblerPruneStopsSnapshotResurrection(t *testing.T) {
 	p.submit(cmdSessions)
 	waitFor(t, "세션 저장", func() bool { return p.Stats().SessionsWritten > 0 })
 
-	if n := countRows(t, db.SQL(), `SELECT COUNT(*) FROM tool_events`); n != 3 {
-		t.Fatalf("tool_events = %d행, want 3", n)
+	if n := countRows(t, db.SQL(), `SELECT COUNT(*) FROM tool_calls`); n != 3 {
+		t.Fatalf("tool_calls = %d행, want 3", n)
 	}
 
 	// 시계를 sessionTTL 너머로 민다. 이 틱에서 세션이 마감되고, 마감된 세션이 저장된
-	// **뒤에** 조립기 메모리에서 정리된다. 순서가 반대면 마감과 동시에 TTL 을 넘긴
-	// 세션이 store 에 한 번도 쓰이지 못하고 사라진다.
+	// **뒤에** 조립기 메모리에서 정리된다.
 	nowNano.Store(time.Unix(fixtureUnix, 0).Add(sessionMemoryTTL + time.Hour).UTC().UnixNano())
 	before := p.Stats().SessionsWritten
 	p.submit(cmdSessions)
@@ -135,29 +138,29 @@ func TestAssemblerPruneStopsSnapshotResurrection(t *testing.T) {
 		return p.Stats().SessionsWritten > before && strings.Contains(logs.String(), "조립기 정리")
 	})
 
-	var status string
-	if err := db.SQL().QueryRow(`SELECT status FROM sessions`).Scan(&status); err != nil {
+	// v3 는 세션 상태를 저장하지 않는다. 마감 결과는 ended_at 으로만 드러난다 (ADR 0009).
+	var endedAt sql.NullInt64
+	if err := db.SQL().QueryRow(`SELECT ended_at FROM sessions`).Scan(&endedAt); err != nil {
 		t.Fatal(err)
 	}
-	// 픽스처의 마지막 툴 이벤트가 실패라 ADR 0005 휴리스틱이 abandoned 로 본다.
-	// 여기서 중요한 것은 값 자체가 아니라 **마감 결과가 저장됐다**는 사실이다.
-	if status == "running" {
-		t.Error("status = running — 정리 전에 마감 결과가 저장되어야 한다")
+	if !endedAt.Valid {
+		t.Error("ended_at 이 NULL — 정리 전에 마감 결과가 저장되어야 한다")
 	}
 
-	// 이제 보존 정책이 타임라인을 지운 상황을 흉내 낸다.
-	if _, err := db.SQL().Exec(`DELETE FROM tool_events`); err != nil {
-		t.Fatal(err)
+	// 이제 보존 정책이 승격 행을 지운 상황을 흉내 낸다. 자식부터 지운다 — NO ACTION 이다.
+	for _, q := range []string{`DELETE FROM file_changes`, `DELETE FROM tool_calls`} {
+		if _, err := db.SQL().Exec(q); err != nil {
+			t.Fatal(err)
+		}
 	}
 	before = p.Stats().SessionsWritten
 	p.submit(cmdSessions)
 	p.submit(cmdFlush)
 	waitFor(t, "정리 후 세션 틱", func() bool { return p.Stats().SessionsWritten == before })
 
-	// 조립기가 그 세션을 더 이상 들고 있지 않으므로 스냅샷에도 없고, 지워진 타임라인이
-	// 되살아나지 않는다. 이것이 계약 4 가 요구하는 결과다.
-	if n := countRows(t, db.SQL(), `SELECT COUNT(*) FROM tool_events`); n != 0 {
-		t.Errorf("tool_events = %d행, want 0 — 보존 정책이 지운 타임라인을 스냅샷이 되살렸다", n)
+	// 조립기가 그 세션을 더 이상 들고 있지 않으므로 스냅샷에도 없다.
+	if n := countRows(t, db.SQL(), `SELECT COUNT(*) FROM tool_calls`); n != 0 {
+		t.Errorf("tool_calls = %d행, want 0 — 보존 정책이 지운 행을 스냅샷이 되살렸다", n)
 	}
 	if n := countRows(t, db.SQL(), `SELECT COUNT(*) FROM sessions`); n != 1 {
 		t.Errorf("sessions = %d행, want 1 — 조립기 정리가 저장된 세션까지 지우면 안 된다", n)
