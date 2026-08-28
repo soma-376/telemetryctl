@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -221,4 +222,129 @@ func newSession(id string, at time.Time) session.Session {
 		ToolCalls:     2,
 		CostUSD:       0.5,
 	}
+}
+
+// seedUsage 는 일곱 테이블을 한 번에 채우는 최소 픽스처다. 세션 하나·턴 하나에
+// LLM 호출·도구 호출·파일 변경이 하나씩 달린다.
+func seedUsage(t *testing.T, db *DB, at time.Time) {
+	t.Helper()
+	const path = "/Users/jy/dev/projects/soma-376/telemetryctl/internal/store/write.go"
+
+	mustWrite(t, db, Batch{
+		Sessions: []session.Session{newSession("sess-1", at)},
+		Events: []EventRecord{
+			evrec("claude_code.user_prompt", at, 0, inTurn("p1"), promptBody("고쳐 줘")),
+			evrec("claude_code.api_request", at, 1, inTurn("p1"), cost(0.5), tokens(100, 20)),
+			evrec("claude_code.tool_result", at, 2,
+				inTurn("p1"), call("claude_code:toolu_1"), toolName("Edit"), succeeded(false),
+				errMessage("EACCES", "/etc/hosts 를 열 수 없다"),
+				targetPath(path), fileChange(session.OperationModify, path)),
+		},
+	})
+}
+
+// userTables 는 도메인 테이블 이름이다. meta 는 보존 대상이 아니라 제외한다.
+func userTables(t *testing.T, db *DB) []string {
+	t.Helper()
+	rows, err := db.SQL().QueryContext(context.Background(),
+		`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+		 ORDER BY name`)
+	if err != nil {
+		t.Fatalf("테이블 목록 조회: %v", err)
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("테이블 이름 읽기: %v", err)
+		}
+		out = append(out, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("테이블 목록 조회: %v", err)
+	}
+	return out
+}
+
+// tableColumns 는 테이블의 컬럼 이름이다.
+func tableColumns(t *testing.T, db *DB, table string) []string {
+	t.Helper()
+	rows, err := db.SQL().QueryContext(context.Background(),
+		`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		t.Fatalf("%s 컬럼 조회: %v", table, err)
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("%s 컬럼 이름 읽기: %v", table, err)
+		}
+		out = append(out, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("%s 컬럼 조회: %v", table, err)
+	}
+	return out
+}
+
+// findText 는 DB 의 **모든 테이블·모든 컬럼** 에서 needle 을 찾아 "테이블.컬럼" 목록을 준다.
+//
+// purge 를 지운 컬럼 세 개만 확인하면 "다른 자리에도 원문이 남아 있다"를 영원히 놓친다.
+// 컬럼이 늘어나도 이 헬퍼는 그대로 새 컬럼을 훑는다.
+func findText(t *testing.T, db *DB, needle string) []string {
+	t.Helper()
+	var hits []string
+	for _, table := range userTables(t, db) {
+		for _, col := range tableColumns(t, db, table) {
+			var n int
+			q := `SELECT COUNT(*) FROM "` + table + `" WHERE instr(CAST("` + col + `" AS TEXT), ?) > 0`
+			if err := db.SQL().QueryRowContext(context.Background(), q, needle).Scan(&n); err != nil {
+				t.Fatalf("%s.%s 검색: %v", table, col, err)
+			}
+			if n > 0 {
+				hits = append(hits, fmt.Sprintf("%s.%s(%d행)", table, col, n))
+			}
+		}
+	}
+	return hits
+}
+
+// snapshotRows 는 모든 테이블의 전체 행을 문자열로 뜬다. 롤백이 "행 수만 같은" 것이 아니라
+// **값까지 그대로**임을 확인하려면 계수만으로는 부족하다.
+func snapshotRows(t *testing.T, db *DB) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, table := range userTables(t, db) {
+		cols := tableColumns(t, db, table)
+		quoted := make([]string, len(cols))
+		for i, c := range cols {
+			quoted[i] = `quote("` + c + `")`
+		}
+		q := `SELECT ` + strings.Join(quoted, ` || '|' || `) + ` FROM "` + table + `" ORDER BY 1`
+		rows, err := db.SQL().QueryContext(context.Background(), q)
+		if err != nil {
+			t.Fatalf("%s 덤프: %v", table, err)
+		}
+		var lines []string
+		for rows.Next() {
+			var line any
+			if err := rows.Scan(&line); err != nil {
+				rows.Close()
+				t.Fatalf("%s 덤프 읽기: %v", table, err)
+			}
+			lines = append(lines, fmt.Sprintf("%v", line))
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			t.Fatalf("%s 덤프: %v", table, err)
+		}
+		rows.Close()
+		out[table] = strings.Join(lines, "\n")
+	}
+	return out
 }
