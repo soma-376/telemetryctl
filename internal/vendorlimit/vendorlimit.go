@@ -27,8 +27,13 @@
 package vendorlimit
 
 import (
+	"context"
 	"math"
+	"net/http"
+	"sync"
 	"time"
+
+	"github.com/your-org/pulsemetry/internal/hostenv"
 )
 
 // Vendor 는 조회 대상 도구다. 값은 로컬 파이프라인의 vendor 표기와 같아야 한다
@@ -224,4 +229,119 @@ func sanitizeRatio(r float64) float64 {
 		return 0
 	}
 	return r
+}
+
+// Options 는 Collect 의 구성이다. 영값이 곧 운영 기본값이라 호출자가 아무것도 채우지
+// 않아도 동작한다.
+type Options struct {
+	// HomeDir 는 자격증명 파일을 찾을 홈 디렉터리다. 비어 있으면 hostenv 로 판별한다.
+	HomeDir string
+	// Client 는 조회에 쓸 HTTP 클라이언트다. 비어 있으면 타임아웃이 걸린 기본 클라이언트다.
+	// **타임아웃 없는 클라이언트를 넘기지 않는다** — 조회 하나가 호출자를 영원히 잡는다.
+	Client *http.Client
+	// Vendors 는 조회 대상이다. 비어 있으면 SupportedVendors 전부다.
+	// 지원하지 않는 벤더(Gemini CLI·Cursor)는 조용히 건너뛴다.
+	Vendors []Vendor
+
+	// now 는 테스트가 시각을 고정하기 위한 자리다.
+	now func() time.Time
+	// baseURLs 는 테스트가 모의 서버를 가리키기 위한 자리다. 비공개 필드라 패키지 밖에서는
+	// 채울 수 없다 — 운영 코드가 조회 대상을 바꿔치기할 길을 열어 두지 않는다.
+	baseURLs map[Vendor]string
+}
+
+// Collect 는 벤더별 사용 한도를 모아 온다.
+//
+// **error 를 반환하지 않는다.** 실패는 벤더마다 State·Reason 으로 표현된다 — 자격증명이
+// 없는 벤더 하나 때문에 다른 벤더의 숫자까지 화면에서 사라지면 안 되고, 애초에 "로그인하지
+// 않음" 은 오류가 아니라 정상 상태다.
+//
+// 벤더별 조회는 서로 독립적인 네트워크 호출이므로 동시에 던진다. 결과 순서는 요청 순서를
+// 유지한다 — 화면 카드가 매 조회마다 자리를 바꾸면 안 된다.
+func Collect(ctx context.Context, opts Options) Snapshot {
+	now := opts.now
+	if now == nil {
+		now = time.Now
+	}
+	observed := now()
+
+	adapters := adaptersFor(opts.Vendors, opts.baseURLs)
+	snap := Snapshot{Results: make([]Result, len(adapters)), ObservedAt: formatTime(observed)}
+
+	home, err := resolveHome(opts.HomeDir)
+	if err != nil {
+		// 홈을 모르면 어느 벤더의 자격증명도 찾을 수 없다. 그래도 모양은 유지한다.
+		for i, a := range adapters {
+			snap.Results[i] = unavailable(a.vendor(), ReasonInternal, "홈 디렉터리를 판별하지 못했다", observed)
+		}
+		return snap
+	}
+
+	client := opts.Client
+	if client == nil {
+		client = newHTTPClient()
+	}
+	env := probeEnv{home: home, client: client, now: now}
+
+	var wg sync.WaitGroup
+	for i, a := range adapters {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			snap.Results[i] = safeProbe(ctx, a, env)
+		}()
+	}
+	wg.Wait()
+	return snap
+}
+
+// adaptersFor 는 요청된 벤더의 어댑터를 SupportedVendors 순서로 고른다.
+func adaptersFor(want []Vendor, baseURLs map[Vendor]string) []adapter {
+	all := []adapter{
+		claudeAdapter{baseURL: baseURLs[VendorClaudeCode]},
+		codexAdapter{baseURL: baseURLs[VendorCodex]},
+	}
+	if len(want) == 0 {
+		return all
+	}
+	requested := make(map[Vendor]struct{}, len(want))
+	for _, v := range want {
+		requested[v] = struct{}{}
+	}
+	out := make([]adapter, 0, len(all))
+	for _, a := range all {
+		if _, ok := requested[a.vendor()]; ok {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// resolveHome 은 자격증명 파일을 찾을 홈 디렉터리를 정한다.
+func resolveHome(override string) (string, error) {
+	if override != "" {
+		return override, nil
+	}
+	env, err := hostenv.Detect()
+	if err != nil {
+		return "", err
+	}
+	return env.HomeDir, nil
+}
+
+// safeProbe 는 어댑터의 패닉이 다른 벤더의 결과까지 지우지 않게 막는다.
+//
+// 어댑터는 남의 JSON 을 다루므로 우리가 예상하지 못한 모양에서 깨질 수 있고, 고루틴 안의
+// 패닉은 **프로세스 전체를 죽인다.** 티켓이 요구하는 "해당 벤더만 unavailable" 을 지키려면
+// 이 그물이 필요하다.
+//
+// 패닉 값을 Detail 에 싣지 않는다. 무엇이 담겨 있는지 보장할 수 없고, 토큰을 다루던
+// 자리에서 난 패닉이면 그 값이 곧 토큰일 수 있다.
+func safeProbe(ctx context.Context, a adapter, env probeEnv) (res Result) {
+	defer func() {
+		if r := recover(); r != nil {
+			res = unavailable(a.vendor(), ReasonInternal, "조회 중 예기치 않게 실패했다", env.now())
+		}
+	}()
+	return a.probe(ctx, env)
 }
