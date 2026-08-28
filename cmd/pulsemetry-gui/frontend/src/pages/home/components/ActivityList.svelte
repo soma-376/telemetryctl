@@ -1,6 +1,7 @@
 <script lang="ts">
   import AgentBadge from "../../../lib/components/AgentBadge.svelte";
   import Pill from "../../../lib/components/Pill.svelte";
+  import EmptyState from "../../../lib/components/EmptyState.svelte";
   import type { ActivityData } from "../chart";
 
   let {
@@ -44,6 +45,12 @@
     </button>
   </div>
 
+  {#if activity.rows.length === 0}
+    <EmptyState
+      title="표시할 세션이 없어요"
+      description="선택한 기간에 실행된 세션이 없습니다."
+    />
+  {/if}
   {#each activity.rows as t, i (t.date + t.time + t.title)}
     {@const st = STATUS[t.state]}
     <div

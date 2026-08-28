@@ -2,6 +2,7 @@
   import type { ActivitySession } from "../data";
   import SessionRow from "./SessionRow.svelte";
   import ChevronDownIcon from "../../../lib/icons/ChevronDownIcon.svelte";
+  import EmptyState from "../../../lib/components/EmptyState.svelte";
 
   let {
     sessions,
@@ -31,19 +32,28 @@
     <span style="text-align:right">비용</span>
     <span>상태</span>
   </div>
-  {#each sessions as session, i (session)}
-    <SessionRow
-      {session}
-      selected={selectedIndex === i}
-      onOpen={() => onOpen?.(i)}
+  {#if sessions.length === 0}
+    <!-- 첫 실행(수집 이력 자체가 없음)과 기간에만 없음은 문구가 달라야 한다.
+         구분하려면 dashboard.Status() 가 필요해서 지금은 후자로 적어둔다. -->
+    <EmptyState
+      title="세션이 없어요"
+      description={"선택한 기간에 실행된 세션이 없습니다.\n기간을 넓히거나 필터를 지워보세요."}
     />
-  {/each}
-  <button
-    type="button"
-    class="text-text-secondary hover:text-text flex w-full cursor-pointer items-center justify-center border-none bg-transparent"
-    style="gap:7px;padding:14px;font-size:12.5px"
-  >
-    더 불러오기
-    <ChevronDownIcon strokeWidth={2} />
-  </button>
+  {:else}
+    {#each sessions as session, i (session)}
+      <SessionRow
+        {session}
+        selected={selectedIndex === i}
+        onOpen={() => onOpen?.(i)}
+      />
+    {/each}
+    <button
+      type="button"
+      class="text-text-secondary hover:text-text flex w-full cursor-pointer items-center justify-center border-none bg-transparent"
+      style="gap:7px;padding:14px;font-size:12.5px"
+    >
+      더 불러오기
+      <ChevronDownIcon strokeWidth={2} />
+    </button>
+  {/if}
 </div>
