@@ -74,7 +74,8 @@
         "collect_assistant_responses",
         "collect_tool_details",
         "collect_tool_content",
-        "collect_user_email"
+        "collect_user_email",
+        "collect_raw_api_bodies"
       ],
       "properties": {
         "collect_user_prompts": { "type": "boolean", "default": false },
