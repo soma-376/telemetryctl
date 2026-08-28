@@ -131,9 +131,9 @@ type Window struct {
 	ResetsAt string `json:"resets_at"`
 	// ResetsInSeconds 는 초기화까지 남은 초다. 모르면 0 이다.
 	//
-	// ResetsAt 과 둘 다 두는 이유: 벤더에 따라 절대 시각만 주거나 남은 시간만 준다.
-	// 한쪽만 남기면 우리가 관측 시각으로 나머지를 계산해야 하는데, 그 계산은 사용자
-	// 시계가 틀어져 있으면 조용히 틀린다. 벤더가 준 것을 그대로 두고 화면이 고른다.
+	// ResetsAt 과 둘 다 두는 이유: 벤더에 따라 절대 시각만 주거나(Claude) 남은 시간만
+	// 준다(Codex). 화면이 벤더마다 분기하지 않도록 어댑터가 나머지 한쪽을 파생시킨다
+	// (resolveResetTimes). 파생값은 우리 시계에 의존하므로 벤더가 준 쪽을 덮어쓰지 않는다.
 	ResetsInSeconds int64 `json:"resets_in_seconds"`
 }
 
