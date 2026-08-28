@@ -113,3 +113,4 @@ ADR [0003](0003-원문과-tool-details를-로컬에만-보관.md) 이 정한 방
 - **Codex `log_user_prompt` 와 `environment`.** 티켓 참고 자료는 각각 `false` 와 `"e2e"` 였으나 전자는 Claude 와의
   대칭을 위해 `true` 로, 후자는 `resource_attributes` 파생을 유지하기로 했다. Codex 프롬프트 수집이 실제로
   필요한지는 세션 조립 결과를 보고 다시 본다.
+- 회사 telemetry token(`ptt_`)이 실리는 상위 전송 인증 모델은 [허브 ADR 0001](../../../docs/adr/0001-otlp-authentication-model.md) 이 소유한다.
