@@ -8,7 +8,9 @@
 
   let width = $state(720);
   let hoveredIndex = $state<number | null>(null);
-  const layout = $derived(createUsageChartLayout(hero.bars, width));
+  const layout = $derived(
+    createUsageChartLayout(hero.bars, width, hero.unit, hero.bucketSize),
+  );
   const hovered = $derived(
     hoveredIndex === null ? null : (layout.bars[hoveredIndex] ?? null),
   );

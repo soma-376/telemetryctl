@@ -102,9 +102,9 @@ function sumDays(from: string, span: number): Parts {
   return acc;
 }
 
-// ── 버킷 사다리 ──────────────────────────────────────────────────────────────
-// 단계마다 12~15개 바를 목표로 한다. 보존이 400일에서 끊기므로 월보다 굵은 단위는
-// 필요 없다.
+// ── 집계 버킷 정책 ────────────────────────────────────────────────────────────
+// 1일은 2시간, 2일은 6시간, 3~31일은 일, 32~120일은 7일,
+// 121~400일은 달력 월 단위로 집계한다. X축 tick 간격은 렌더 계층에서 별도로 정한다.
 const LADDER: BucketRung[] = [
   { maxDays: 1, unit: "hour", size: 2 },
   { maxDays: 2, unit: "hour", size: 6 },
@@ -272,6 +272,8 @@ export function heroData(start: string, end: string): HeroData {
   const shortLabel = bk.unit === "day" && sameMonth && items.length > 11;
 
   return {
+    unit: bk.unit,
+    bucketSize: bk.size,
     caption: text.caption,
     avgLabel: text.avg,
     avgValue: `${Math.round(grandTotal / (items.filter((b) => b.elapsed).length || 1))}k`,
