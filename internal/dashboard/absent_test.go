@@ -140,6 +140,25 @@ func absentCases() []absentCase {
 				}
 			},
 		},
+		{
+			method: "SessionMetrics",
+			call: func(ctx context.Context, r *Reader) (any, error) {
+				return r.SessionMetrics(ctx, SessionMetricsQuery{SessionID: 42})
+			},
+			check: func(t *testing.T, got any) {
+				m := got.(SessionMetrics)
+				if m.Found {
+					t.Error("Found = true")
+				}
+				if m.Turns == nil {
+					t.Error("Turns 가 nil — JSON 에서 null 이 되어 프런트엔드가 터진다")
+				}
+				// 상한은 DB 가 없어도 응답에 있어야 한다. 화면이 분기 없이 그린다.
+				if m.TurnLimit != defaultSessionTurns {
+					t.Errorf("TurnLimit = %d, want %d", m.TurnLimit, defaultSessionTurns)
+				}
+			},
+		},
 	}
 }
 
