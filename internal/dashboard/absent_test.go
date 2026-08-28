@@ -213,6 +213,23 @@ func absentCases() []absentCase {
 			},
 		},
 		{
+			method: "WorkspaceFolder",
+			call: func(ctx context.Context, r *Reader) (any, error) {
+				return r.WorkspaceFolder(ctx, 42)
+			},
+			check: func(t *testing.T, got any) {
+				f := got.(WorkspaceFolder)
+				// 미설치는 "열 수 없다" 이지 오류가 아니다. 사유는 기계 판독 가능해야 한다.
+				if f.Openable || f.Reason != OpenReasonSessionNotFound {
+					t.Errorf("WorkspaceFolder = %+v, want 열 수 없음/session_not_found", f)
+				}
+				// 열 수 없는 결과에 경로가 실리면 화면이 그것을 다시 어딘가로 넘길 수 있다.
+				if f.Path != "" {
+					t.Errorf("Path = %q, want 빈 문자열", f.Path)
+				}
+			},
+		},
+		{
 			method: "SessionMetrics",
 			call: func(ctx context.Context, r *Reader) (any, error) {
 				return r.SessionMetrics(ctx, SessionMetricsQuery{SessionID: 42})
