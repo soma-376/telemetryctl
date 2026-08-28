@@ -50,7 +50,7 @@ const llmCallsInRangeSQL = `SELECT ` + llmCallColumns + llmCallFrom +
 	` WHERE c.called_at IS NOT NULL AND c.called_at >= ? AND c.called_at < ?`
 
 // llmCallsOfSessionsSQL 은 세션 id 목록에 속한 **생애 전체**의 호출이다. 구간으로 자르지
-// 않는 것이 의도다 — 최근 세션 목록의 값은 그 세션의 전체 합계다 (today.go 의 합계 정의).
+// 않는 것이 의도다 — 최근 세션 목록의 값은 그 세션의 전체 합계다 (home.go 의 합계 정의).
 func llmCallsOfSessionsSQL(n int) string {
 	return `SELECT ` + llmCallColumns + llmCallFrom +
 		` WHERE s.id IN (` + placeholders(n) + `)`

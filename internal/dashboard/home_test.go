@@ -14,7 +14,7 @@ import (
 //
 //  1. 일광절약시간(DST)과 로컬 자정 경계가 정확하다
 //  2. 빈 날짜도 카드와 최근 활동을 빈 상태로 돌려준다
-//  3. Home 카드 값과 최근 세션 값의 합계 정의가 지켜진다 (today.go 의 「합계의 정의」)
+//  3. Home 카드 값과 최근 세션 값의 합계 정의가 지켜진다 (home.go 의 「합계의 정의」)
 
 const newYork = "America/New_York"
 
@@ -182,7 +182,7 @@ func TestHomeRecentSessionSumMatchesCards(t *testing.T) {
 }
 
 // 자정을 넘긴 세션이 있으면 행 합계가 카드보다 크다. 버그가 아니라 자르는 기준이 다르기
-// 때문이고, 그 사실이 today.go 의 「합계의 정의」에 적혀 있다.
+// 때문이고, 그 사실이 home.go 의 「합계의 정의」에 적혀 있다.
 func TestHomeRecentSessionMayExceedCardsAcrossMidnight(t *testing.T) {
 	f := newFixture(t)
 	// 세션은 08-10 23:00Z 에 시작하고, 호출 하나는 그날 안, 다른 하나는 자정을 넘긴다.
