@@ -25,9 +25,6 @@ import (
 // 하려면 고정 오프셋을 박아야 하는데 그러면 DST 가 있는 시간대에서 전환일 전후가 한 시간씩
 // 밀린다. time.Location 위에서 계산하면 그 문제가 없다 (timezone.go).
 
-// hourSeconds 는 시간 버킷 하나의 길이(초)다.
-const hourSeconds = 3600
-
 // aggRow 는 (축 키, UTC 시간 버킷) 한 칸의 합계다.
 type aggRow struct {
 	Key  string
@@ -140,7 +137,7 @@ var factSources = []factSource{
 // query 는 이 출처의 집계문이다. 값은 전부 바인딩되고 문자열 결합에 닿는 것은
 // 우리가 소유한 상수(키 식·컬럼 목록)뿐이다.
 func (f factSource) query(keyExpr string, filterKey bool) string {
-	q := `SELECT ` + keyExpr + `, (` + f.at + `) / ` + hourSecondsLiteral + ` * ` + hourSecondsLiteral +
+	q := `SELECT ` + keyExpr + `, (` + f.at + `) / ` + hourSeconds + ` * ` + hourSeconds +
 		`, ` + f.cols + ` FROM ` + f.from +
 		` WHERE (` + f.at + `) IS NOT NULL AND (` + f.at + `) >= ? AND (` + f.at + `) < ?`
 	if f.where != "" {
@@ -152,7 +149,9 @@ func (f factSource) query(keyExpr string, filterKey bool) string {
 	return q + ` GROUP BY 1, 2`
 }
 
-const hourSecondsLiteral = "3600"
+// hourSeconds 는 시간 버킷 하나의 길이(초)다. 질의문에 리터럴로 박히므로 문자열이다 —
+// 자리표시자로 넘기면 GROUP BY 대상이 상수인지 드라이버가 판단하지 못한다.
+const hourSeconds = "3600"
 
 // bucketRef 는 Go 쪽 누적 맵의 키다.
 type bucketRef struct {
