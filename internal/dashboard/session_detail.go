@@ -315,7 +315,7 @@ func (r *Reader) SessionMetrics(ctx context.Context, q SessionMetricsQuery) (Ses
 	}
 	// 출처마다 따로 묻고 turn_id 로 합친다. JOIN 하나로 묶으면 행이 곱해진다 (머리말).
 	for _, collect := range []func(context.Context, sqlQuerier, int64, pricing.Table, *turnIndex) error{
-		collectLLMCalls, collectToolCalls,
+		collectLLMCalls, collectToolCalls, collectRetries,
 	} {
 		if err := collect(ctx, db, q.SessionID, table, index); err != nil {
 			return SessionMetrics{}, err
