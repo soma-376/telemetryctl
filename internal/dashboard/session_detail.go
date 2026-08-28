@@ -38,7 +38,6 @@ import (
 	"database/sql"
 	"errors"
 
-	"github.com/your-org/pulsemetry/internal/event"
 	"github.com/your-org/pulsemetry/internal/pricing"
 )
 
@@ -144,12 +143,6 @@ func (s *SavingsTotals) finalize() {
 	s.Write = nanoMoney(s.Write.NanoUSD)
 	s.Total = nanoMoney(s.Total.NanoUSD)
 	s.Complete = s.UnavailableCalls == 0
-}
-
-// nanoMoney 는 정수 nano-USD 에서 표시용 USD 를 파생한다. 합산은 항상 NanoUSD 로 하고
-// USD 는 마지막에 한 번만 만든다 (pricing/money.go).
-func nanoMoney(n pricing.NanoUSD) pricing.Money {
-	return pricing.Money{NanoUSD: n, USD: n.USD()}
 }
 
 // TurnTotals 는 턴 하나의 **셀 수 있는** 지표다.
@@ -574,22 +567,6 @@ func positive(n sql.NullInt64) int64 {
 		return 0
 	}
 	return n.Int64
-}
-
-// optInt64 는 SQL 의 NULL 을 event.Opt 의 "없음" 으로 옮긴다. 0 으로 눕히면 pricing 이
-// "0 토큰을 보고한 호출" 로 읽어 unavailable 판정이 뒤집힌다.
-func optInt64(n sql.NullInt64) event.Opt[int64] {
-	if !n.Valid {
-		return event.Opt[int64]{}
-	}
-	return event.Some(n.Int64)
-}
-
-func optFloat64(n sql.NullFloat64) event.Opt[float64] {
-	if !n.Valid {
-		return event.Opt[float64]{}
-	}
-	return event.Some(n.Float64)
 }
 
 // applyCost 는 호출 한 건의 비용을 누적한다. 금액은 정수 nano 로만 더한다.
