@@ -21,7 +21,7 @@ const redacted = "[redacted]"
 // 경로에서 일어나서, 정상 동작하는 코드를 아무리 읽어도 보이지 않는다.
 //
 // 그래서 값을 비공개 필드에 가두고 String·GoString·MarshalJSON 을 전부 막았다.
-// 실수로 %v · %s · %#v · json.Marshal 어디에 걸려도 나가는 것은 "<redacted>" 뿐이다.
+// 실수로 %v · %s · %#v · json.Marshal 어디에 걸려도 나가는 것은 "[redacted]" 뿐이다.
 // 원값을 꺼내는 reveal 은 비공개 메서드라 이 패키지 밖에서는 아예 호출할 수 없다.
 //
 // 값 리시버로 구현한 이유: Token 과 *Token 이 모두 fmt.Stringer·json.Marshaler 를
