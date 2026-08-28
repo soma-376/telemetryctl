@@ -248,6 +248,24 @@ func absentCases() []absentCase {
 				}
 			},
 		},
+		{
+			method: "FileChanges",
+			call:   func(ctx context.Context, r *Reader) (any, error) { return r.FileChanges(ctx, 42) },
+			check: func(t *testing.T, got any) {
+				fc := got.(SessionFileChanges)
+				if fc.Found {
+					t.Error("Found = true")
+				}
+				if fc.Files == nil {
+					t.Error("Files 가 nil — JSON 에서 null 이 되어 프런트엔드가 터진다")
+				}
+				// 변경을 하나도 못 본 상태의 줄 수는 0 이 아니라 미관측이다. 미설치에서
+				// 0 을 돌려주면 화면이 "오늘 0줄 바꿨다" 를 사실처럼 그린다.
+				if fc.Totals.Additions.Observed() || fc.Totals.Deletions.Observed() {
+					t.Errorf("DB 가 없는데 줄 수가 관측됨으로 나왔다: %+v", fc.Totals)
+				}
+			},
+		},
 	}
 }
 
