@@ -15,7 +15,7 @@ Codex와 Claude Code의 OpenTelemetry 설정을 조직 단위로 안전하게 �
 ├── contracts/                 # 서버와의 JSON Schema 계약 사본 (계약 테스트 기준)
 │   ├── enrollment-manifest.schema.json
 │   └── enrollment-envelope.schema.json
-├── docs/                      # 설치 아키텍처·로컬 파이프라인·ADR·개발 워크플로
+├── docs/                      # 설치 아키텍처·로컬 파이프라인·SQLite 스키마·ADR·개발 워크플로
 └── internal/
     ├── contract/              #   enroll 요청/응답·manifest Go 타입 (스키마와 1:1)
     ├── enrollment/            #   서버 /v1/enroll 호출
@@ -84,6 +84,10 @@ Claude Code(`~/.claude/settings.json`)·Codex(`~/.codex/config.toml`)에 OTel �
 직접 받고, 세션 단위로 조립·집계해 로컬 SQLite(`~/.pulsemetry/pulsemetry.db`)에 저장한 뒤 회사
 Collector 로도 전달합니다. **끄려면 `local disable` 입니다.**
 
+> **개발 브랜치 주의:** SQLite 스키마 v3는 기존 로컬 도메인 데이터를 삭제하고 새 모델을 만들지만
+> 데몬·CLI 런타임은 아직 v3로 전환되지 않았습니다. 후속 구현 전에는 로컬 수집·조회 명령이 실패하며,
+> 현재 스키마 계약과 파괴적 전환 범위는 [SQLite 스키마 문서](docs/sqlite-schema/README.md)를 따릅니다.
+
 ```sh
 telemetryctl enroll --invite <코드>   # 설치 + 로컬 배선 + 자동 실행 등록 (endpoint → http://localhost:4318)
 telemetryctl sessions --since 1d
@@ -111,8 +115,9 @@ telemetryctl local disable            # 회사 Collector 직결로 복귀
 기존 설치자(이미 `enroll` 을 마친 사용자)는 바이너리를 교체해도 자동 전환되지 않습니다.
 `telemetryctl local enable` 로 명시적으로 켜세요.
 
-토폴로지·스키마·프라이버시 불변식·GUI 조회 API 계약은
-[로컬 파이프라인 문서](docs/local-pipeline.md)에, 설계 결정 배경은 [ADR](docs/adr/)에 있습니다.
+토폴로지·프라이버시 불변식·GUI 조회 API 계약은 [로컬 파이프라인 문서](docs/local-pipeline.md)에,
+DDL과 테이블별 계약은 [SQLite 스키마 문서](docs/sqlite-schema/README.md)에, 설계 결정 배경은
+[ADR](docs/adr/)에 있습니다.
 
 ## 로컬 개발
 
@@ -155,20 +160,21 @@ go test -race -cover ./...
 CGO_ENABLED=0 go build ./...   # 배포 바이너리가 C 툴체인을 요구하지 않는지 (ADR 0002)
 ```
 
-자세한 설계는 [설치 아키텍처](docs/installation-architecture.md)와
-[로컬 파이프라인](docs/local-pipeline.md), 결정 배경은 [ADR](docs/adr/), 협업 규칙은
-[개발 워크플로](docs/development-workflow.md)를 참고하세요. enrollment 서버 스펙은 서버 저장소를
-참조하세요.
+자세한 설계는 [설치 아키텍처](docs/installation-architecture.md),
+[로컬 파이프라인](docs/local-pipeline.md), [SQLite 스키마](docs/sqlite-schema/README.md)를 참고하세요.
+결정 배경은 [ADR](docs/adr/), 협업 규칙은 [개발 워크플로](docs/development-workflow.md)에 있습니다.
+enrollment 서버 스펙은 서버 저장소를 참조하세요.
 
 ## 다음 구현 대상
 
-1. **GUI 데스크탑 앱** (PROJ-35) — `gui/` 에 별도 `go.mod` 로 Wails v3 앱을 두고
+1. **SQLite v3 런타임 전환** — 새 세션·턴·이벤트·LLM 호출·도구 호출 모델에 맞춰 쓰기, 조회,
+   보존 로직을 교체하고 전체 테스트를 다시 통과시킵니다
+2. **GUI 데스크탑 앱** (PROJ-35) — `gui/` 에 별도 `go.mod` 로 Wails v3 앱을 두고
    `internal/dashboard` 를 감쌉니다. 계약은 [로컬 파이프라인 문서](docs/local-pipeline.md) 6절
-2. **데몬 자동 실행 등록 — Windows** (PROJ-56, 작업 스케줄러). macOS·리눅스는 PROJ-55 에서
+3. **데몬 자동 실행 등록 — Windows** (PROJ-56, 작업 스케줄러). macOS·리눅스는 PROJ-55 에서
    구현했습니다 (`internal/autostart`, [ADR 0007](docs/adr/0007-데몬은-비정상-종료일-때만-자동-재시작한다.md)).
    Windows 에서는 `autostart` 명령이 미지원임을 알리고 `telemetryctl daemon` 을 직접 띄워야 합니다
-3. 토큰 rotation · heartbeat · 설정 재조회(`GET /v1/manifest`)
-4. `resource_attributes` → `OTEL_RESOURCE_ATTRIBUTES` 배선 (회사 단위 태깅)
-5. 설치 바이너리 PATH 등록, `uninstall`·`repair` (자격증명 파일에서 헤더 재주입)
-6. 세션 단계 분류·작업 유형 분포 (`sessions.phase_json`·`work_type` 채우기) 및 Insights 카드
+4. 토큰 rotation · heartbeat · 설정 재조회(`GET /v1/manifest`)
+5. `resource_attributes` → `OTEL_RESOURCE_ATTRIBUTES` 배선 (회사 단위 태깅)
+6. 설치 바이너리 PATH 등록, `uninstall`·`repair` (자격증명 파일에서 헤더 재주입)
 7. Codex 텔레메트리 인증 배선 (현재 Codex 설정에는 토큰이 들어가지 않음)

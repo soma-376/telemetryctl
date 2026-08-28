@@ -18,15 +18,18 @@ type PruneResult struct {
 	Sessions     int64
 	RollupHourly int64
 	Vendors      int64
-	// SessionFiles·MCPUsage 는 sessions 삭제에 딸려 CASCADE 로 지워진 수다.
-	SessionFiles int64
-	MCPUsage     int64
+	// 아래 항목은 sessions 삭제에 딸려 CASCADE 로 지워진 수다.
+	Turns         int64
+	SessionPhases int64
+	SessionFiles  int64
+	MCPUsage      int64
 }
 
 // Total 은 지운 행의 총합이다.
 func (r PruneResult) Total() int64 {
 	return r.Events + r.EventContent + r.ToolEvents +
-		r.Sessions + r.RollupHourly + r.Vendors + r.SessionFiles + r.MCPUsage
+		r.Sessions + r.RollupHourly + r.Vendors + r.Turns + r.SessionPhases +
+		r.SessionFiles + r.MCPUsage
 }
 
 // Prune 은 보존 정책을 적용한다 (계획서 「보존」).
@@ -81,6 +84,18 @@ func (d *DB) Prune(ctx context.Context, now time.Time) (PruneResult, error) {
 	// ── 세션 계층 ────────────────────────────────────────────────────────────
 	// 기준은 last_event_at 이다. started_at 으로 재면 오래 이어진 세션이 아직 살아 있는데도
 	// 시작 시각만으로 잘린다.
+	res.Turns, err = countScoped(ctx, tx,
+		`SELECT COUNT(*) FROM turns WHERE session_id IN (SELECT session_id FROM sessions WHERE last_event_at < ?)`,
+		int64(cutoff))
+	if err != nil {
+		return PruneResult{}, err
+	}
+	res.SessionPhases, err = countScoped(ctx, tx,
+		`SELECT COUNT(*) FROM session_phases WHERE session_id IN (SELECT session_id FROM sessions WHERE last_event_at < ?)`,
+		int64(cutoff))
+	if err != nil {
+		return PruneResult{}, err
+	}
 	res.SessionFiles, err = countScoped(ctx, tx,
 		`SELECT COUNT(*) FROM session_files WHERE session_id IN (SELECT session_id FROM sessions WHERE last_event_at < ?)`,
 		int64(cutoff))

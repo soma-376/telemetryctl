@@ -45,6 +45,21 @@ func seedRetention(t *testing.T, db *DB, now time.Time) {
 	if _, err := db.Write(ctx, Batch{Events: recs, Sessions: sessions, Rollups: rollups}); err != nil {
 		t.Fatalf("시드 Write: %v", err)
 	}
+	for i, age := range ages {
+		at := now.Add(-age).Unix()
+		id := sessionIDFor(i)
+		if _, err := db.SQL().ExecContext(ctx, `
+			INSERT INTO turns (session_id, turn_index, started_at, last_event_at)
+			VALUES (?, 1, ?, ?)`, id, at, at); err != nil {
+			t.Fatalf("turns 시드: %v", err)
+		}
+		if _, err := db.SQL().ExecContext(ctx, `
+			INSERT INTO session_phases
+			  (session_id, phase_index, phase_type, start_turn_index, end_turn_index, started_at, last_event_at, turn_count)
+			VALUES (?, 1, 'implementation', 1, 1, ?, ?, 1)`, id, at, at); err != nil {
+			t.Fatalf("session_phases 시드: %v", err)
+		}
+	}
 }
 
 func sessionIDFor(i int) string { return []string{"fresh", "mid", "ancient"}[i] }
@@ -118,10 +133,11 @@ func TestPruneSessionCascade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prune: %v", err)
 	}
-	if res.SessionFiles != 1 || res.MCPUsage != 1 {
-		t.Errorf("CASCADE 계수 = %d/%d, want 1/1", res.SessionFiles, res.MCPUsage)
+	if res.Turns != 1 || res.SessionPhases != 1 || res.SessionFiles != 1 || res.MCPUsage != 1 {
+		t.Errorf("CASCADE 계수 = %d/%d/%d/%d, want 1/1/1/1",
+			res.Turns, res.SessionPhases, res.SessionFiles, res.MCPUsage)
 	}
-	for _, table := range []string{"session_files", "mcp_session_usage", "tool_events"} {
+	for _, table := range []string{"turns", "session_phases", "session_files", "mcp_session_usage", "tool_events"} {
 		if n := countWhere(t, db, table, "session_id = 'ancient'"); n != 0 {
 			t.Errorf("401일 된 세션의 %s 가 %d행 남았다 — CASCADE 가 동작하지 않았다", table, n)
 		}

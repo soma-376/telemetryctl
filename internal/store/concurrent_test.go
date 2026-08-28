@@ -29,7 +29,18 @@ func TestSessionDeleteCascades(t *testing.T) {
 	if _, err := db.Write(ctx, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}}); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
-	for _, table := range []string{"session_files", "tool_events", "mcp_session_usage"} {
+	if _, err := db.SQL().ExecContext(ctx, `
+		INSERT INTO turns (session_id, turn_index, started_at, last_event_at)
+		VALUES ('sess-1', 1, ?, ?)`, baseTime.Unix(), baseTime.Unix()); err != nil {
+		t.Fatalf("turn INSERT: %v", err)
+	}
+	if _, err := db.SQL().ExecContext(ctx, `
+		INSERT INTO session_phases
+		  (session_id, phase_index, phase_type, start_turn_index, end_turn_index, started_at, last_event_at, turn_count)
+		VALUES ('sess-1', 1, 'implementation', 1, 1, ?, ?, 1)`, baseTime.Unix(), baseTime.Unix()); err != nil {
+		t.Fatalf("session_phase INSERT: %v", err)
+	}
+	for _, table := range []string{"turns", "session_phases", "session_files", "tool_events", "mcp_session_usage"} {
 		if n := countRows(t, db, table); n == 0 {
 			t.Fatalf("사전 조건 실패: %s 가 비어 있다", table)
 		}
@@ -38,7 +49,7 @@ func TestSessionDeleteCascades(t *testing.T) {
 	if _, err := db.SQL().ExecContext(ctx, `DELETE FROM sessions WHERE session_id = 'sess-1'`); err != nil {
 		t.Fatalf("sessions 삭제: %v", err)
 	}
-	for _, table := range []string{"session_files", "tool_events", "mcp_session_usage"} {
+	for _, table := range []string{"turns", "session_phases", "session_files", "tool_events", "mcp_session_usage"} {
 		if n := countRows(t, db, table); n != 0 {
 			t.Errorf("%s = %d행, want 0 — CASCADE 가 동작하지 않았다", table, n)
 		}
