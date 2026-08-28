@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { AgentId } from "../types";
-  import { AGENT_STYLE } from "../agents";
+  import type { AgentId } from "$lib/domain/agent.types";
+  import { AGENT_STYLE } from "$lib/domain/agent";
 
   // 디자인이 쓰는 타일 지름은 다섯 가지다. 라운드와 글리프 크기는 지름에
   // 비례하지 않고 각각 따로 정해져 있어(24→7, 28·30→9, 32→10, 40→12) 표로 둔다.

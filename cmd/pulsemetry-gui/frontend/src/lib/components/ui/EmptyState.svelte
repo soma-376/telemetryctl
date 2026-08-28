@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import Mascot from "./Mascot.svelte";
-  import type { MascotPose } from "../types";
+  import type { MascotPose } from "./mascot.types";
 
   // 빈 상태. "없다"는 사실만 알리지 말고 다음에 무엇을 하면 되는지까지 담는다 —
   // 첫 실행에서는 이 화면이 사용자가 처음 만나는 안내다.

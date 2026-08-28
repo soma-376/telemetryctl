@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { TurnDisplay } from "../data";
-  import ChevronDownIcon from "../../../lib/icons/ChevronDownIcon.svelte";
+  import type { TurnDisplay } from "../types";
+  import ChevronDownIcon from "$lib/icons/ChevronDownIcon.svelte";
 
   let {
     turn,

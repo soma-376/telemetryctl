@@ -1,4 +1,4 @@
-import type { AgentId } from "../../lib/types";
+import type { AgentId } from "$lib/domain/agent.types";
 
 export interface TrayLimitWindow {
   label: string;

@@ -1,9 +1,9 @@
 <script lang="ts">
-  import Mascot from "../../../lib/components/Mascot.svelte";
-  import { hideCurrentWindow } from "../../../lib/backend";
-  import RefreshIcon from "../../../lib/icons/RefreshIcon.svelte";
-  import XIcon from "../../../lib/icons/XIcon.svelte";
-  import Dot from "../../../lib/components/Dot.svelte";
+  import Mascot from "$lib/components/ui/Mascot.svelte";
+  import { hideCurrentWindow } from "$lib/ipc/app";
+  import RefreshIcon from "$lib/icons/RefreshIcon.svelte";
+  import XIcon from "$lib/icons/XIcon.svelte";
+  import Dot from "$lib/components/ui/Dot.svelte";
 
   let { syncedText }: { syncedText: string } = $props();
   let pulling = $state(false);

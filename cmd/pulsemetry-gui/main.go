@@ -33,7 +33,7 @@ func main() {
 		Title:     "Pulsemetry",
 		Width:     1080,
 		Height:    860,
-		MinWidth:  880,
+		MinWidth:  920,
 		MinHeight: 640,
 		URL:       "/",
 	})

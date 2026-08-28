@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { period, periodRangeText } from "../../lib/period.svelte";
-  import { SESSIONS } from "./data";
+  import { period, periodRangeText } from "$lib/domain/period.svelte";
+  import { SESSIONS } from "./mock";
   import Filters from "./components/Filters.svelte";
   import SessionTable from "./components/SessionTable.svelte";
   import SessionDetail from "./components/SessionDetail.svelte";

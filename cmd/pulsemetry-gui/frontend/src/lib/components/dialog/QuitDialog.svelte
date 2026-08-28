@@ -1,6 +1,6 @@
 <script lang="ts">
   import ConfirmDialog from "./ConfirmDialog.svelte";
-  import { quitApp } from "../../backend";
+  import { quitApp } from "$lib/ipc/app";
 
   // 종료 문구와 quitApp 배선을 여기에 캡슐화한다.
   // 호스트(메인 셸, 트레이 퀵뷰)는 열림 상태만 관리하면 된다.

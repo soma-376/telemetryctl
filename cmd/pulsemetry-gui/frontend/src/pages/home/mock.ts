@@ -1,43 +1,34 @@
-import { AGENT_STYLE } from "../../lib/agents";
-import type { AgentId } from "../../lib/types";
-import { formatDuration } from "../../lib/format";
-
+import { AGENT_STYLE } from "$lib/domain/agent";
+import type { AgentId } from "$lib/domain/agent.types";
+import { HOURLY_DAYS, RETAIN_DAYS, TODAY } from "$lib/domain/retention";
+import { formatDuration } from "$lib/utils/format";
+import type {
+  ActivityData,
+  ActivityRow,
+  BucketRung,
+  BucketSet,
+  ChartBucket,
+  HeroBar,
+  HeroData,
+  SeriesKey,
+  UsageParts,
+  VendorRow,
+} from "./types";
 // 홈 히어로 차트 — 기간에 따라 버킷 밀도를 바꾸는 스택 바 (디자인 Overview v3).
 // 실데이터 연동 전까지는 날짜 시드 해시로 안정적인 합성값을 만든다:
 // 같은 날짜는 항상 같은 사용량을 돌려주므로 화면 간 수치가 서로 모순되지 않는다.
 
 export const SERIES = ["claude", "codex", "gemini"] as const;
-export type SeriesKey = (typeof SERIES)[number];
 
-// ── 보존 정책과 버킷 밀도의 계약 ─────────────────────────────────────────────
-// RETAIN_DAYS 는 세션·롤업 계층 보존일(400일)이다. 달력에서 이보다 오래된 날짜는
-// 선택할 수 없고, 사다리도 월 단위보다 굵어질 필요가 없다.
-// HOURLY_DAYS 는 시간 단위 롤업의 보존 지평이다 — 이보다 오래된 구간은 시간 버킷
-// 데이터가 없으므로(다운샘플) 사다리가 시간 단위를 골랐어도 일 단위로 강등한다.
-export const RETAIN_DAYS = 400;
-export const HOURLY_DAYS = 90;
-
-const VENDOR_META: Record<
-  SeriesKey,
-  { plan: string; topModel: string; rate: number }
-> = {
-  claude: { plan: "Max 20x", topModel: "Sonnet 4.5", rate: 0.0274 },
-  codex: { plan: "Pro", topModel: "GPT-5.3-Codex", rate: 0.0287 },
-  gemini: { plan: "Ultra", topModel: "Gemini 3.1 Pro", rate: 0.015 },
-};
-
-// 1k 토큰당 활동 분 — 합성 데이터의 "AI 활동 시간" 환산 계수
-const MIN_PER_K = 3.73;
-
-// ── ISO 날짜 유틸 (문자열 기반이라 period.svelte.ts 의 Date 유틸과 별도) ──────
-const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+// ── ISO 날짜 유틸 ────────────────────────────────────────────────────────────
+export const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
 const toIso = (d: Date) =>
   `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const parseIso = (s: string) => {
+export const parseIso = (s: string) => {
   const p = s.split("-").map(Number);
   return new Date(p[0], p[1] - 1, p[2]);
 };
-const addDays = (s: string, n: number) => {
+export const addDays = (s: string, n: number) => {
   const d = parseIso(s);
   d.setDate(d.getDate() + n);
   return toIso(d);
@@ -53,16 +44,16 @@ export const longLabel = (s: string) => {
   return `${d.getMonth() + 1}월 ${d.getDate()}일`;
 };
 /** 월요일 시작 요일 인덱스 */
-const dowIndex = (s: string) => (parseIso(s).getDay() + 6) % 7;
+export const dowIndex = (s: string) => (parseIso(s).getDay() + 6) % 7;
 
-export const TODAY = toIso(new Date());
 const NOW_HOUR = new Date().getHours();
 
 /** 달력 선택 하한 — 보존 정책 밖의 날짜는 데이터가 없다 */
-export const RETAIN_FROM = addDays(TODAY, -(RETAIN_DAYS - 1));
+
+// 보존 하한은 공용 정책(lib/domain/retention)이 소유한다.
 
 // ── 합성 사용량 (날짜 시드 해시 — 결정적) ───────────────────────────────────
-function hash(s: string): number {
+export function hash(s: string): number {
   let x = 2166136261;
   for (let i = 0; i < s.length; i++) {
     x ^= s.charCodeAt(i);
@@ -76,7 +67,7 @@ function hash(s: string): number {
   return (x >>> 0) / 4294967295;
 }
 
-type Parts = [number, number, number];
+type Parts = UsageParts;
 
 function splitUsage(seed: string, total: number): Parts {
   if (total <= 0) return [0, 0, 0];
@@ -114,33 +105,13 @@ function sumDays(from: string, span: number): Parts {
 // ── 버킷 사다리 ──────────────────────────────────────────────────────────────
 // 단계마다 12~15개 바를 목표로 한다. 보존이 400일에서 끊기므로 월보다 굵은 단위는
 // 필요 없다.
-interface Rung {
-  maxDays: number;
-  unit: "hour" | "day" | "week" | "month";
-  size: number;
-}
-
-const LADDER: Rung[] = [
+const LADDER: BucketRung[] = [
   { maxDays: 1, unit: "hour", size: 2 },
-  { maxDays: 3, unit: "hour", size: 6 },
-  { maxDays: 7, unit: "hour", size: 12 },
-  { maxDays: 34, unit: "day", size: 2 },
+  { maxDays: 2, unit: "hour", size: 6 },
+  { maxDays: 31, unit: "day", size: 1 },
   { maxDays: 120, unit: "week", size: 7 },
   { maxDays: 400, unit: "month", size: 0 },
 ];
-
-export interface ChartBucket {
-  label: string;
-  key: string;
-  parts: Parts;
-  elapsed: boolean;
-}
-
-export interface BucketSet {
-  unit: Rung["unit"];
-  size: number;
-  items: ChartBucket[];
-}
 
 export function buildBuckets(start: string, end: string): BucketSet {
   const n = Math.min(dayCount(start, end), RETAIN_DAYS);
@@ -167,7 +138,9 @@ export function buildBuckets(start: string, end: string): BucketSet {
           acc[2] += u[2];
         }
         out.push({
-          label: step >= 12 ? (hh === 0 ? mdLabel(d) : "") : `${pad(hh)}시`,
+          // 날짜 경계의 00시는 시각만 쓰면 여러 날에서 같은 라벨이 반복된다.
+          // 자정에는 날짜를 표시하고, 그 외에는 시각을 표시해 경계를 드러낸다.
+          label: hh === 0 ? mdLabel(d) : `${pad(hh)}시`,
           key: `${d} ${pad(hh)}`,
           parts: acc,
           elapsed: d < TODAY || (d === TODAY && hh <= NOW_HOUR),
@@ -210,7 +183,7 @@ export function buildBuckets(start: string, end: string): BucketSet {
 }
 
 /** 캡션과 평균 라벨은 선택된 단계를 따른다 */
-export function unitText(unit: Rung["unit"], size: number) {
+export function unitText(unit: BucketRung["unit"], size: number) {
   if (unit === "hour")
     return { caption: `${size}시간 단위 · 벤더 구성`, avg: `${size}시간 평균` };
   if (unit === "day")
@@ -223,20 +196,17 @@ export function unitText(unit: Rung["unit"], size: number) {
   return { caption: "월 단위 · 벤더 구성", avg: "월 평균" };
 }
 
-// ── 히어로 집계 ──────────────────────────────────────────────────────────────
+const VENDOR_META: Record<
+  SeriesKey,
+  { plan: string; topModel: string; rate: number }
+> = {
+  claude: { plan: "Max 20x", topModel: "Sonnet 4.5", rate: 0.0274 },
+  codex: { plan: "Pro", topModel: "GPT-5.3-Codex", rate: 0.0287 },
+  gemini: { plan: "Ultra", topModel: "Gemini 3.1 Pro", rate: 0.015 },
+};
 
-export interface HeroBar {
-  label: string;
-  total: string;
-  valueSize: string;
-  valueFg: string;
-  labelFg: string;
-  labelWeight: number;
-  /** 최대 버킷 대비 막대 높이(0~100). 픽셀이 아니라 비율이라 플롯 크기를 따라간다. */
-  fillPct: number;
-  /** weight 는 원값 — 렌더에서 flex-grow 로 넘겨 조각 비율을 flexbox 가 배분한다. */
-  parts: { color: string; weight: number; radius: string }[];
-}
+const MIN_PER_K = 3.73;
+// ── 히어로 집계 ──────────────────────────────────────────────────────────────
 
 /**
  * 라벨을 몇 개 걸러 보여줄지. 막대 개수가 아니라 실제로 들어갈 폭으로 정한다 —
@@ -264,23 +234,6 @@ function textWidth(s: string, fontSize: number): number {
     w += /[　-鿿가-힯]/.test(ch) ? fontSize : fontSize * 0.6;
   }
   return w;
-}
-
-export interface HeroData {
-  caption: string;
-  avgLabel: string;
-  avgValue: string;
-  totalTokens: number;
-  totalCost: string;
-  totalTime: string;
-  peakNote: string;
-  gridCols: string;
-  gridGap: string;
-  legend: { name: string; color: string }[];
-  bars: HeroBar[];
-  perVendor: number[];
-  grandTotal: number;
-  cents: number[];
 }
 
 export function heroData(start: string, end: string): HeroData {
@@ -359,6 +312,8 @@ export function heroData(start: string, end: string): HeroData {
       return {
         // 라벨 솎아내기는 컬럼 폭을 아는 렌더 시점에 정한다(labelStep).
         label: shortLabel ? `${parseIso(b.key).getDate()}일` : b.label,
+        values: [...b.parts],
+        totalValue: total,
         fillPct: total ? (total / maxBucket) * 100 : 0,
         total: !total || (dense && !peak) ? "" : `${total}k`,
         valueSize: dense ? "10px" : "11px",
@@ -372,15 +327,6 @@ export function heroData(start: string, end: string): HeroData {
 }
 
 // ── 벤더 표 ──────────────────────────────────────────────────────────────────
-
-export interface VendorRow {
-  id: SeriesKey;
-  plan: string;
-  spend: string;
-  tokens: string;
-  share: string;
-  topModel: string;
-}
 
 export function vendorRows(hero: HeroData): VendorRow[] {
   return SERIES.map((k, i) => {
@@ -415,16 +361,6 @@ const TASKS: [string, AgentId][] = [
 ];
 const STAGES = ["디버깅 중", "구현 중", "테스트 중"];
 
-export interface ActivityRow {
-  date: string;
-  time: string;
-  agent: AgentId;
-  title: string;
-  sub: string;
-  tokens: string;
-  state: "running" | "done";
-}
-
 function sessionsOn(isoDate: string): ActivityRow[] {
   if (isoDate > TODAY) return [];
   const weekend = dowIndex(isoDate) >= 5;
@@ -454,12 +390,6 @@ function sessionsOn(isoDate: string): ActivityRow[] {
     });
   }
   return out.sort((a, b) => (a.time < b.time ? 1 : -1));
-}
-
-export interface ActivityData {
-  rows: ActivityRow[];
-  total: number;
-  running: number;
 }
 
 export function buildActivity(start: string, end: string): ActivityData {

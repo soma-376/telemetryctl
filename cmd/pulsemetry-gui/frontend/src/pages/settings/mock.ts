@@ -1,11 +1,7 @@
-import type { AgentId } from "../../lib/types";
+import type { CollectionItem, ConnectionRow, ConnState, HealthItem, Pref } from "./types";
+export type * from "./types";
 
 // PROJ-63 전까지의 목 데이터 — 디자인(Overview v2 설정 모달) 수치 그대로.
-
-export interface HealthItem {
-  name: string;
-  state: string;
-}
 
 export const HEALTH: HealthItem[] = [
   { name: "Agent", state: "Running" },
@@ -14,17 +10,6 @@ export const HEALTH: HealthItem[] = [
   { name: "Network", state: "Connected" },
   { name: "Cloud", state: "Connected" },
 ];
-
-export interface Pref {
-  key: string;
-  icon: string;
-  name: string;
-  desc: string;
-  kind: "toggle" | "select";
-  value?: string;
-  dbPath?: string;
-  dbSize?: string;
-}
 
 export const PREFS: Pref[] = [
   { key: "launch", icon: "⏻", name: "시작 프로그램", desc: "로그인 시 Pulsemetry 자동 실행", kind: "toggle" },
@@ -39,14 +24,6 @@ export const PREF_DEFAULTS: Record<string, boolean> = {
   notify: true,
   update: false,
 };
-
-export type ConnState = "on" | "idle" | "off";
-
-export interface ConnectionRow {
-  id: AgentId;
-  seen: string;
-  state: ConnState;
-}
 
 export const CONNECTIONS: ConnectionRow[] = [
   { id: "claude", seen: "3분 전 활동", state: "on" },
@@ -64,13 +41,6 @@ export const CONN_STATUS: Record<
   idle: { label: "대기 중", fg: "#8b6b36", bg: "var(--color-sand-soft)", action: false },
   off: { label: "연결 안됨", fg: "var(--color-inactive)", bg: "var(--color-inactive-soft)", action: true },
 };
-
-export interface CollectionItem {
-  icon: string;
-  label: string;
-  key: string;
-  sent: boolean;
-}
 
 // 조직 정책 — 이 기기에서는 읽기 전용.
 export const COLLECTION: CollectionItem[] = [

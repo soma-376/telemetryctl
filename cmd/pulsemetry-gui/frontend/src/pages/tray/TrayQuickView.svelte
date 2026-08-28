@@ -5,8 +5,8 @@
   import TrayInsight from "./components/TrayInsight.svelte";
   import TraySettingsMenu from "./components/TraySettingsMenu.svelte";
   import VendorLimits from "./components/VendorLimits.svelte";
-  import QuitDialog from "../../lib/components/dialog/QuitDialog.svelte";
-  import { TRAY_SESSIONS, TRAY_SYNCED_TEXT, TRAY_VENDORS } from "./data";
+  import QuitDialog from "$lib/components/dialog/QuitDialog.svelte";
+  import { TRAY_SESSIONS, TRAY_SYNCED_TEXT, TRAY_VENDORS } from "./mock";
 
   let settingsOpen = $state(false);
   let quitOpen = $state(false);

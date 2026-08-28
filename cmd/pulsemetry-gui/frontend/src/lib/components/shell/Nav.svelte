@@ -2,7 +2,7 @@
   import HomeIcon from "../../icons/HomeIcon.svelte";
   import ListIcon from "../../icons/ListIcon.svelte";
   import BarsIcon from "../../icons/BarsIcon.svelte";
-  import Pill from "../Pill.svelte";
+  import Pill from "$lib/components/ui/Pill.svelte";
   import type { AppSection } from "../../navigation";
 
   let {

@@ -1,8 +1,8 @@
 <script lang="ts">
-  import ClockIcon from "../../../lib/icons/ClockIcon.svelte";
-  import PulseIcon from "../../../lib/icons/PulseIcon.svelte";
-  import RefreshIcon from "../../../lib/icons/RefreshIcon.svelte";
-  import CheckIcon from "../../../lib/icons/CheckIcon.svelte";
+  import ClockIcon from "$lib/icons/ClockIcon.svelte";
+  import PulseIcon from "$lib/icons/PulseIcon.svelte";
+  import RefreshIcon from "$lib/icons/RefreshIcon.svelte";
+  import CheckIcon from "$lib/icons/CheckIcon.svelte";
 
   let { kpi }: { kpi: string[] } = $props();
 

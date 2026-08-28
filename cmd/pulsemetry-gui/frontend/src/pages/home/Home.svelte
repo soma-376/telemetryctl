@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { period, toDate } from "../../lib/period.svelte";
-  import { heroData, vendorRows, buildActivity, longLabel } from "./chart";
+  import { period, periodRangeText } from "$lib/domain/period.svelte";
+  import { buildActivity, heroData, vendorRows } from "./mock";
   import UsageHero from "./components/UsageHero.svelte";
   import VendorTable from "./components/VendorTable.svelte";
   import ActivityList from "./components/ActivityList.svelte";
-  import type { AppSection } from "../../lib/navigation";
+  import type { AppSection } from "$lib/navigation";
 
   let {
     onNavigate,
@@ -18,13 +18,9 @@
   const vendors = $derived(vendorRows(hero));
   const activity = $derived(buildActivity(p.start, p.end));
 
-  const rangeLong = $derived.by(() => {
-    if (p.start === p.end) return longLabel(p.start);
-    const sameMonth = toDate(p.start).getMonth() === toDate(p.end).getMonth();
-    return sameMonth
-      ? `${longLabel(p.start)} ~ ${toDate(p.end).getDate()}일`
-      : `${longLabel(p.start)} ~ ${longLabel(p.end)}`;
-  });
+  // 범위 표기는 Activity 와 같은 함수를 쓴다 — 화면마다 날짜 표기가 다르면
+  // 같은 기간을 보고 있다는 걸 알아채기 어렵다.
+  const rangeText = $derived(periodRangeText(p));
 </script>
 
 <main
@@ -38,7 +34,7 @@
     >
       Home
     </h1>
-    <div class="text-text-muted" style="font-size:14px">({rangeLong})</div>
+    <div class="text-text-muted" style="font-size:14px">({rangeText})</div>
   </div>
 
   <UsageHero {hero} />

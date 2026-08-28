@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Mascot from "../../../lib/components/Mascot.svelte";
+  import Mascot from "$lib/components/ui/Mascot.svelte";
 </script>
 
 <aside class="flex items-center" style="gap:10px;padding:0 14px 10px">

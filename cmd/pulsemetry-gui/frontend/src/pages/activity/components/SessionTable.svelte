@@ -1,8 +1,8 @@
 <script lang="ts">
-  import type { ActivitySession } from "../data";
+  import type { ActivitySession } from "../types";
   import SessionRow from "./SessionRow.svelte";
-  import ChevronDownIcon from "../../../lib/icons/ChevronDownIcon.svelte";
-  import EmptyState from "../../../lib/components/EmptyState.svelte";
+  import ChevronDownIcon from "$lib/icons/ChevronDownIcon.svelte";
+  import EmptyState from "$lib/components/ui/EmptyState.svelte";
 
   let {
     sessions,

@@ -1,4 +1,5 @@
-import type { PeriodRange } from "./types";
+import type { PeriodRange } from "./period.types";
+export type { PeriodRange } from "./period.types";
 
 const MS_PER_DAY = 86_400_000;
 

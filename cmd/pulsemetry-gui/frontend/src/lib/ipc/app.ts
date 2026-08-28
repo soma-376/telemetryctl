@@ -1,5 +1,5 @@
-import { App } from "../../bindings/github.com/your-org/pulsemetry/cmd/pulsemetry-gui";
-import type { AppInfo } from "../../bindings/github.com/your-org/pulsemetry/cmd/pulsemetry-gui";
+import { App } from "../../../bindings/github.com/your-org/pulsemetry/cmd/pulsemetry-gui";
+import type { AppInfo } from "../../../bindings/github.com/your-org/pulsemetry/cmd/pulsemetry-gui";
 import { Application } from "@wailsio/runtime";
 
 export type { AppInfo };

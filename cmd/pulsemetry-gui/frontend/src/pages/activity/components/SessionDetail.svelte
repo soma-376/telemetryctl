@@ -1,14 +1,14 @@
 <script lang="ts">
   import { fade, fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
-  import { portal } from "../../../lib/portal";
-  import ChevronDownIcon from "../../../lib/icons/ChevronDownIcon.svelte";
-  import { detailDisplay } from "../data";
-  import AgentBadge from "../../../lib/components/AgentBadge.svelte";
-  import XIcon from "../../../lib/icons/XIcon.svelte";
-  import ChevronLeftIcon from "../../../lib/icons/ChevronLeftIcon.svelte";
-  import ChevronRightIcon from "../../../lib/icons/ChevronRightIcon.svelte";
-  import Pill from "../../../lib/components/Pill.svelte";
+  import { portal } from "$lib/utils/portal";
+  import ChevronDownIcon from "$lib/icons/ChevronDownIcon.svelte";
+  import { detailDisplay } from "../model";
+  import AgentBadge from "$lib/components/ui/AgentBadge.svelte";
+  import XIcon from "$lib/icons/XIcon.svelte";
+  import ChevronLeftIcon from "$lib/icons/ChevronLeftIcon.svelte";
+  import ChevronRightIcon from "$lib/icons/ChevronRightIcon.svelte";
+  import Pill from "$lib/components/ui/Pill.svelte";
   import KpiGrid from "./KpiGrid.svelte";
   import TurnFlow from "./TurnFlow.svelte";
   import TurnCard from "./TurnCard.svelte";

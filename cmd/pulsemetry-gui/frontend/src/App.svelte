@@ -2,12 +2,12 @@
   import { Events } from "@wailsio/runtime";
   import Home from "./pages/home/Home.svelte";
   import Activity from "./pages/activity/Activity.svelte";
-  import Header from "./lib/components/shell/Header.svelte";
-  import Nav from "./lib/components/shell/Nav.svelte";
-  import type { AppSection } from "./lib/navigation";
-  import { period } from "./lib/period.svelte";
+  import Header from "$lib/components/shell/Header.svelte";
+  import Nav from "$lib/components/shell/Nav.svelte";
+  import type { AppSection } from "$lib/navigation";
+  import { period } from "$lib/domain/period.svelte";
   import SettingsModal from "./pages/settings/SettingsModal.svelte";
-  import QuitDialog from "./lib/components/dialog/QuitDialog.svelte";
+  import QuitDialog from "$lib/components/dialog/QuitDialog.svelte";
   import TrayQuickView from "./pages/tray/TrayQuickView.svelte";
 
   const isTray =

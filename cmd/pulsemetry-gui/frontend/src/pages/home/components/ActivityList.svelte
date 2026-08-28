@@ -1,8 +1,8 @@
 <script lang="ts">
-  import AgentBadge from "../../../lib/components/AgentBadge.svelte";
-  import Pill from "../../../lib/components/Pill.svelte";
-  import EmptyState from "../../../lib/components/EmptyState.svelte";
-  import type { ActivityData } from "../chart";
+  import AgentBadge from "$lib/components/ui/AgentBadge.svelte";
+  import Pill from "$lib/components/ui/Pill.svelte";
+  import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import type { ActivityData } from "../types";
 
   let {
     activity,

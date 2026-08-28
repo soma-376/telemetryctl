@@ -1,9 +1,9 @@
 <script lang="ts">
-  import type { ActivitySession } from "../data";
-  import { rowDisplay } from "../data";
-  import AgentBadge from "../../../lib/components/AgentBadge.svelte";
-  import Dot from "../../../lib/components/Dot.svelte";
-  import Pill from "../../../lib/components/Pill.svelte";
+  import type { ActivitySession } from "../types";
+  import { rowDisplay } from "../model";
+  import AgentBadge from "$lib/components/ui/AgentBadge.svelte";
+  import Dot from "$lib/components/ui/Dot.svelte";
+  import Pill from "$lib/components/ui/Pill.svelte";
 
   let {
     session,

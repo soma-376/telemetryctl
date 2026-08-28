@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { FILE_CAP, type FileChange } from "../data";
-  import ChevronDownIcon from "../../../lib/icons/ChevronDownIcon.svelte";
+  import { FILE_CAP } from "../model";
+  import type { FileChange } from "../types";
+  import ChevronDownIcon from "$lib/icons/ChevronDownIcon.svelte";
 
   let {
     files,

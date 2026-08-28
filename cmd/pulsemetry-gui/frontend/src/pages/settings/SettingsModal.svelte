@@ -1,15 +1,15 @@
 <script lang="ts">
-  import { getAppInfo, type AppInfo } from "../../lib/backend";
-  import { AGENT_STYLE } from "../../lib/agents";
-  import Mascot from "../../lib/components/Mascot.svelte";
-  import AgentBadge from "../../lib/components/AgentBadge.svelte";
-  import Dot from "../../lib/components/Dot.svelte";
-  import Pill from "../../lib/components/Pill.svelte";
-  import SlidersIcon from "../../lib/icons/SlidersIcon.svelte";
-  import RefreshIcon from "../../lib/icons/RefreshIcon.svelte";
-  import ChevronDownIcon from "../../lib/icons/ChevronDownIcon.svelte";
-  import XIcon from "../../lib/icons/XIcon.svelte";
-  import CheckIcon from "../../lib/icons/CheckIcon.svelte";
+  import { getAppInfo, type AppInfo } from "$lib/ipc/app";
+  import { AGENT_STYLE } from "$lib/domain/agent";
+  import Mascot from "$lib/components/ui/Mascot.svelte";
+  import AgentBadge from "$lib/components/ui/AgentBadge.svelte";
+  import Dot from "$lib/components/ui/Dot.svelte";
+  import Pill from "$lib/components/ui/Pill.svelte";
+  import SlidersIcon from "$lib/icons/SlidersIcon.svelte";
+  import RefreshIcon from "$lib/icons/RefreshIcon.svelte";
+  import ChevronDownIcon from "$lib/icons/ChevronDownIcon.svelte";
+  import XIcon from "$lib/icons/XIcon.svelte";
+  import CheckIcon from "$lib/icons/CheckIcon.svelte";
   import {
     HEALTH,
     PREFS,
@@ -19,7 +19,7 @@
     COLLECTION,
     TRANSPORT,
     POLICY,
-  } from "./data";
+  } from "./mock";
 
   let { open, onClose }: { open: boolean; onClose: () => void } = $props();
 
@@ -67,7 +67,11 @@
           class="bg-accent-soft text-accent flex flex-none items-center justify-center"
           style="width:30px;height:30px;border-radius:9px"
         >
-          <SlidersIcon size={16} strokeWidth={1.8} knobFill="var(--color-accent-soft)" />
+          <SlidersIcon
+            size={16}
+            strokeWidth={1.8}
+            knobFill="var(--color-accent-soft)"
+          />
         </span>
         <span
           class="text-text font-bold"
@@ -126,7 +130,10 @@
                 style="grid-template-columns:7px minmax(0,1fr) auto;gap:9px;padding:6px 0"
               >
                 <Dot color="var(--color-success)" />
-                <span class="text-text truncate font-semibold" style="font-size:12px">
+                <span
+                  class="text-text truncate font-semibold"
+                  style="font-size:12px"
+                >
                   {h.name}
                 </span>
                 <span
@@ -219,7 +226,11 @@
                 style="gap:9px;border-radius:9px;padding:7px 11px;font-size:12.5px"
               >
                 {p.value}
-                <ChevronDownIcon size={12} strokeWidth={2.4} class="text-text-muted" />
+                <ChevronDownIcon
+                  size={12}
+                  strokeWidth={2.4}
+                  class="text-text-muted"
+                />
               </button>
             {/if}
           </div>
@@ -244,7 +255,8 @@
             <span style="min-width:0">
               <span
                 class="block truncate font-semibold"
-                style="font-size:13.5px;margin-bottom:3px;color:{c.state === 'off'
+                style="font-size:13.5px;margin-bottom:3px;color:{c.state ===
+                'off'
                   ? 'var(--color-text-secondary)'
                   : 'var(--color-text)'}"
               >
@@ -304,9 +316,8 @@
             <circle cx="12" cy="16.8" r="0.9" fill="#8b6b36" />
           </svg>
           <div style="font-size:12px;line-height:1.6;color:#5d5852">
-            아래 항목은 <strong
-              class="text-text"
-              style="font-weight:600">조직의 중앙 서버로 전송</strong
+            아래 항목은 <strong class="text-text" style="font-weight:600"
+              >조직의 중앙 서버로 전송</strong
             >됩니다. 조직 정책으로 관리되며 이 기기에서 변경할 수 없어요.
           </div>
         </div>
@@ -369,7 +380,10 @@
             class="bg-surface-hover"
             style="border:1px solid #efe9e1;border-radius:11px;padding:12px 14px"
           >
-            <div class="text-text-muted" style="font-size:11px;margin-bottom:7px">
+            <div
+              class="text-text-muted"
+              style="font-size:11px;margin-bottom:7px"
+            >
               전송 대상
             </div>
             <div
@@ -390,7 +404,10 @@
             class="bg-surface-hover"
             style="border:1px solid #efe9e1;border-radius:11px;padding:12px 14px"
           >
-            <div class="text-text-muted" style="font-size:11px;margin-bottom:7px">
+            <div
+              class="text-text-muted"
+              style="font-size:11px;margin-bottom:7px"
+            >
               정책 출처
             </div>
             <div
@@ -424,7 +441,8 @@
           class="text-text-muted truncate"
           style="font-size:12px;min-width:0"
         >
-          {appInfo.name} {appInfo.version}
+          {appInfo.name}
+          {appInfo.version}
         </span>
       </div>
     </div>

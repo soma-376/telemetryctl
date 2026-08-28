@@ -1,5 +1,5 @@
 <script lang="ts">
-  import ChevronDownIcon from "../../../lib/icons/ChevronDownIcon.svelte";
+  import ChevronDownIcon from "$lib/icons/ChevronDownIcon.svelte";
 
   // 날짜는 공용 Header의 DateRangePicker가 담당한다.
   // 나머지 필터는 아직 표시 전용(실데이터 연동 시 구현).

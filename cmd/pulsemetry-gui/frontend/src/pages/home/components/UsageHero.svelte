@@ -1,19 +1,11 @@
 <script lang="ts">
-  import type { HeroData } from "../chart";
-  import { labelStep } from "../chart";
-  import EmptyState from "../../../lib/components/EmptyState.svelte";
+  import type { HeroData } from "../types";
+  import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import UsageChart from "./usage-chart/UsageChart.svelte";
 
   // 히어로 카드 — 스택 바 자체가 벤더 분해라 별도 총계/점유율 카드가 필요 없다.
   let { hero }: { hero: HeroData } = $props();
 
-  // 라벨을 몇 개 걸러 보여줄지는 컬럼 폭을 알아야 정할 수 있어 렌더 폭을 잰다.
-  let plotWidth = $state(0);
-  const step = $derived(
-    labelStep(
-      hero.bars.map((b) => b.label),
-      plotWidth / (hero.bars.length || 1),
-    ),
-  );
 </script>
 
 <div
@@ -86,57 +78,7 @@
           description={"다른 기간을 선택하거나, CLI 가 연결되어 있는지 확인해보세요."}
         />
       {:else}
-        <div
-          class="grid items-stretch"
-          style="flex:1;grid-template-columns:{hero.gridCols};gap:{hero.gridGap};min-height:148px"
-        >
-          {#each hero.bars as b, i (i)}
-            <div class="flex h-full flex-col items-center" style="gap:8px">
-              <span
-                class="font-semibold whitespace-nowrap"
-                style="font-size:{b.valueSize};color:{b.valueFg};font-variant-numeric:tabular-nums"
-              >
-                {b.total}
-              </span>
-              <!-- 값 → 높이 매핑은 flex-grow 로 한다. 위 여백과 채움이 비율대로
-                   공간을 나누므로 픽셀 계산도, 반올림 누적도 없다. -->
-              <span class="flex w-full flex-col" style="flex:1;min-height:0">
-                <span style="flex:{100 - b.fillPct} 1 0"></span>
-                <span class="flex w-full flex-col" style="flex:{b.fillPct} 1 0">
-                  {#each b.parts as pt, j (j)}
-                    <!-- 조각 사이 2px 간격은 gap 이 아니라 border 로 낸다. gap 은
-                         고정 픽셀이라 막대가 짧아지면 합이 넘치지만, border 는
-                         box-sizing:border-box 아래에서 조각 안쪽을 깎는다. -->
-                    <span
-                      class="w-full"
-                      style="flex:{pt.weight} 1 0;background:{pt.color};border-radius:{pt.radius};{j >
-                      0
-                        ? 'border-top:2px solid var(--color-surface)'
-                        : ''}"
-                    ></span>
-                  {/each}
-                </span>
-              </span>
-            </div>
-          {/each}
-        </div>
-        <div
-          bind:clientWidth={plotWidth}
-          class="grid"
-          style="grid-template-columns:{hero.gridCols};gap:{hero.gridGap};margin-top:9px;padding-top:9px;border-top:1px solid #f1ece4"
-        >
-          {#each hero.bars as b, i (i)}
-            {@const isLast = i === hero.bars.length - 1}
-            <span
-              class="text-center whitespace-nowrap"
-              style="font-size:11px;color:{b.labelFg};font-weight:{b.labelWeight};overflow:visible"
-            >
-              {isLast || (i % step === 0 && hero.bars.length - 1 - i >= step)
-                ? b.label
-                : ""}
-            </span>
-          {/each}
-        </div>
+        <UsageChart {hero} />
       {/if}
     </div>
   </div>

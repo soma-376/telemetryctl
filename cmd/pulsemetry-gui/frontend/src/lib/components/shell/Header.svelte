@@ -1,6 +1,6 @@
 <script lang="ts">
-  import Mascot from "../Mascot.svelte";
-  import Dot from "../Dot.svelte";
+  import Mascot from "$lib/components/ui/Mascot.svelte";
+  import Dot from "$lib/components/ui/Dot.svelte";
   import BellIcon from "../../icons/BellIcon.svelte";
   import SlidersIcon from "../../icons/SlidersIcon.svelte";
   import PowerIcon from "../../icons/PowerIcon.svelte";
@@ -19,6 +19,12 @@
     onOpenSettings?: () => void;
     onQuit?: () => void;
   } = $props();
+
+  // 헤더가 좁아지면 가운데 칩이 날짜 선택기를 밀어낸다. 칩은 같은 숫자가 Home
+  // 히어로에 크게 나오는 보조 정보라 먼저 줄인다 — 조작하는 컨트롤이 잘리는 것보다 낫다.
+  // 뷰포트가 아니라 헤더 자신의 폭을 재는 이유: 헤더는 1080px 에서 멈춘다.
+  let headerWidth = $state(0);
+  const compact = $derived(headerWidth > 0 && headerWidth < 950);
 </script>
 
 <!-- 하단 Nav 와 같은 언어: 배경 위에 떠 있는 카드 한 장.
@@ -28,6 +34,7 @@
   style="max-width:var(--page-max-width);padding:18px 32px 12px"
 >
   <div
+    bind:clientWidth={headerWidth}
     class="bg-surface border-border grid items-center border"
     style="grid-template-columns:1fr auto 1fr;gap:20px;border-radius:16px;padding:8px 14px"
   >
@@ -57,9 +64,13 @@
         size={8}
         color={online ? "var(--color-success)" : "var(--color-inactive)"}
       />
-      <span class="font-semibold">{activeAgents} agents active</span>
+      <span class="font-semibold">
+        {activeAgents}{compact ? " agents" : " agents active"}
+      </span>
       <span class="text-text-muted">•</span>
-      <span class="text-text-secondary">{tokensToday} tokens today</span>
+      <span class="text-text-secondary">
+        {tokensToday}{compact ? "" : " tokens today"}
+      </span>
     </div>
 
     <div class="text-text flex items-center justify-end" style="gap:14px">

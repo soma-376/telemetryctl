@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { TurnSegment } from "../data";
+  import type { TurnSegment } from "../types";
 
   let {
     turnCount,

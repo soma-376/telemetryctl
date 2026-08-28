@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { openMainSettings } from "../../../lib/backend";
-  import PowerIcon from "../../../lib/icons/PowerIcon.svelte";
-  import { TRAY_OPTIONS } from "../data";
+  import { openMainSettings } from "$lib/ipc/app";
+  import PowerIcon from "$lib/icons/PowerIcon.svelte";
+  import { TRAY_OPTIONS } from "../mock";
   import type { TrayOptionKey } from "../types";
 
   let {

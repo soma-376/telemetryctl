@@ -9,9 +9,9 @@
     addDays,
     monthGridDays,
     periodDays,
-  } from "../../period.svelte";
-  import type { PeriodRange } from "../../types";
-  import { TODAY, RETAIN_FROM } from "../../../pages/home/chart";
+  } from "$lib/domain/period.svelte";
+  import type { PeriodRange } from "$lib/domain/period.types";
+  import { TODAY, RETAIN_FROM } from "$lib/domain/retention";
   import ChevronDownIcon from "../../icons/ChevronDownIcon.svelte";
   import CalendarIcon from "../../icons/CalendarIcon.svelte";
   import ChevronLeftIcon from "../../icons/ChevronLeftIcon.svelte";
@@ -39,11 +39,25 @@
     const d = toDate(s);
     return `${d.getMonth() + 1}월 ${d.getDate()}일`;
   };
-  const rangeShort = $derived(
-    committed.start === committed.end
-      ? long(committed.start)
-      : `${fmt(committed.start)} ~ ${fmt(committed.end)}`,
-  );
+  // 년도는 조건부로 붙인다. 보존이 400일이라 선택 가능한 범위가 늘 13개월 안이고,
+  // 그래서 올해 안에서 끝나는 범위에는 년도가 정보를 주지 않는다 — 버튼만 넓어져
+  // 좁은 창에서 헤더를 밀어낸다. 헷갈릴 수 있는 두 경우에만 붙인다:
+  // 해를 걸칠 때(양쪽), 올해가 아닐 때(시작 쪽).
+  const thisYear = toDate(TODAY).getFullYear();
+  const ymd = (s: string) => `${toDate(s).getFullYear()}.${fmt(s)}`;
+
+  const rangeShort = $derived.by(() => {
+    const a = toDate(committed.start).getFullYear();
+    const b = toDate(committed.end).getFullYear();
+    if (committed.start === committed.end) {
+      return a === thisYear
+        ? long(committed.start)
+        : `${a}년 ${long(committed.start)}`;
+    }
+    if (a !== b) return `${ymd(committed.start)} ~ ${ymd(committed.end)}`;
+    if (a !== thisYear) return `${ymd(committed.start)} ~ ${fmt(committed.end)}`;
+    return `${fmt(committed.start)} ~ ${fmt(committed.end)}`;
+  });
 
   function setRange(a: string, b: string) {
     draft = { start: a, end: b };

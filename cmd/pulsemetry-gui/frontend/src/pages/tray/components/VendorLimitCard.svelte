@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { AGENT_STYLE } from "../../../lib/agents";
-  import { headOf, limitTone } from "../tray";
+  import { AGENT_STYLE } from "$lib/domain/agent";
+  import { headOf, limitTone } from "../model";
   import type { TrayVendor } from "../types";
   import LimitWindowRow from "./LimitWindowRow.svelte";
-  import AgentBadge from "../../../lib/components/AgentBadge.svelte";
-  import ProgressBar from "../../../lib/components/ProgressBar.svelte";
-  import ChevronDownIcon from "../../../lib/icons/ChevronDownIcon.svelte";
+  import AgentBadge from "$lib/components/ui/AgentBadge.svelte";
+  import ProgressBar from "$lib/components/ui/ProgressBar.svelte";
+  import ChevronDownIcon from "$lib/icons/ChevronDownIcon.svelte";
 
   let { vendor }: { vendor: TrayVendor } = $props();
   let open = $state(false);

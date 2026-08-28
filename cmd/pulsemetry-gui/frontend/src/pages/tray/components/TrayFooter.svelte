@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { openMainWindow } from "../../../lib/backend";
-  import SlidersIcon from "../../../lib/icons/SlidersIcon.svelte";
-  import PowerIcon from "../../../lib/icons/PowerIcon.svelte";
+  import { openMainWindow } from "$lib/ipc/app";
+  import SlidersIcon from "$lib/icons/SlidersIcon.svelte";
+  import PowerIcon from "$lib/icons/PowerIcon.svelte";
 
   let {
     settingsOpen,

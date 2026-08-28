@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { openMainWindow } from "../../../lib/backend";
-  import AgentBadge from "../../../lib/components/AgentBadge.svelte";
-  import Dot from "../../../lib/components/Dot.svelte";
+  import { openMainWindow } from "$lib/ipc/app";
+  import AgentBadge from "$lib/components/ui/AgentBadge.svelte";
+  import Dot from "$lib/components/ui/Dot.svelte";
   import type { TraySession } from "../types";
 
   let { session }: { session: TraySession } = $props();

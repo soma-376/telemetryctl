@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { AGENT_STYLE } from "../../../lib/agents";
-  import AgentBadge from "../../../lib/components/AgentBadge.svelte";
-  import ProgressBar from "../../../lib/components/ProgressBar.svelte";
-  import type { VendorRow } from "../chart";
+  import { AGENT_STYLE } from "$lib/domain/agent";
+  import AgentBadge from "$lib/components/ui/AgentBadge.svelte";
+  import ProgressBar from "$lib/components/ui/ProgressBar.svelte";
+  import type { VendorRow } from "../types";
 
   let { vendors }: { vendors: VendorRow[] } = $props();
 </script>

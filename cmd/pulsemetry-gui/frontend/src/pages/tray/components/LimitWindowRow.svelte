@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { TrayLimitWindow } from "../types";
-  import { limitTone } from "../tray";
-  import ProgressBar from "../../../lib/components/ProgressBar.svelte";
+  import { limitTone } from "../model";
+  import ProgressBar from "$lib/components/ui/ProgressBar.svelte";
 
   let { window, accent }: { window: TrayLimitWindow; accent: string } =
     $props();
