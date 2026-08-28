@@ -36,6 +36,7 @@ var migrations = []migration{
 	{version: 1, name: "초기 스키마", stmts: schemaV1},
 	{version: 2, name: "턴과 세션 단계", stmts: schemaV2},
 	{version: 3, name: "로컬 저장 모델 재생성", stmts: schemaV3},
+	{version: 4, name: "조회 인덱스", stmts: schemaV4},
 }
 
 // LatestSchemaVersion 은 이 바이너리가 아는 최신 스키마 버전이다.
