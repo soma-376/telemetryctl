@@ -348,3 +348,28 @@ func snapshotRows(t *testing.T, db *DB) map[string]string {
 	}
 	return out
 }
+
+// seedTimelessSession 은 sessions 행의 시각이 전부 NULL 이고 이벤트에만 시각이 있는
+// 세션을 만든다. Write 는 항상 started_at 을 채우므로 이 모양은 SQL 로 직접 만든다.
+func seedTimelessSession(t *testing.T, db *DB, occurredAt event.UnixSec) {
+	t.Helper()
+	ctx := context.Background()
+	stmts := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO vendors (vendor, first_seen, last_seen, status)
+		  VALUES ('claude_code', ?, ?, 'enabled')`, []any{int64(occurredAt), int64(occurredAt)}},
+		{`INSERT INTO sessions (vendor_id, session_key) VALUES ('claude_code', 'sess-timeless')`, nil},
+		{`INSERT INTO turns (session_id, turn_key, turn_index)
+		  SELECT id, 'p1', 0 FROM sessions WHERE session_key = 'sess-timeless'`, nil},
+		{`INSERT INTO events (turn_id, seq, event_name, occurred_at, record_hash)
+		  SELECT id, 1, 'claude_code.user_prompt', ?, 'hash-timeless' FROM turns WHERE turn_key = 'p1'`,
+			[]any{int64(occurredAt)}},
+	}
+	for _, s := range stmts {
+		if _, err := db.SQL().ExecContext(ctx, s.query, s.args...); err != nil {
+			t.Fatalf("픽스처 삽입 (%s): %v", s.query, err)
+		}
+	}
+}

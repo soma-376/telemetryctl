@@ -5,11 +5,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/your-org/pulsemetry/internal/event"
 	"github.com/your-org/pulsemetry/internal/session"
 )
 
-// 보존 정책의 세부(경계·계수·purge 옵션)는 PROJ-86 의 몫이다. 여기서는 v3 계층에 대해
-// 삭제 순서가 성립하고 최근 데이터가 살아남는다는 것만 고정한다.
+// 보존 정책은 되돌릴 수 없는 삭제다. 그래서 "무엇이 지워지는가" 만큼 "무엇이 남는가" 와
+// "실패하면 아무것도 바뀌지 않는가" 를 같은 무게로 고정한다.
+
+// cutoffSec 은 baseTime 기준 400일 컷오프다. 이 값과 정확히 같은 시각의 행은 남는다.
+var cutoffSec = event.SecFromTime(baseTime.Add(-DefaultRetentionDays * 24 * time.Hour))
+
+// closedSession 은 주어진 시각에 시작하고 마감된 세션이다. 경계 판정에 필요한 시각만
+// 다르고 나머지 컬럼은 newSession 에서 빌린다.
+func closedSession(id string, at event.UnixSec) session.Session {
+	s := newSession(id, baseTime)
+	s.StartedAt, s.LastEventAt = at, at
+	s.EndedAt = someSec(at)
+	return s
+}
 
 // seedRetention 은 컷오프 바깥(오래된) 세션과 안쪽(최근) 세션을 하나씩 넣는다.
 func seedRetention(t *testing.T, db *DB, now time.Time) {
@@ -155,5 +168,159 @@ func TestPurgeContentBefore(t *testing.T) {
 	}
 	if got := scanOne(t, db, `SELECT prompt_text FROM turns WHERE turn_key = 'p-new'`); got != "최근 프롬프트" {
 		t.Fatalf("최근 프롬프트가 지워졌다: %v", got)
+	}
+}
+
+// 컷오프 경계는 열려 있다 — 컷오프와 정확히 같은 시각의 행은 남는다.
+// 경계가 한쪽으로 밀리면 매일 하루치가 조용히 더(또는 덜) 지워진다.
+func TestPruneCutoffBoundary(t *testing.T) {
+	tests := []struct {
+		name        string
+		endedAt     event.UnixSec
+		wantDeleted bool
+	}{
+		{name: "컷오프 1초 전은 지운다", endedAt: cutoffSec - 1, wantDeleted: true},
+		{name: "컷오프 정각은 남긴다", endedAt: cutoffSec},
+		{name: "컷오프 1초 후는 남긴다", endedAt: cutoffSec + 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := openTestDB(t)
+			mustWrite(t, db, Batch{Sessions: []session.Session{closedSession("sess-1", tt.endedAt)}})
+
+			res, err := db.Prune(context.Background(), baseTime)
+			if err != nil {
+				t.Fatalf("Prune: %v", err)
+			}
+			want := int64(0)
+			if tt.wantDeleted {
+				want = 1
+			}
+			if res.Sessions != want {
+				t.Fatalf("지운 세션 = %d, want %d", res.Sessions, want)
+			}
+			if got := int64(countRows(t, db, "sessions")); got != 1-want {
+				t.Fatalf("남은 세션 = %d행", got)
+			}
+			assertNoOrphans(t, db)
+		})
+	}
+}
+
+// 400일 전에 시작해 지금도 도는 세션은 살아 있다. 시작 시각만 보면 어제 만들어진
+// 이벤트까지 함께 사라진다.
+func TestPruneKeepsLongRunningSession(t *testing.T) {
+	db := openTestDB(t)
+	s := newSession("sess-long", baseTime)
+	s.StartedAt = cutoffSec - 100*24*3600 // 500일 전 시작, 아직 마감 안 됨
+	s.LastEventAt = event.SecFromTime(baseTime)
+
+	mustWrite(t, db, Batch{
+		Sessions: []session.Session{s},
+		Events: []EventRecord{
+			evrec("claude_code.user_prompt", baseTime, 0, sess("sess-long"), inTurn("p1")),
+		},
+	})
+
+	res, err := db.Prune(context.Background(), baseTime)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if res.Total() != 0 {
+		t.Fatalf("도는 세션을 지웠다: %+v", res)
+	}
+}
+
+// 세션 행에 시각이 없어도 이벤트가 있으면 판정할 수 있다.
+func TestPruneUsesEventTimeWhenSessionHasNoTimestamps(t *testing.T) {
+	tests := []struct {
+		name        string
+		occurredAt  event.UnixSec
+		wantDeleted bool
+	}{
+		{name: "오래된 이벤트만 있으면 지운다", occurredAt: cutoffSec - 1, wantDeleted: true},
+		{name: "최근 이벤트가 있으면 남긴다", occurredAt: event.SecFromTime(baseTime)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := openTestDB(t)
+			seedTimelessSession(t, db, tt.occurredAt)
+
+			res, err := db.Prune(context.Background(), baseTime)
+			if err != nil {
+				t.Fatalf("Prune: %v", err)
+			}
+			want := int64(0)
+			if tt.wantDeleted {
+				want = 1
+			}
+			if res.Sessions != want || res.Events != want || res.Turns != want {
+				t.Fatalf("PruneResult = %+v, 지울 것 = %d", res, want)
+			}
+			assertNoOrphans(t, db)
+		})
+	}
+}
+
+// 한 트랜잭션이라는 것은 중간에 실패하면 **아무것도** 바뀌지 않는다는 뜻이다.
+// 자식 계층을 다 지운 뒤 sessions 에서 실패시켜 그 앞의 삭제가 되돌려지는지 본다.
+func TestPruneRollsBackOnFailure(t *testing.T) {
+	db := openTestDB(t)
+	seedRetention(t, db, baseTime)
+	before := snapshotRows(t, db)
+
+	// BEFORE DELETE 트리거로 sessions 삭제만 실패시킨다. 앞의 다섯 문장은 이미 성공한 뒤다.
+	if _, err := db.SQL().ExecContext(context.Background(),
+		`CREATE TRIGGER prune_boom BEFORE DELETE ON sessions BEGIN
+		   SELECT RAISE(ABORT, '테스트가 강제한 실패');
+		 END`); err != nil {
+		t.Fatalf("트리거 생성: %v", err)
+	}
+
+	if _, err := db.Prune(context.Background(), baseTime); err == nil {
+		t.Fatal("Prune 이 성공했다 — 트리거가 안 걸렸다")
+	}
+
+	if _, err := db.SQL().ExecContext(context.Background(), `DROP TRIGGER prune_boom`); err != nil {
+		t.Fatalf("트리거 삭제: %v", err)
+	}
+	for table, want := range before {
+		if got := snapshotRows(t, db)[table]; got != want {
+			t.Fatalf("%s 가 롤백되지 않았다:\n실패 후:\n%s\n실패 전:\n%s", table, got, want)
+		}
+	}
+
+	// 트리거가 사라졌으니 같은 호출이 이제 정상적으로 지운다.
+	res, err := db.Prune(context.Background(), baseTime)
+	if err != nil {
+		t.Fatalf("재시도 Prune: %v", err)
+	}
+	if res.Sessions != 1 {
+		t.Fatalf("재시도 PruneResult = %+v", res)
+	}
+	assertNoOrphans(t, db)
+}
+
+// 두 번째 실행은 아무것도 바꾸지 않는다. 실패 후 다음 틱에 그대로 다시 부르는 것이 정상 경로다.
+func TestPruneSecondRunChangesNothing(t *testing.T) {
+	db := openTestDB(t)
+	seedRetention(t, db, baseTime)
+
+	if _, err := db.Prune(context.Background(), baseTime); err != nil {
+		t.Fatalf("첫 Prune: %v", err)
+	}
+	after := snapshotRows(t, db)
+
+	second, err := db.Prune(context.Background(), baseTime)
+	if err != nil {
+		t.Fatalf("두 번째 Prune: %v", err)
+	}
+	if second.Total() != 0 {
+		t.Fatalf("두 번째 Prune 이 %d행을 더 지웠다: %+v", second.Total(), second)
+	}
+	for table, want := range after {
+		if got := snapshotRows(t, db)[table]; got != want {
+			t.Fatalf("%s 가 두 번째 실행에서 바뀌었다:\n%s\n원래:\n%s", table, got, want)
+		}
 	}
 }
