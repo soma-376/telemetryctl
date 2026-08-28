@@ -292,6 +292,7 @@ ADR 0004 의 구현이다. **`internal/dashboard` 는 순수 Go 이고 Wails 를
 func Open(dbPath string) (*Reader, error)
 
 func (r *Reader) Today(ctx context.Context, tz string) (TodaySummary, error)
+func (r *Reader) Home(ctx context.Context, q HomeQuery) (HomeSummary, error)
 func (r *Reader) Sessions(ctx context.Context, q SessionQuery) ([]SessionRow, error)
 func (r *Reader) Session(ctx context.Context, id int64) (SessionDetail, error)
 func (r *Reader) Breakdown(ctx context.Context, q BreakdownQuery) ([]Row, error)
@@ -336,6 +337,7 @@ func (s *Service) Stop() error            // ServiceShutdown 자리
 | 화면 요소 | 메서드 |
 |---|---|
 | Today 4개 카드 + 어제 대비 %, 상단 "N agents active" | `Today(tz)` |
+| Home 선택 날짜의 4개 카드(토큰·예상 비용·활동 시간·2시간 평균) + 최근 활동 | `Home(q)` |
 | 오늘의 활동 / 세션 리스트 | `Sessions(q)` |
 | 세션 상세 (수치 + 파일 변경 + 툴 타임라인 + MCP) | `Session(id)` |
 | Agent 사용 비율 · 시간대별 집중도 · 일별 추이 | `Breakdown(q)` |
@@ -467,6 +469,88 @@ Windows 에서 데몬의 prune 이 막힌다.
 현재 `.github/workflows/go.yml` 에 **`gui/` 스텝이 없다.** 디렉터리와 별도 `go.mod` 가 아직 없어
 지금 넣으면 무조건 실패하기 때문이다. GUI 티켓에서 `working-directory: gui` 스텝과 `gui/go.sum`
 캐시 경로를 함께 추가해야 한다. 검증 명령은 `(cd gui && go build ./...)` 다.
+
+### 6.8 `Home(q)` — 선택 날짜의 요약과 최근 활동 (PROJ-88)
+
+`Today(tz)` 는 "지금이 속한 하루" 밖에 물을 수 없다. `Home` 은 **`HomeQuery{TZ, Date, RecentLimit}`**
+으로 날짜를 받는다. `Date` 는 그 시간대의 `YYYY-MM-DD` 이고 비어 있으면 오늘이다.
+**형식이 틀리면 에러다** — 조용히 오늘로 떨어지면 사용자는 어제를 보고 있다고 믿는다.
+
+`Today` 는 지우지 않는다. 이미 GUI TypeScript 바인딩과 `stats --json` 이 그 모양을 읽고 있고,
+두 메서드는 같은 집계기(`aggregate.go`)와 같은 시간대 계산(`timezone.go`)을 쓴다.
+
+카드는 티켓이 지정한 네 장이고 순서가 고정이다.
+
+| 카드 | 상수 | 값 |
+|---|---|---|
+| 토큰 | `MetricTokens` | `input_tokens + output_tokens` |
+| 예상 비용 | `MetricEstimatedCostUSD` | 가격표 산정 합계 (아래) |
+| AI 활동 시간 | `MetricActiveSeconds` | `SUM(sessions.active_time_sec)` |
+| 2시간 평균 | `MetricTwoHourActiveSeconds` | 활동이 있었던 2시간 창의 평균 활동 시간(초) |
+
+**토큰 총량은 `input + output` 뿐이다.** `reasoning_tokens` 는 **출력의 부분집합**이라 다시 더하지
+않고, 캐시 토큰(`cache_read`·`cache_write`)도 **총량에 더하지 않는다** — 이미 한 번 센 입력을 다시
+읽은 양이라 더하면 "쓴 토큰" 이 실제보다 부푼다. 두 값은 `Totals` 에 따로 보인다.
+
+#### 예상 비용은 `SUM(cost_usd)` 가 아니다
+
+`Totals.CostUSD` 는 `SUM(llm_calls.cost_usd)`, 즉 **벤더가 보고한 비용만**의 합이다. 모델과 토큰은
+아는데 `cost_usd` 가 비어 있는 호출이 거기서는 0 원으로 사라진다. `HomeSummary.Cost` 는 그 빈칸을
+`internal/pricing` 의 표 단가로 메운 값이라 항상 그보다 크거나 같다.
+
+- 산정 규칙은 **보고값 우선**이다. 보고값과 추정값을 더하면 정확히 두 배가 된다.
+- 합산은 float 이 아니라 **정수 nano-USD** 다. 더하는 순서가 달라도 합이 같아야 한다.
+- 비용을 정하지 못한 호출은 **0 원으로 들어가지 않고 빠진다.** 몇 건인지는 `Cost.Unavailable` 이
+  말하고, 화면은 그 값이 크면 "일부 호출의 비용을 알 수 없음" 을 알려야 한다.
+- `Cost.TableVersion`·`EffectiveDate` 로 어느 판의 단가였는지 되짚는다.
+- `Cost.CacheSavings` 는 **비용이 아니다.** 어떤 합계에도 더하지 않는다.
+
+#### 2시간 창과 DST
+
+창은 **현지 자정부터 2시간씩** 자른다. DST 전환일의 하루는 23·25시간이라 2시간으로 나누어떨어지지
+않으므로 **마지막 창이 짧다**(각각 창 12개·13개, 마지막은 1시간). 창이 하루를 구멍도 겹침도 없이
+덮어야 창 합계가 카드와 같다.
+
+평균의 **분모는 활동이 있었던 창뿐**이다. 자는 시간까지 분모에 넣으면 평균이 늘 바닥에 붙어 아무것도
+구분하지 못한다. 분모는 `TwoHour.ActiveWindows` 이고 0 이면 평균은 전부 0 이다. 창 전부를 그대로
+내보내므로 화면이 다른 분모(예: 하루 전체)를 고르고 싶으면 다시 조회하지 않아도 된다.
+
+#### ★ Home 카드 값과 최근 세션 값의 합계 정의
+
+두 숫자는 **자르는 기준이 다르다.** 같아 보이는 값이 어긋나는 것은 버그가 아니라 아래 정의의 결과다.
+
+| | 무엇을 고르는가 | 값은 무엇인가 |
+|---|---|---|
+| 카드 (`Totals`·`Cost`·`TwoHour`) | **사실이 일어난 시각**이 `[StartAt, EndAt)` 에 든 것 | 그 구간 몫 |
+| 최근 세션 (`Recent`) | **`sessions.started_at`** 이 같은 구간에 든 세션 | 그 세션의 **생애 전체** 합계 |
+
+사실의 시각은 비용·토큰·API 호출 수가 `llm_calls.called_at`, 도구·파일이 `tool_calls.called_at`,
+프롬프트가 `turns.started_at` 이다. **`sessions_started`·`active_seconds` 만 예외**로 세션이
+**시작한** 날에 통째로 귀속된다 — 활동 시간은 세션 전체의 값이라 시간으로 쪼갤 수 없다.
+
+따라서:
+
+- 자정을 넘겨 이어진 세션이 없고 목록이 잘리지 않았으면(`RecentTruncated=false`)
+  **최근 세션 행들의 토큰·비용 합 = 카드 값**이다.
+- 자정을 넘긴 세션이 있으면 그 세션의 다음 날 몫이 행에는 있고 카드에는 없다. 행 합계가 **크다.**
+- `RecentLimit` 로 잘린 목록의 합은 카드보다 **작다.** `RecentTruncated` 가 그 사실을 알린다.
+
+행의 값이 생애 전체인 이유는 같은 세션이 Activity 목록·세션 상세와 다른 숫자를 보이면 안 되기
+때문이다. 단 `RecentSession.Cost` 는 가격표 기준이라 `SessionRow.CostUSD`(보고값 합)보다 크거나
+같을 수 있다.
+
+#### `ActiveAgents` 는 날짜와 무관하다
+
+진행 중 판정은 **`ended_at IS NULL` 하나**다 (ADR 0009, v3 에는 `sessions.status` 가 없다).
+"지금 몇 개가 돌고 있나" 는 과거 날짜로 되돌릴 수 없으므로 `Home` 은 선택 날짜와 무관하게
+**지금**을 답한다. `HomeSummary.IsToday` 가 화면이 표기를 고르는 손잡이다.
+
+#### 질의 비용
+
+하루당 질의는 넷이다 — 선택 날짜·전날 각각에 대해 승격 테이블 집계 1회(`aggregate.go`,
+출처별로 나뉜 다섯 문장)와 `llm_calls` 행 스캔 1회. 최근 세션은 목록 1회 + 그 세션들의
+`llm_calls` 1회다. **`llm_calls.called_at` 에는 인덱스가 없다**(v4 는 `ix_llm_turn` 만 둔다).
+하루치 행 수가 커지면 이 스캔이 먼저 느려진다.
 
 ---
 
