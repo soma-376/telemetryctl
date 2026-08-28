@@ -83,7 +83,7 @@ func TestSessionsHumanMatchesJSON(t *testing.T) {
 		for _, cell := range cells {
 			idx := strings.Index(rest, cell)
 			if idx < 0 {
-				t.Fatalf("세션 %s 행에 %q 가 순서대로 없다:\n%s", s.SessionID, cell, line)
+				t.Fatalf("세션 %s 행에 %q 가 순서대로 없다:\n%s", s.SessionKey, cell, line)
 			}
 			rest = rest[idx+len(cell):]
 		}
@@ -120,7 +120,7 @@ func TestSessionsStatusFilter(t *testing.T) {
 	if err := json.Unmarshal([]byte(res.stdout), &parsed); err != nil {
 		t.Fatalf("JSON 파싱: %v", err)
 	}
-	if parsed.Count != 1 || parsed.Sessions[0].SessionID != "sess-codex" {
+	if parsed.Count != 1 || parsed.Sessions[0].SessionKey != "sess-codex" {
 		t.Fatalf("running 필터 결과 = %d개 %+v, want sess-codex 1개", parsed.Count, parsed.Sessions)
 	}
 }

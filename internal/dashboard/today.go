@@ -56,8 +56,8 @@ type Card struct {
 
 // Today 는 tz 기준 오늘의 요약을 어제 대비와 함께 돌려준다.
 //
-// rollup_hourly 를 오늘·어제 두 구간으로 두 번 조회한다 (계획서 「화면 → 쿼리 대응」).
-// 구간 경계는 UTC 자정이 아니라 **tz 의 자정** 이다 — timezone.go 참고.
+// 승격 테이블을 오늘·어제 두 구간으로 집계한다 (aggregate.go). 구간 경계는 UTC 자정이
+// 아니라 **tz 의 자정** 이다 — timezone.go 참고.
 //
 // tz 가 잘못되면 에러다. DB 가 없으면 에러가 아니라 0 으로 채운 요약이다.
 func (r *Reader) Today(ctx context.Context, tz string) (TodaySummary, error) {
@@ -99,26 +99,21 @@ func (r *Reader) Today(ctx context.Context, tz string) (TodaySummary, error) {
 	return sum, nil
 }
 
-const totalsInRangeSQL = `SELECT ` + rollupSumColumns + `
-FROM rollup_hourly
-WHERE dim = 'total' AND "key" = '' AND hour >= ? AND hour < ?`
-
-// totalsIn 은 dim='total' 행의 구간 합계다.
+// totalsIn 은 구간 전체의 합계다. Breakdown(dim=total) 과 같은 집계기를 쓰므로
+// GUI 의 Today 카드와 CLI 의 `stats` 합계가 같은 숫자를 낸다.
 func (r *Reader) totalsIn(ctx context.Context, db sqlQuerier, tr timeRange) (Totals, error) {
-	var t Totals
-	row := db.QueryRowContext(ctx, totalsInRangeSQL, tr.StartSec(), tr.EndSec())
-	if err := row.Scan(totalsDest(&t)...); err != nil {
-		return Totals{}, queryErr("오늘 요약 조회", err)
-	}
-	return t, nil
+	return sumAggregate(ctx, db, DimTotal, "", tr)
 }
 
-// activeAgents 는 상단 바의 "3 agents active" 다 — status='running' 세션의 distinct vendor.
+// activeAgents 는 상단 바의 "3 agents active" 다 — 진행 중 세션의 distinct vendor.
 //
-// 판정을 sessions.status 에만 맡긴다 (계획서 지정). 데몬이 죽은 뒤에는 마지막 running 세션이
-// 그대로 남으므로, 화면이 "언제 기준인가" 를 보이려면 Status 의 데몬 생존 정보를 함께 쓴다.
-const activeAgentsSQL = `SELECT vendor, COUNT(*)
-FROM sessions WHERE status = 'running' GROUP BY vendor ORDER BY vendor`
+// v3 에는 sessions.status 컬럼이 없다. 진행 중 판정은 `ended_at IS NULL` 하나이고,
+// abandoned·handoff 는 산출하지 않는다 (ADR 0009).
+//
+// 데몬이 죽은 뒤에는 마지막 진행 중 세션이 그대로 남으므로, 화면이 "언제 기준인가" 를
+// 보이려면 Status 의 데몬 생존 정보를 함께 쓴다.
+const activeAgentsSQL = `SELECT vendor_id, COUNT(*)
+FROM sessions WHERE ended_at IS NULL GROUP BY vendor_id ORDER BY vendor_id`
 
 func activeAgents(ctx context.Context, db sqlQuerier) (vendors []string, sessions int64, err error) {
 	const op = "실행 중 세션 조회"

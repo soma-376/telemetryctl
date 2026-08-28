@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -19,11 +20,13 @@ func TestConcurrentReadWhileDaemonWrites(t *testing.T) {
 	ctx := context.Background()
 
 	// 조회가 빈 DB 를 도는 것을 막기 위한 초기 데이터.
-	f.write(testBatch{
+	f.write(store.Batch{
 		Sessions: []session.Session{newSession("s-seed", testNow.Add(-time.Hour))},
-		Rollups:  []testRollupRow{rollupRow(testNow, testDimTotal, "", testRollupBucket{CostUSD: 1})},
-		Events:   []store.EventRecord{prompt("s-seed", testNow.Add(-time.Hour), 0, "인증 토큰 검증")},
+		Events: []store.EventRecord{
+			promptRecord("s-seed", "t-seed", testNow.Add(-time.Hour), 0, "인증 토큰 검증"),
+		},
 	})
+	seedID := f.sessionID(vendorClaude, "s-seed")
 
 	const rounds = 40
 	var wg sync.WaitGroup
@@ -36,17 +39,20 @@ func TestConcurrentReadWhileDaemonWrites(t *testing.T) {
 		defer close(writeDone)
 		for i := 1; i <= rounds; i++ {
 			at := testNow.Add(-time.Duration(i) * time.Minute)
-			batch := testBatch{
-				Sessions: []session.Session{
-					newSession("s-"+string(rune('a'+i%20)), at, func(s *session.Session) {
-						s.Files = []session.File{{PathHash: "h", Name: "apply.go", Edits: 1, LastTS: event.SecFromTime(at)}}
-						s.MCP = []session.MCPUsage{{ServerName: "github", Connected: true}}
+			key := fmt.Sprintf("s-%02d", i%20)
+			batch := store.Batch{
+				Sessions: []session.Session{newSession(key, at)},
+				Events: []store.EventRecord{
+					llmRecord(key, key+"-turn", at, i, llmSpec{Cost: 0.1, Input: 10, Output: 5}),
+					toolRecord(key, key+"-turn", fmt.Sprintf("call-%03d", i), at, 1000+i, toolSpec{
+						ToolName: "Edit", MCPServer: "github", Success: event.Some(true),
+						Target: workspaceA + "/apply.go",
+						File:   fileChange(workspaceA+"/apply.go", 1, 0),
 					}),
+					promptRecord("s-seed", fmt.Sprintf("t-seed-%03d", i), at, 2000+i, "인증 토큰 검증 및 전달"),
 				},
-				Rollups: []testRollupRow{rollupRow(at, testDimVendor, "claude_code", testRollupBucket{CostUSD: 0.1, Prompts: 1})},
-				Events:  []store.EventRecord{prompt("s-seed", at, i, "인증 토큰 검증 및 전달")},
 			}
-			if _, err := f.db.Write(ctx, store.Batch{Sessions: batch.Sessions, Events: batch.Events}); err != nil {
+			if _, err := f.db.Write(ctx, batch); err != nil {
 				t.Errorf("Write %d: %v", i, err)
 				return
 			}
@@ -57,7 +63,7 @@ func TestConcurrentReadWhileDaemonWrites(t *testing.T) {
 	readers := []func() error{
 		func() error { _, err := f.reader.Today(ctx, seoul); return err },
 		func() error { _, err := f.reader.Sessions(ctx, SessionQuery{Limit: 20}); return err },
-		func() error { _, err := f.reader.Session(ctx, "s-seed"); return err },
+		func() error { _, err := f.reader.Session(ctx, seedID); return err },
 		func() error {
 			_, err := f.reader.Breakdown(ctx, BreakdownQuery{Dim: DimVendor, TZ: seoul})
 			return err
@@ -113,16 +119,16 @@ func TestConcurrentReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck // 테스트 정리
 
 	r, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer r.Close()
+	defer r.Close() //nolint:errcheck // 테스트 정리
 
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
