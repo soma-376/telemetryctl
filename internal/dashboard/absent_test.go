@@ -78,6 +78,37 @@ func absentCases() []absentCase {
 			},
 		},
 		{
+			method: "HomeBreakdown",
+			call: func(ctx context.Context, r *Reader) (any, error) {
+				return r.HomeBreakdown(ctx, HomeBreakdownQuery{TZ: seoul})
+			},
+			check: func(t *testing.T, got any) {
+				b := got.(HomeBreakdown)
+				// 빈 날에도 창 골격은 유지해야 화면이 분기 없이 그린다.
+				if len(b.Windows) != 12 {
+					t.Errorf("창 = %d개, want 12", len(b.Windows))
+				}
+				for i, w := range b.Windows {
+					if w.Vendors == nil {
+						t.Errorf("창 %d 의 Vendors 가 nil — JSON 에서 null 이 된다", i)
+					}
+					if w.Active || w.Tokens != 0 || w.Cost.NanoUSD != 0 {
+						t.Errorf("창 %d 가 비어 있지 않다: %+v", i, w)
+					}
+				}
+				if b.Vendors == nil {
+					t.Error("Vendors 가 nil — JSON 에서 null 이 되어 프런트엔드가 터진다")
+				}
+				// 사용량이 없는 날에 아무 창이나 최고 시간대로 고르면 안 된다.
+				if b.Peak.Found || b.Peak.Index != -1 {
+					t.Errorf("Peak = %+v, want 없음/-1", b.Peak)
+				}
+				if b.Date == "" || b.TZ != seoul {
+					t.Errorf("날짜·시간대가 비었다: %+v", b)
+				}
+			},
+		},
+		{
 			method: "Sessions",
 			call:   func(ctx context.Context, r *Reader) (any, error) { return r.Sessions(ctx, SessionQuery{}) },
 			check: func(t *testing.T, got any) {
