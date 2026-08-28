@@ -35,12 +35,21 @@ import (
 func TestEndToEndWalkthroughProducesScreenRows(t *testing.T) {
 	h := start(t, harnessOptions{})
 
-	if resp := h.postFixture("logs_session_walkthrough.json"); resp.StatusCode != http.StatusOK {
-		t.Fatalf("수신기 응답 = %d, want 200", resp.StatusCode)
-	}
+	// **메트릭을 먼저 넣는다.** 이 픽스처의 lines_of_code 포인트는 세션의 첫 프롬프트보다
+	// 앞선 이벤트이고, 그런 이벤트는 가상 턴으로 가야 한다 (session/turn.go). 순서를
+	// 뒤집으면 열린 턴에 붙어 가상 턴이 생기지 않는다.
+	//
+	// 두 POST 사이에 waitDecoded 를 두는 이유는 수신기가 디코드 워커를 2개 돌리기
+	// 때문이다 (receiver.DefaultWorkers). POST 응답이 돌아왔다고 그 배치가 파이프라인에
+	// 먼저 들어갔다는 보장이 없어서, 없으면 이 테스트가 도착 순서에 따라 흔들린다.
 	if resp := h.postFixture("metrics_lines_of_code.json"); resp.StatusCode != http.StatusOK {
 		t.Fatalf("메트릭 응답 = %d, want 200", resp.StatusCode)
 	}
+	h.waitDecoded(1)
+	if resp := h.postFixture("logs_session_walkthrough.json"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("수신기 응답 = %d, want 200", resp.StatusCode)
+	}
+	h.waitDecoded(2)
 	h.stop()
 
 	db := h.openDB()
