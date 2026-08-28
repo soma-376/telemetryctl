@@ -1,9 +1,9 @@
 # 0006. 로컬 파이프라인을 opt-out 으로 전환하고 로컬 OTel 설정을 고정한다.
 
 ## Status
-Accepted
+Accepted — 부분 대체: [ADR 0008](0008-로컬-데이터를-400일간-보존한다.md) 이 Decision 5 의 "state schema 는 4 를 유지한다" 조항을 대체한다 (현재 5). 기존 설치자를 자동 전환하지 않는다는 결정과 opt-out 배선·고정 로컬 프로필·forward 집행은 그대로 유효하다.
 
-ADR [0001](0001-로컬-OTLP-수신기-인라인-프록시-토폴로지.md) 의 "재배선은 opt-in, 기본 OFF" 결정(40행)을 대체한다.
+ADR [0001](0001-로컬-OTLP-수신기-인라인-프록시-토폴로지.md) 의 "재배선은 opt-in, 기본 OFF" 결정을 대체한다.
 같은 ADR 의 나머지 — 인라인 프록시 토폴로지, `localhost` 표기 제약, §5.4 상한선 — 는 그대로 유효하다.
 
 ## Context
@@ -38,7 +38,12 @@ ADR [0003](0003-원문과-tool-details를-로컬에만-보관.md) 이 정한 방
    `state.Local.Enabled` 를 켠다. 사용자의 탈출구는 `telemetryctl local disable` 이다.
 2. **로컬 OTel 설정은 회사 manifest 와 무관하게 고정한다** (`installer.localProfile`). endpoint 는
    `http://localhost:<port>`, protocol 은 `http/protobuf`, compression 은 없음, signals 는 셋 다 켬,
-   privacy 는 `collect_assistant_responses` 만 끄고 나머지 전부 켬. 값은 PROJ-45 티켓의 참고 자료를 따른다.
+   privacy 는 벤더 설정에 나타나는 다섯 항목만 고정한다 — `collect_assistant_responses` 만 끄고
+   `collect_user_prompts`·`collect_tool_details`·`collect_tool_content`·`collect_raw_api_bodies` 를 켠다.
+   `collect_user_email` 은 어느 벤더 설정에도 나타나지 않으므로 회사 값을 그대로 둔다 — 로컬에서 켜 봤자
+   쓰이지 않고, [ADR 0003](0003-원문과-tool-details를-로컬에만-보관.md) 이 `user.email` 을 절대 저장 금지
+   목록에 넣었다(그 allowlist 스키마가 두 번째 방어선이다 — 회사가 이 값을 켜도 로컬 저장은 막힌다).
+   값은 PROJ-45 티켓의 참고 자료를 따른다.
    응답 원문만 끄는 이유는 로컬 파이프라인이 그것을 쓰지 않으면서 배치 크기만 키우기 때문이다.
 3. **회사 manifest 준수는 전적으로 `internal/forward` 가 집행한다.** 축이 둘이다.
    - `Signals` — 회사가 끈 시그널은 `Enqueue` 가 큐에 넣지 않는다 (신규).
@@ -82,8 +87,8 @@ ADR [0003](0003-원문과-tool-details를-로컬에만-보관.md) 이 정한 방
 ### Negative
 - **데몬이 떠 있지 않은 채 배선된 상태는 텔레메트리가 로컬에도 회사에도 남지 않는 상태다.** opt-in 시절에는
   `local enable` 을 친 사람만 그 상태를 지나갔지만, 이제 enroll 한 모든 사람이 지나간다.
-  - 완화: `enroll` 이 `warnDaemonNotRunning` 으로 크게 알리고 ~~`telemetryctl daemon` 실행을 안내한다.~~
-  - ~~**근본 해결은 데몬 자동 실행 등록이고, 그것이 이 결정의 진짜 선행 조건이다.** 아래 Follow-up 참고.~~
+  - 완화: `enroll` 이 `warnDaemonNotRunning` 으로 크게 알린다. **(대체됨 — PROJ-55)** "`telemetryctl daemon` 실행을 안내한다"
+  - **(대체됨 — PROJ-55 로 닫힘)** "근본 해결은 데몬 자동 실행 등록이고, 그것이 이 결정의 진짜 선행 조건이다." 아래 Follow-up 참고.
   - **PROJ-55 (ADR 0007) 가 그 선행 조건을 채웠다.** `enroll` 이 배선 직후 자동 실행을 best-effort 로
     등록하고(launchd LaunchAgent / systemd user unit), 등록 후 데몬 생존까지 확인한다. 이제 이 Negative 는
     "등록할 수 없는 환경(Windows·systemd 없는 리눅스)" 과 "재시작으로 낫지 않는 영구 실패" 로 좁혀졌고,
