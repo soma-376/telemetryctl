@@ -94,10 +94,13 @@ func (c Cost) Countable() bool {
 }
 
 // Result 는 호출 한 건의 가격 산정 결과다.
+//
+// CacheSavings 는 Cost 와 **더하지 않는다.** 별도 타입에 담은 이유가 그것이다.
 type Result struct {
-	Model   Model   `json:"model"`
-	Cost    Cost    `json:"cost"`
-	Pricing Applied `json:"pricing"`
+	Model        Model   `json:"model"`
+	Cost         Cost    `json:"cost"`
+	CacheSavings Savings `json:"cache_savings"`
+	Pricing      Applied `json:"pricing"`
 }
 
 // Estimate 는 기본 가격표로 산정한다.
@@ -113,6 +116,7 @@ func (t Table) Estimate(u Usage) Result {
 	res.Model.Known = known
 	res.Pricing.RateKey = key
 	res.Cost = cost(u, rate, known, res.Model.Canonical)
+	res.CacheSavings = cacheSavings(u, rate, known, res.Model.Canonical)
 	return res
 }
 

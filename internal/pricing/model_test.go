@@ -30,6 +30,10 @@ func TestCanonical(t *testing.T) {
 		{name: "빈 이름은 빈 값", raw: "", want: ""},
 		{name: "공백뿐인 이름도 빈 값", raw: "   ", want: ""},
 		{name: "모르는 이름은 손대지 않는다", raw: "some-unreleased-model", want: "some-unreleased-model"},
+		{name: "대시가 없는 이름", raw: "o3", want: "o3"},
+		{name: "일부만 날짜처럼 생긴 꼬리는 남긴다", raw: "gpt-4.1-04-14", want: "gpt-4.1-04-14"},
+		{name: "날짜 자릿수가 안 맞으면 남긴다", raw: "model-2025-04-1", want: "model-2025-04-1"},
+		{name: "8자리가 아닌 숫자 꼬리는 남긴다", raw: "model-2025010", want: "model-2025010"},
 		{name: "Claude Code 의 합성 모델 표기도 그대로 남는다", raw: "<synthetic>", want: "<synthetic>"},
 	}
 
