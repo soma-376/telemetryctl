@@ -29,7 +29,7 @@ Claude Code·Codex 의 시그널을 직접 받고, 정규화·집계해 로컬 S
 | [0006](adr/0006-로컬-파이프라인을-opt-out으로-전환하고-OTel-설정을-고정한다.md) | 배선은 opt-out 기본 ON, 로컬 OTel 설정 고정, 회사 준수는 forward 가 집행 |
 | [0007](adr/0007-데몬은-비정상-종료일-때만-자동-재시작한다.md) | 자동 실행 등록의 재시작 정책 — 비정상 종료일 때만 되살린다 |
 | [0008](adr/0008-로컬-데이터를-400일간-보존한다.md) | 모든 로컬 데이터 400일 고정 보존 |
-| [0009](adr/0009-로컬-저장-모델을-v3로-전환한다.md) | v3 저장 모델 확정 — FTS 대신 `LIKE`, `rollup_hourly` 폐기, 세션 상태 2종, 삭제 순서 |
+| [0009](adr/0009-로컬-저장-모델을-v3로-전환한다.md) | v3 저장 모델 확정 — FTS 대신 `LIKE`, `rollup_hourly` 폐기(조회 시점 `GROUP BY`), 세션 상태 2종, 삭제 순서, 읽기 인덱스는 마이그레이션 v4 |
 | [0010](adr/0010-v3가-요구하는-식별-정보를-로컬에만-저장한다.md) | v3가 요구하는 경로·이메일·계정 ID를 로컬에만 저장, 상위 전달은 불변 |
 
 기존 설치 아키텍처는 [설치 아키텍처](installation-architecture.md)에 있다. 이 문서의 `§4.5`·`§5.4`
@@ -267,9 +267,10 @@ DDL, 테이블 관계, PRAGMA, 보존 계층, 마이그레이션 규칙은
 [SQLite 스키마 문서](sqlite-schema/README.md)로 분리했다. 테이블별 문서는 해당 목차에서 찾을 수 있다.
 
 스키마 버전 3은 기존 도메인 데이터를 보존하거나 백필하지 않는다. `meta`와 DB 파일만 유지한다.
-**쓰기 런타임은 PROJ-85가, 세션 생명주기·보존·원문 삭제는 PROJ-86이 v3로 옮겼다.** 조회
-계층(`internal/dashboard`)과 CLI 출력은 아직 v1/v2를 향하며 PROJ-87이 옮긴다 — 아래 6절의 API
-설명도 그 시점에 갱신된다.
+**쓰기 런타임은 PROJ-85가, 세션 생명주기·보존·원문 삭제는 PROJ-86이, 조회 계층
+(`internal/dashboard`)과 CLI 출력은 PROJ-87이 v3로 옮겼다.** PROJ-87은 조회가 요구하는
+읽기 인덱스 셋(`tool_calls(turn_id)`·`turns(session_id)`·`sessions(started_at)`)을
+**마이그레이션 v4**로 덧붙였다 — 배포된 `schemaV3`의 문장은 고치지 않았다.
 
 보존 삭제의 판정 기준은 세션의 **마지막으로 알려진 활동**이다. v3에는 `last_event_at`이 없고
 `started_at`·`ended_at`이 둘 다 선택이므로, 두 값과 소속 이벤트 시각 중 **가장 늦은 것**을 쓴다.
@@ -292,7 +293,7 @@ func Open(dbPath string) (*Reader, error)
 
 func (r *Reader) Today(ctx context.Context, tz string) (TodaySummary, error)
 func (r *Reader) Sessions(ctx context.Context, q SessionQuery) ([]SessionRow, error)
-func (r *Reader) Session(ctx context.Context, id string) (SessionDetail, error)
+func (r *Reader) Session(ctx context.Context, id int64) (SessionDetail, error)
 func (r *Reader) Breakdown(ctx context.Context, q BreakdownQuery) ([]Row, error)
 func (r *Reader) Search(ctx context.Context, q SearchQuery) ([]Hit, error)
 func (r *Reader) Vendors(ctx context.Context) ([]VendorStatus, error)
@@ -310,6 +311,26 @@ func (r *Reader) DataDir() string
 위해 있다 — GUI 가 먼저 뜨고 나중에 `telemetryctl local enable` 로 데몬이 DB 를 만드는 순서가 정상이고,
 이 메서드가 없으면 그 사용자는 앱을 껐다 켜야 데이터를 본다.
 
+`Session` 의 인자는 **`sessions.id`(int64)** 다. v1 의 문자열 `session_id` 가 아니다 — v3 에서
+`session_key` 는 `(vendor_id, session_key)` 로만 고유해서 그것만으로는 세션을 가리킬 수 없다.
+`SessionRow.ID`·`Hit.ID` 가 그 값을 실어 나른다.
+
+### 6.1.1 조회 서비스 (`dashboard.Service`)
+
+Wails 서비스가 그대로 감싸는 얇은 계층이다. `Reader` 와 같은 조회 메서드를 갖고 두 가지를 더 한다.
+
+```go
+func NewService(dbPath string) *Service   // 실패하지 않는다 (GUI 는 필드 초기화에서 만든다)
+func (s *Service) Start() error           // ServiceStartup 자리. DB 부재는 성공이다
+func (s *Service) Stop() error            // ServiceShutdown 자리
+```
+
+- **DB 부재는 성공이다.** `ServiceStartup` 이 error 를 내면 앱 기동이 통째로 중단된다.
+- **조회할 때마다 재연결을 시도한다.** 데몬이 나중에 DB 를 만들면 앱 재시작 없이 붙는다.
+  `Reader` 에 넣지 않은 이유는 CLI 의 단발 조회까지 매번 파일 시스템을 두드리게 되기 때문이다.
+
+여기에도 Wails 의존이 없다. GUI 모듈의 서비스가 이 타입을 필드로 들고 위임한다.
+
 화면 대응:
 
 | 화면 요소 | 메서드 |
@@ -324,8 +345,32 @@ func (r *Reader) DataDir() string
 | Settings 저장소·데몬 상태 | `Status()` |
 
 `Today` 의 `Cards` 는 `cost_usd`·`tokens`·`sessions_started`·`active_seconds` 네 장이다
-(`dashboard.MetricCostUSD` 등 상수). `Breakdown` 은 `Dim` 여섯 가지 × `BucketBy` 세 가지
+(`dashboard.MetricCostUSD` 등 상수). `Breakdown` 은 `Dim` 다섯 가지 × `BucketBy` 세 가지
 (`BucketKey`=""·`BucketHourOfDay`·`BucketDay`) 조합이다.
+
+### 6.1.2 v3 에서 지표가 오는 곳
+
+`rollup_hourly` 가 없으므로 집계는 **조회 시점 `GROUP BY`** 다 (ADR 0009). 지표마다 출처가
+하나뿐이고, 출처가 다른 지표를 한 질의에 JOIN 으로 묶으면 행이 곱해져 모든 `SUM` 이 부푼다 —
+그래서 승격 테이블마다 따로 집계하고 Go 에서 (키, 시간 버킷) 으로 합친다
+(`internal/dashboard/aggregate.go`).
+
+| 지표 | 출처 | 시각 |
+|---|---|---|
+| 비용·토큰 4종·`api_requests` | `llm_calls` | `called_at` |
+| `tool_calls`·`tool_accepts`·`tool_rejects` | `tool_calls` | `called_at` |
+| `lines_added`·`lines_removed` | `file_changes` | 소유 `tool_calls.called_at` |
+| `prompts` | `turns` (`turn_index IS NOT NULL`) | `started_at` |
+| `sessions_started`·`active_seconds` | `sessions` | `started_at` |
+
+**v3 에 출처가 없어 항상 0 인 필드**: `Totals` 의 `api_errors`·`retries`·`commits`·
+`pull_requests`, `SessionRow` 의 같은 셋과 `responses`·`title_source`·`summary`.
+지우지 않는 이유는 ADR 0009 가 `abandoned`·`handoff` 를 남긴 것과 같다 — 지우면 GUI TypeScript
+바인딩과 `stats --json`·`sessions --json` 출력이 깨진다.
+
+`Dim` 에서 v1 의 `type` 축이 사라졌다. v3 `events` 에는 벤더 속성을 담는 컬럼이 없어 그 축을
+만들 입력 자체가 없다. `DimProject` 의 키는 `project_hash` 가 아니라 **`sessions.workspace_path`**
+이고 `Label` 이 그 basename 이다 (ADR 0010).
 
 ### 6.2 `json` 태그 규약
 
@@ -334,8 +379,7 @@ func (r *Reader) DataDir() string
 - **nullable 은 포인터다.** `SessionRow.EndedAt *int64`, `ToolRow.DurationMS *int64`,
   `ToolRow.Success *bool`. 0 으로 눕히면 "1970년에 끝난 세션" 과 "진행 중", "0ms 툴 호출" 과
   "소요 시간 미상" 이 구분되지 않는다. JSON 에서는 `null` 이 된다.
-- **밖으로 나가는 시각은 전부 UTC unix 초다.** `events.ts` 만 나노초이고 그 값은 이 패키지를
-  지나가지 않는다.
+- **밖으로 나가는 시각은 전부 UTC unix 초다.** v3 에는 나노초 컬럼이 없다 (ADR 0009).
 - **슬라이스는 비어 있되 `nil` 이 아니다.** JSON `null` 에 `.map` 을 걸면 프런트엔드가 터진다.
 - **에러 메시지에 SQL 이 들어가지 않는다.** Go 의 `error` 가 Promise reject 로 전파돼 사용자에게
   그대로 보인다. `queryErr` 가 이 규칙을 소유하고, 닫힌 핸들로 호출해 `SELECT`·`FROM`·`JOIN` 부재를
@@ -670,6 +714,9 @@ telemetryctl status
 - `--since` 는 `7d`·`24h`·`90m` 형식이고 상한이 400일(고정 보존 상한)이다.
 - `stats` 의 합계 행은 `dim=total` 을 따로 질의해 만든다. 표시된 행의 합으로 계산하면 `--limit`
   으로 잘렸을 때 조용히 틀린 숫자가 된다.
+- `--group project` 의 키는 `sessions.workspace_path` 이고 표에는 basename 이 나온다 —
+  v3 에는 `project_hash` 컬럼이 없다 (ADR 0010). `--status abandoned|handoff` 는 어휘로만
+  남아 있고 v3 에서 산출되지 않아 항상 빈 결과다 (ADR 0009).
 - 사람용 출력과 `--json` 이 한 구조체에서 나오고, 표 셀은 그 구조체 필드에서만 만든다 — 표는 JSON
   의 부분집합이다. JSON 시각은 UTC unix 초로 통일하되 `timezone`·`utc_offset_seconds` 를 함께 실어
   기계가 로컬 시각을 복원할 수 있게 한다.
