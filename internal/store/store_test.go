@@ -213,14 +213,18 @@ func TestSchemaV3Constraints(t *testing.T) {
 	expectConstraint(t, db, `INSERT INTO tool_calls (turn_id, call_key, decision_event_id) VALUES (1, 'call-2', 2)`)
 	expectConstraint(t, db, `INSERT INTO tool_calls (turn_id, call_key, result_event_id) VALUES (1, 'call-1', 1)`)
 	mustExec(t, db, `INSERT INTO file_changes (tool_call_id, file_path, operation) VALUES (1, 'main.go', 'modify')`)
+	mustExec(t, db, `INSERT INTO file_changes (tool_call_id, file_path, operation, renamed_from)
+		VALUES (1, 'renamed.go', 'rename', 'original.go')`)
+	expectConstraint(t, db, `INSERT INTO file_changes (tool_call_id, file_path, operation)
+		VALUES (1, 'renamed.go', 'rename')`)
 	expectConstraint(t, db, `INSERT INTO file_changes (tool_call_id, file_path, operation) VALUES (1, 'main.go', 'move')`)
 
 	var n int
 	if err := db.SQL().QueryRowContext(ctx, `SELECT COUNT(*) FROM file_changes`).Scan(&n); err != nil {
 		t.Fatalf("file_changes 계수: %v", err)
 	}
-	if n != 1 {
-		t.Fatalf("file_changes = %d행, want 1", n)
+	if n != 2 {
+		t.Fatalf("file_changes = %d행, want 2", n)
 	}
 }
 

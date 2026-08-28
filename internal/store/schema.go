@@ -407,7 +407,8 @@ var schemaV3 = []string{
   additions    INTEGER,
   deletions    INTEGER,
   old_hash     TEXT,
-  new_hash     TEXT
+  new_hash     TEXT,
+  CHECK (operation <> 'rename' OR renamed_from IS NOT NULL)
 )`,
 	`CREATE INDEX ix_fc_tool ON file_changes (tool_call_id)`,
 }

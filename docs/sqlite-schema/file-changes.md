@@ -8,7 +8,7 @@
 | `tool_call_id` | `INTEGER` | 필수, FK | `tool_calls.id` 참조 |
 | `file_path` | `TEXT` | 필수 | 파일 경로. rename이면 새 경로 |
 | `operation` | `TEXT` | 필수, CHECK | `create`, `modify`, `delete`, `rename` 중 하나 |
-| `renamed_from` | `TEXT` | 선택 | rename 이전 경로 |
+| `renamed_from` | `TEXT` | rename일 때 필수 | rename 이전 경로 |
 | `additions`, `deletions` | `INTEGER` | 선택 | 관측된 줄 수. 미관측은 `NULL` |
 | `old_hash`, `new_hash` | `TEXT` | 선택 | 변경 전·후 해시 |
 
@@ -25,7 +25,8 @@ CREATE TABLE file_changes (
   additions    INTEGER,
   deletions    INTEGER,
   old_hash     TEXT,
-  new_hash     TEXT
+  new_hash     TEXT,
+  CHECK (operation <> 'rename' OR renamed_from IS NOT NULL)
 );
 
 CREATE INDEX ix_fc_tool ON file_changes (tool_call_id);
