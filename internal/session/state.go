@@ -19,6 +19,13 @@ type state struct {
 	projectHash string
 	projectName string
 
+	// 로컬 저장 전용 식별 정보 (ADR 0010). 세션 안에서 한 번만 정한다 —
+	// 도중에 바뀌면 세션의 정체성이 흔들리고 화면 필터에서 세션이 사라진다.
+	workspacePath string
+	userEmail     string
+	userAccountID string
+	terminalType  string
+
 	// 첫 프롬프트에서 뽑은 파생 문자열. 본문은 여기 남기지 않는다.
 	promptTitle   string
 	promptSummary string
@@ -118,6 +125,20 @@ func (s *state) observe(e event.Event) {
 	if s.projectHash == "" && e.Attr.ProjectHash != "" {
 		s.projectHash = e.Attr.ProjectHash
 		s.projectName = e.Attr.ProjectName
+	}
+	// 식별 정보도 같은 규칙이다 — 먼저 관측한 값이 이긴다.
+	for _, f := range []struct {
+		dst *string
+		src string
+	}{
+		{&s.workspacePath, e.Attr.WorkspacePath},
+		{&s.userEmail, e.Attr.UserEmail},
+		{&s.userAccountID, e.Attr.UserAccountID},
+		{&s.terminalType, e.Attr.TerminalType},
+	} {
+		if *f.dst == "" && f.src != "" {
+			*f.dst = f.src
+		}
 	}
 }
 
@@ -382,6 +403,11 @@ func (s *state) session() Session {
 		Summary:     summary,
 		ProjectHash: s.projectHash,
 		ProjectName: s.projectName,
+
+		WorkspacePath: s.workspacePath,
+		UserEmail:     s.userEmail,
+		UserAccountID: s.userAccountID,
+		TerminalType:  s.terminalType,
 
 		DurationMS:    int64(end-s.started) * 1000,
 		ActiveSeconds: s.activeSeconds,
