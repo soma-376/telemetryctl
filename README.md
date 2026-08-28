@@ -80,8 +80,9 @@ Claude Code(`~/.claude/settings.json`)·Codex(`~/.codex/config.toml`)에 OTel �
 적용 내역을 `~/.pulsemetry/state.json` 에 기록합니다. 서버 URL 은 `--server` > `PULSEMETRY_SERVER` >
 빌드 기본값(릴리스 시 `-ldflags` 주입) 순으로 결정합니다.
 
-`installation_token`은 OS 키링에만 저장하고 Claude·Codex 설정에는 교체 가능한
-`telemetry_token`만 기록합니다. `reconnect`는 설치 토큰으로
+`installation_token`과 회사 `telemetry_token`은 OS 키링에만 저장합니다. 로컬 파이프라인이 배선된
+기본 상태에서 Claude·Codex 설정에 기록되는 것은 **로컬 ingest 토큰**뿐이고, 배선이 강등된
+(회사 직결 — grpc manifest·키링 불가) 설치에서만 `telemetry_token`이 설정에 실립니다. `reconnect`는 설치 토큰으로
 `POST /v1/installations/telemetry-token`을 호출해 새 telemetry token을 발급받습니다.
 
 ## 로컬 데이터 파이프라인 (opt-out, 기본 켜짐)

@@ -155,7 +155,7 @@ enroll 이 원자적으로 소비하며, 서버는 코드의 존재 여부를 �
 5. CLI 설치 후 사용자가 로그인한다 — 웹 페이지를 띄워 로그인하고
    콜백 URL 로 CLI 에 AT 와 RT 를 전달한다
    (Codex·Claude Code 를 CLI 에서 로그인하는 방식과 같다)
-6. CLI 가 해당 사용자가 소속된 부서의 manifest 를 적용한다
+6. CLI 가 해당 사용자 tenant 의 활성 manifest 를 적용한다 (배정 단위는 tenant — 허브 ADR 0002)
 ```
 
 여기서 쓰는 토큰은 설치 자격증명(`pit_`·`ptt_`)과 성격이 다르다.
@@ -245,6 +245,10 @@ manifest 는 최대 하나이고, 활성 manifest 가 없으면 enroll 은 409 `
 
 ## 3.4 변수 범위
 
+> **주의 — 초안 어휘.** 이 절의 표는 초기 설계 초안이다. 현행 토큰 모델(OTLP 전송 인증은
+> `telemetry_token`(`ptt_`), `installation_token` 은 재발급 전용)과 신원 결정 경로의 정본은
+> §2 도식과 허브 `contracts/enrollment-api.md`·`telemetry-ingest.md` 다. `department_id` 류는 현행 스키마에 없다.
+
 ### 회사 단위 변수
 
 해당 회사의 모든 개발자에게 동일하게 적용되는 값이다.
@@ -284,7 +288,7 @@ PC 또는 설치 환경마다 달라지는 값이다.
 | 변수 | 역할 |
 |---|---|
 | `installation_id` | 설치 단위 식별자 |
-| `installation_token` | OTLP 전송 인증용 토큰 |
+| `installation_token` | 설치 장기 신원 — 재발급 요청 전용 (OTLP 전송 인증은 `telemetry_token`) |
 | `device_id` | 장치 구분이 필요한 경우 사용 |
 | `config_revision` | 현재 적용된 설정 버전 |
 | `installer_version` | 설치 프로그램 버전 |

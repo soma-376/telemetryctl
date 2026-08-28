@@ -329,7 +329,7 @@ func (r *Reader) DataDir() string
 ```
 
 계획서에 없던 것이 셋 추가됐다. `Available()`·`Reopen()`·`Close()` 다. `Reopen` 은 **정상 시나리오**를
-위해 있다 — GUI 가 먼저 뜨고 나중에 `telemetryctl local enable` 로 데몬이 DB 를 만드는 순서가 정상이고,
+위해 있다 — GUI 가 먼저 뜨고 나중에 enroll(자동 배선) 후 데몬이 첫 기동하며 DB 를 만드는 순서가 정상이고,
 이 메서드가 없으면 그 사용자는 앱을 껐다 켜야 데이터를 본다.
 
 화면 대응:
@@ -370,7 +370,7 @@ func (r *Reader) DataDir() string
 ### 6.3 DB 없음은 error 가 아니라 빈 결과다
 
 `ServiceStartup` 이 error 를 반환하면 **앱 기동 자체가 중단된다.** 그런데 DB 가 없는 상태(미설치 ·
-`local enable` 전 · 데몬 첫 실행 전)는 정상이다.
+enroll 전 · 데몬 첫 실행 전)는 정상이다.
 
 - `Open` 은 DB 부재를 error 로 만들지 않고 "비어 있는 `Reader`" 를 돌려준다(`Available()` 이 `false`).
 - 모든 조회가 **모양을 유지한 채** 빈 결과를 준다. `Today` 는 카드 4장을 채우고,
