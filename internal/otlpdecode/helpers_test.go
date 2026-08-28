@@ -117,6 +117,50 @@ func allStrings(v any) []string {
 	return out
 }
 
+// collectStringsExcept 는 이름이 skip 에 있는 구조체 필드만 건너뛰고 나머지를 전부 모은다.
+//
+// ADR 0010 이 **지정된 필드에 한해** 로컬 저장을 허용했으므로, 프라이버시 단언을 통째로
+// 푸는 대신 예외 필드만 빼고 그대로 유지하기 위한 것이다. 예외 목록 밖 어디로든 값이
+// 새면 여전히 잡힌다.
+func collectStringsExcept(v reflect.Value, skip map[string]bool, out *[]string) {
+	switch v.Kind() {
+	case reflect.String:
+		*out = append(*out, v.String())
+	case reflect.Struct:
+		t := v.Type()
+		for i := 0; i < v.NumField(); i++ {
+			if skip[t.Field(i).Name] {
+				continue
+			}
+			collectStringsExcept(v.Field(i), skip, out)
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			collectStringsExcept(v.Index(i), skip, out)
+		}
+	case reflect.Pointer, reflect.Interface:
+		if !v.IsNil() {
+			collectStringsExcept(v.Elem(), skip, out)
+		}
+	case reflect.Map:
+		iter := v.MapRange()
+		for iter.Next() {
+			collectStringsExcept(iter.Key(), skip, out)
+			collectStringsExcept(iter.Value(), skip, out)
+		}
+	}
+}
+
+func allStringsExcept(v any, skip []string) []string {
+	set := make(map[string]bool, len(skip))
+	for _, f := range skip {
+		set[f] = true
+	}
+	var out []string
+	collectStringsExcept(reflect.ValueOf(v), set, &out)
+	return out
+}
+
 // eventByID 는 event.id 로 이벤트를 집는다. 픽스처의 레코드마다 고유한 event.id 를 넣어 뒀다.
 func eventByID(t *testing.T, events []event.Event, id string) event.Event {
 	t.Helper()

@@ -86,11 +86,84 @@ func TestAttributeValueCoercion(t *testing.T) {
 			},
 		},
 		{
+			// organization.id 는 v3 에 대응 컬럼이 없어 allowlist 에 자리가 없다 (ADR 0010).
 			name: "모르는 속성은 아무 데도 안 남는다",
-			key:  "user.email", value: anyStr(fixtureUserEmail),
+			key:  "organization.id", value: anyStr(fixtureOrgID),
 			check: func(t *testing.T, c carrier) {
 				if c.attr != (event.Attributes{}) {
 					t.Errorf("attr = %+v, want 비어 있음", c.attr)
+				}
+			},
+		},
+		{
+			// ADR 0010 이 연 로컬 저장 전용 속성이다. 해시 필드는 그대로 두고 원경로만 는다.
+			name: "cwd 는 해시와 원경로를 둘 다 만든다",
+			key:  "cwd", value: anyStr(fixtureProjectPath),
+			check: func(t *testing.T, c carrier) {
+				if c.attr.ProjectName != "telemetryctl" || len(c.attr.ProjectHash) != 64 {
+					t.Errorf("해시 필드 = %q/%q", c.attr.ProjectHash, c.attr.ProjectName)
+				}
+				if c.attr.WorkspacePath != fixtureProjectPath {
+					t.Errorf("workspace_path = %q, want %q", c.attr.WorkspacePath, fixtureProjectPath)
+				}
+			},
+		},
+		{
+			name: "user.email 은 로컬 저장 전용 필드로 간다",
+			key:  "user.email", value: anyStr(fixtureUserEmail),
+			check: func(t *testing.T, c carrier) {
+				if c.attr.UserEmail != fixtureUserEmail {
+					t.Errorf("user_email = %q", c.attr.UserEmail)
+				}
+			},
+		},
+		{
+			name: "user.account_uuid 는 계정 ID 로 간다",
+			key:  "user.account_uuid", value: anyStr(fixtureAccountUUID),
+			check: func(t *testing.T, c carrier) {
+				if c.attr.UserAccountID != fixtureAccountUUID {
+					t.Errorf("user_account_id = %q", c.attr.UserAccountID)
+				}
+			},
+		},
+		{
+			name: "prompt.id 는 턴 키가 된다",
+			key:  "prompt.id", value: anyStr("prompt_0001"),
+			check: func(t *testing.T, c carrier) {
+				if c.turnKey != "prompt_0001" {
+					t.Errorf("turn_key = %q", c.turnKey)
+				}
+			},
+		},
+		{
+			name: "tool_use_id 는 호출 키가 된다",
+			key:  "tool_use_id", value: anyStr("toolu_01AB"),
+			check: func(t *testing.T, c carrier) {
+				if c.callKey != "toolu_01AB" {
+					t.Errorf("call_key = %q", c.callKey)
+				}
+			},
+		},
+		{
+			// Codex 표기. 없으면 캐시 읽기 토큰이 통째로 버려진다.
+			name: "cached_input_tokens 는 캐시 읽기 토큰이다",
+			key:  "cached_input_tokens", value: anyInt64(2048),
+			check: func(t *testing.T, c carrier) {
+				if v, ok := c.measure.CacheReadTokens.Get(); !ok || v != 2048 {
+					t.Errorf("cache_read_tokens = (%d, %v)", v, ok)
+				}
+			},
+		},
+		{
+			// error_type 의 정제 규칙은 그대로 두고 원문만 따로 보관한다 (ADR 0010).
+			name: "경로가 섞인 error 는 message 로만 남는다",
+			key:  "error", value: anyStr("ENOENT: open '" + fixtureProjectPath + "/x.go'"),
+			check: func(t *testing.T, c carrier) {
+				if c.measure.ErrorType != "" {
+					t.Errorf("error_type = %q, want 빈 값", c.measure.ErrorType)
+				}
+				if !strings.Contains(c.measure.ErrorMessage, fixtureProjectPath) {
+					t.Errorf("error_message = %q", c.measure.ErrorMessage)
 				}
 			},
 		},

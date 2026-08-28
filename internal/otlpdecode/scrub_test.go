@@ -132,8 +132,16 @@ func TestScrubRemovesContentAndPreservesTheRest(t *testing.T) {
 				if b.Name != a.Name || b.TS != a.TS || b.SessionID != a.SessionID {
 					t.Errorf("[%d] 식별 필드가 변했다: %+v → %+v", i, b, a)
 				}
-				if b.Attr != a.Attr {
-					t.Errorf("[%d] %s: 속성이 변했다\nbefore=%+v\nafter =%+v", i, b.Name, b.Attr, a.Attr)
+				// user.email 은 denylist 라 Scrub 이 실제로 지운다. 그것 말고는 그대로여야 한다.
+				// 지웠다는 사실 자체는 아래에서 따로 단언한다 — 비교에서 빼기만 하면
+				// 지우지 않게 됐을 때도 조용히 통과한다.
+				if a.Attr.UserEmail != "" {
+					t.Errorf("[%d] %s: 전달 바이트에 user.email 이 남았다: %q", i, b.Name, a.Attr.UserEmail)
+				}
+				bAttr := b.Attr
+				bAttr.UserEmail = ""
+				if bAttr != a.Attr {
+					t.Errorf("[%d] %s: 속성이 변했다\nbefore=%+v\nafter =%+v", i, b.Name, bAttr, a.Attr)
 				}
 				if b.Measure.CostUSD != a.Measure.CostUSD || b.Measure.DurationMS != a.Measure.DurationMS {
 					t.Errorf("[%d] %s: 수치가 변했다", i, b.Name)
