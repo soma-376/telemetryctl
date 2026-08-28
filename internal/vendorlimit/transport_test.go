@@ -90,17 +90,17 @@ func TestGetJSON은토큰과추가헤더를요청에싣는다(t *testing.T) {
 
 	// 이 단언이 없으면 "토큰이 안 샜다" 는 다른 테스트가 공허해진다 — 애초에 토큰을
 	// 싣지 않았을 뿐일 수 있다.
-	if up.lastAuth != "Bearer "+codexCanary {
-		t.Fatalf("Authorization 헤더 = %q", up.lastAuth)
+	if up.auth() != "Bearer "+codexCanary {
+		t.Fatalf("Authorization 헤더 = %q", up.auth())
 	}
-	if got := up.lastHeaders.Get("chatgpt-account-id"); got != accountCanary {
+	if got := up.header("chatgpt-account-id"); got != accountCanary {
 		t.Errorf("추가 헤더가 빠졌다: %q", got)
 	}
-	if _, ok := up.lastHeaders["빈 헤더는 붙지 않는다"]; ok {
+	if up.hasHeader("빈 헤더는 붙지 않는다") {
 		t.Error("빈 값 헤더가 붙었다")
 	}
-	if up.lastHeaders.Get("Accept") != "application/json" {
-		t.Errorf("Accept = %q", up.lastHeaders.Get("Accept"))
+	if up.header("Accept") != "application/json" {
+		t.Errorf("Accept = %q", up.header("Accept"))
 	}
 }
 

@@ -46,14 +46,14 @@ func TestClaudeAdapter정상응답을공통모델로옮긴다(t *testing.T) {
 	}
 
 	// 요청이 실제로 우리가 문서화한 모양으로 나갔는지 본다.
-	if up.lastPath != claudeUsagePath {
-		t.Errorf("경로 = %q, want %q", up.lastPath, claudeUsagePath)
+	if up.path() != claudeUsagePath {
+		t.Errorf("경로 = %q, want %q", up.path(), claudeUsagePath)
 	}
-	if up.lastAuth != "Bearer "+claudeCanary {
-		t.Errorf("Authorization 헤더 = %q", up.lastAuth)
+	if up.auth() != "Bearer "+claudeCanary {
+		t.Errorf("Authorization 헤더 = %q", up.auth())
 	}
-	if up.lastHeaders.Get("anthropic-beta") != claudeOAuthBeta {
-		t.Errorf("anthropic-beta = %q", up.lastHeaders.Get("anthropic-beta"))
+	if up.header("anthropic-beta") != claudeOAuthBeta {
+		t.Errorf("anthropic-beta = %q", up.header("anthropic-beta"))
 	}
 
 	if len(got.Windows) != 3 {

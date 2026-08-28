@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -108,8 +109,13 @@ func makeUnreadable(t *testing.T, path string) {
 //
 // **실제 벤더 엔드포인트로는 절대 요청하지 않는다.** 테스트는 어댑터가 조립한 요청과
 // 응답 해석만 검증하고, 실제 계약은 어댑터 상단 주석의 「가정과 확인 방법」이 책임진다.
+//
+// Collect 가 벤더별 조회를 동시에 던지므로 핸들러도 동시에 돈다. 관측값은 뮤텍스로 지킨다 —
+// 여기서 경합이 나면 -race 가 테스트를 죽이고, 그건 우리 코드가 아니라 도우미의 버그다.
 type upstream struct {
 	srv *httptest.Server
+
+	mu sync.Mutex
 	// lastAuth 는 마지막 요청의 Authorization 헤더다. 어댑터가 토큰을 제대로 실었는지
 	// 확인하는 유일한 근거다 — 이 확인이 없으면 "토큰이 안 샜다" 는 단언이 공허해진다.
 	lastAuth    string
@@ -123,14 +129,42 @@ func newUpstream(t *testing.T, handler http.HandlerFunc) *upstream {
 	t.Helper()
 	up := &upstream{}
 	up.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up.mu.Lock()
 		up.calls++
 		up.lastAuth = r.Header.Get("Authorization")
 		up.lastHeaders = r.Header.Clone()
 		up.lastPath = r.URL.Path
+		up.mu.Unlock()
 		handler(w, r)
 	}))
 	t.Cleanup(up.srv.Close)
 	return up
+}
+
+func (u *upstream) auth() string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.lastAuth
+}
+
+func (u *upstream) path() string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.lastPath
+}
+
+func (u *upstream) header(name string) string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.lastHeaders.Get(name)
+}
+
+// hasHeader 는 헤더가 아예 붙지 않았는지 본다. 빈 값과 없음을 구분해야 한다.
+func (u *upstream) hasHeader(name string) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	_, ok := u.lastHeaders[http.CanonicalHeaderKey(name)]
+	return ok
 }
 
 // jsonUpstream 은 고정 본문을 200 으로 돌려주는 서버다.

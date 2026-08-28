@@ -33,13 +33,13 @@ func TestCodexAdapter정상응답을공통모델로옮긴다(t *testing.T) {
 	if got.Vendor != VendorCodex || got.Plan != "plus" {
 		t.Errorf("vendor·plan 이 다르다: %+v", got)
 	}
-	if up.lastPath != codexUsagePath {
-		t.Errorf("경로 = %q, want %q", up.lastPath, codexUsagePath)
+	if up.path() != codexUsagePath {
+		t.Errorf("경로 = %q, want %q", up.path(), codexUsagePath)
 	}
-	if up.lastAuth != "Bearer "+codexCanary {
-		t.Errorf("Authorization 헤더 = %q", up.lastAuth)
+	if up.auth() != "Bearer "+codexCanary {
+		t.Errorf("Authorization 헤더 = %q", up.auth())
 	}
-	if got := up.lastHeaders.Get(codexAccountHeader); got != accountCanary {
+	if got := up.header(codexAccountHeader); got != accountCanary {
 		t.Errorf("%s = %q", codexAccountHeader, got)
 	}
 
@@ -94,7 +94,7 @@ func TestCodexAdapter는모르는값을비워둔다(t *testing.T) {
 		t.Errorf("초기화 시각을 지어냈다: %+v", got.Windows[0])
 	}
 	// account_id 가 없으면 헤더를 붙이지 않는다.
-	if _, ok := up.lastHeaders[http.CanonicalHeaderKey(codexAccountHeader)]; ok {
+	if up.hasHeader(codexAccountHeader) {
 		t.Error("빈 account_id 로 헤더가 붙었다")
 	}
 }
