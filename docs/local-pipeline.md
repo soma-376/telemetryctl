@@ -293,6 +293,7 @@ func Open(dbPath string) (*Reader, error)
 
 func (r *Reader) Today(ctx context.Context, tz string) (TodaySummary, error)
 func (r *Reader) Home(ctx context.Context, q HomeQuery) (HomeSummary, error)
+func (r *Reader) HomeBreakdown(ctx context.Context, q HomeBreakdownQuery) (HomeBreakdown, error)
 func (r *Reader) Sessions(ctx context.Context, q SessionQuery) ([]SessionRow, error)
 func (r *Reader) Session(ctx context.Context, id int64) (SessionDetail, error)
 func (r *Reader) Breakdown(ctx context.Context, q BreakdownQuery) ([]Row, error)
@@ -338,6 +339,7 @@ func (s *Service) Stop() error            // ServiceShutdown 자리
 |---|---|
 | Today 4개 카드 + 어제 대비 %, 상단 "N agents active" | `Today(tz)` |
 | Home 선택 날짜의 4개 카드(토큰·예상 비용·활동 시간·2시간 평균) + 최근 활동 | `Home(q)` |
+| Home 2시간 사용량 시계열 · 최고 사용 시간대 · 벤더별 점유율 · 상위 모델 | `HomeBreakdown(q)` |
 | 오늘의 활동 / 세션 리스트 | `Sessions(q)` |
 | 세션 상세 (수치 + 파일 변경 + 툴 타임라인 + MCP) | `Session(id)` |
 | Agent 사용 비율 · 시간대별 집중도 · 일별 추이 | `Breakdown(q)` |
@@ -551,6 +553,110 @@ Windows 에서 데몬의 prune 이 막힌다.
 출처별로 나뉜 다섯 문장)와 `llm_calls` 행 스캔 1회. 최근 세션은 목록 1회 + 그 세션들의
 `llm_calls` 1회다. **`llm_calls.called_at` 에는 인덱스가 없다**(v4 는 `ix_llm_turn` 만 둔다).
 하루치 행 수가 커지면 이 스캔이 먼저 느려진다.
+
+---
+
+### 6.9 `HomeBreakdown(q)` — 시간대·벤더·모델 사용량 분해 (PROJ-89)
+
+`Home(q)` 이 선택 날짜의 **합계**라면 이쪽은 같은 하루를 셋으로 쪼갠 것이다 — 2시간 창의 시계열,
+벤더별 합계와 점유율, 벤더 안의 모델별 사용량. 인자는 **`HomeBreakdownQuery{TZ, Date, ModelLimit}`**
+이고 `TZ`·`Date` 의 의미와 검증은 `HomeQuery` 와 같다.
+
+| 필드 | 담는 것 |
+|---|---|
+| `windows[]` | 현지 자정부터 2시간씩 자른 시계열. 창마다 합계와 벤더별 줄 |
+| `peak` | 최고 사용 시간대 |
+| `vendors[]` | 벤더별 합계·점유율·상위 모델 |
+| `totals`·`cost` | 그 날 전체. **`Home` 의 같은 값과 정확히 일치한다** |
+
+#### ★ 시계열 합계는 Home 일간 총합과 같다
+
+인수조건이고, 셋이 그것을 보장한다.
+
+1. **구간이 같다.** `selectedDay`·`timezone.go` 를 그대로 쓴다 — 현지 자정 경계와 DST 의 23·25시간
+   하루가 저절로 따라온다.
+2. **집계기가 같다.** 승격 테이블 쪽은 `aggregate.go`(`dim` 만 `total` → `vendor`), `llm_calls` 행
+   스캔 쪽은 `home_scan.go` 의 스캐너와 `costAccumulator` 를 그대로 쓴다. 읽는 행이 한 행도 다르지 않다.
+3. **금액을 정수 nano-USD 로 더한다.** 산정(`pricing.Table.Estimate`)은 호출 한 건당 **정확히 한 번**
+   이고, 그 `Result` 를 하루·벤더·모델·창 누적기에 나눠 넣는다. 두 번 계산하면 같은 호출이 두 값을 낼 수 있다.
+
+따라서 다음이 성립하고, 테스트가 `Home` 을 직접 불러 대조한다.
+
+```text
+Σ windows[i]            = Σ vendors[j]         = Home 의 하루 합계
+Σ windows[i].vendors[j] = windows[i]
+Σ vendors[j].models[k]  = vendors[j]           (models 가 잘리지 않았을 때)
+```
+
+창의 경계·`active`·토큰·비용·활동 시간은 `HomeSummary.TwoHour.Windows[i]` 와 **창 단위로도** 같다.
+두 위젯이 같은 화면에 나란히 놓이므로 창 하나라도 갈리면 안 된다.
+
+#### 버킷 경계는 §6.8 의 규칙을 그대로 물려받는다
+
+창에 넣는 기준이 값마다 다르다. **비용은 `llm_calls.called_at`(초 단위), 나머지는 `aggregate.go` 의
+UTC 정시 버킷**이다. UTC+5:30·+5:45 같은 오프셋에서는 정시 버킷의 시작이 현지 2시간 창의 경계와
+어긋나 호출 하나가 옆 창에 들어갈 수 있다. **하루 합계는 영향받지 않는다** — 구간 필터는 `called_at`
+으로 걸고, 구간 밖으로 밀린 버킷은 양 끝 창으로 눌러 담는다.
+
+여기서 고치지 않은 것은 의도다. 고치려면 `aggregate.go` 가 시각을 초 단위로 내려 줘야 하고, 그러면
+`Home`·`Today`·`Breakdown` 이 함께 움직인다. 한쪽만 고치면 같은 창의 같은 지표가 두 값을 낸다.
+
+#### 점유율은 정수 천분율이고 합이 상수다
+
+`cost_share_permille`·`token_share_permille` 은 **정수 천분율(permille)** 이다. 화면은 나눗셈을 하지
+않고 받은 정수를 그대로 쓴다(10 으로 나누면 소수 첫째 자리까지의 백분율).
+
+- 기준 합계는 **양수 값들의 합**이다.
+- 각 항목에 `floor(v × 1000 / base)` 를 주고, 남은 몫을 **나머지가 큰 순서**로 한 단위씩 나눠 준다
+  (최대잔여법). 나머지가 같으면 **벤더 이름 오름차순**으로 가른다.
+- 그래서 합이 상수다. `base > 0` 이면 정확히 **1000**(`dashboard.SharePermilleTotal`), `base ≤ 0` 이면
+  **0** 이다.
+
+값을 따로 반올림해 화면에서 더하면 99% 나 101% 가 나오는 날이 생기고, 그때 어느 값이 틀렸는지
+되짚을 근거가 없다.
+
+#### 정렬은 동률에서도 흔들리지 않는다
+
+`vendors[]` 는 비용(nano) 내림차순 → 토큰 내림차순 → **벤더 이름** 오름차순, `models[]` 은 비용 →
+토큰 → **모델 이름** 오름차순이다. 이름은 유일하므로 순서가 완전히 정해진다 — 동률의 순서가 흔들리면
+같은 데이터가 새로고침마다 다른 화면을 만든다.
+
+`models[]` 의 키는 **`pricing.Canonical` 로 정규화한 이름**이다. `claude-opus-4-5-20251101` 과
+`claude-opus-4-5` 가 한 줄로 모인다. 상위 `ModelLimit` 개(기본 5, 상한 50)만 돌려주고, 잘렸으면
+`models_truncated` 가 `true` 다. 이때 모델 줄의 합은 벤더 줄보다 **작다.**
+
+#### 최고 사용 시간대
+
+**토큰**이 가장 많은 창이다. 토큰이 같으면 비용(nano)이 큰 창, 그것도 같으면 **이른 창**이 이긴다.
+비용을 1순위로 두지 않은 이유는 비용을 정하지 못한 호출이 있기 때문이다 — 모르는 모델만 쓴 시간대가
+"사용량 0" 으로 밀려나면 안 된다. 토큰도 비용도 0 인 하루에는 `peak.found` 가 `false` 이고
+`peak.index` 는 `-1` 이다.
+
+#### 화면 계약 — 한 벤더에만 데이터가 있어도 유지된다
+
+- 활동이 없는 창도 **0 으로 채워** 전부 들어 있다. 빠진 창이 있으면 막대가 옆으로 밀려 다른 시간대의
+  값처럼 보인다.
+- **모든 창이 `vendors[]` 와 같은 길이·같은 순서의 벤더 줄을 갖는다.** 그 창에 그 벤더의 활동이 없으면
+  0 이다. 화면은 창마다 벤더를 찾아 맞출 필요가 없다.
+- 벤더가 하나뿐이면 그 하나가 점유율 1000 을 전부 갖는다.
+- **관측되지 않은 벤더는 넣지 않는다.** 이 패키지는 관측한 사실만 돌려주고, 화면이 아는 벤더 목록과
+  대조하는 것은 GUI 몫이다 (`Vendors()` 와 같은 규칙).
+
+#### 토큰 총량과 `reasoning_tokens`
+
+`tokens` 는 §6.8 과 같이 **입력+출력**뿐이다. 캐시 토큰은 따로 보이되 총량에 더하지 않는다.
+
+**`reasoning_tokens` 필드는 두지 않았다.** v3 쓰기 경로에 출처가 없어(`store/promote.go` 가 이 컬럼에
+`NULL` 을 넣는다) 항상 0 이 되기 때문이다. 항상 0 인 필드를 새 표면에 두면 화면이 "reasoning 0 토큰"
+이라는 잘못된 사실을 그린다. `Totals` 의 `api_errors` 와 같은 판단이고, 그쪽은 이미 나간 TS 바인딩
+때문에 지우지 못했을 뿐이다. 출처가 생기면 그때 필드를 더한다.
+
+#### 질의 비용
+
+하루당 질의는 둘이다 — 승격 테이블 집계 1회(`aggregate.go`, 출처별로 나뉜 다섯 문장)와 `llm_calls`
+행 스캔 1회. 전날은 읽지 않는다(증감률이 없다). 두 출처를 한 질의에 `JOIN` 으로 묶지 않는 이유는
+§6.1.2 와 같다 — 행이 곱해져 모든 `SUM` 이 부푼다. §6.8 과 마찬가지로 **`llm_calls.called_at` 에는
+인덱스가 없어** 하루치 행 수가 커지면 이 스캔이 먼저 느려진다.
 
 ---
 
