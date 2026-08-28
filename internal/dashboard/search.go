@@ -9,9 +9,12 @@ import (
 
 // 검색 출처. 하나의 세션이 여러 출처에서 걸릴 수 있어 Hit.Sources 는 슬라이스다.
 const (
-	SourceTitle   = "title"
-	SourceFile    = "file"
-	SourceContent = "content"
+	SourceTitle = "title"
+	// SourceWorkspace 는 sessions.workspace_path 다. 원문 저장을 꺼도 제목과 함께 남는
+	// 출처라, 프롬프트가 지워진 뒤에도 "어느 프로젝트에서 한 일" 로 세션을 되찾을 수 있다.
+	SourceWorkspace = "workspace"
+	SourceFile      = "file"
+	SourceContent   = "content"
 )
 
 const (
@@ -66,7 +69,8 @@ type Hit struct {
 // ADR 0002 의 "LIKE 폴백을 두지 않는다" 를 철회했다. 대가는 전체 스캔이고, 단일 개발자
 // 로컬 규모(400일 보존)에서는 수용 가능하다는 것이 그 결정의 근거다.
 //
-// 검색 대상은 sessions.title · file_changes.file_path · turns.prompt_text 세 컬럼이다.
+// 검색 대상은 sessions.title · sessions.workspace_path · file_changes.file_path ·
+// turns.prompt_text 네 컬럼이다 (PROJ-90 이 작업 폴더 경로를 더했다).
 //
 // 빈 질의는 에러가 아니라 빈 결과다. 검색창을 지우는 동작이 매번 에러 토스트를 띄울 이유가 없다.
 func (r *Reader) Search(ctx context.Context, q SearchQuery) ([]Hit, error) {
@@ -85,7 +89,10 @@ func (r *Reader) Search(ctx context.Context, q SearchQuery) ([]Hit, error) {
 	pattern := likePattern(text)
 
 	acc := newHitAccumulator()
-	if err := searchTitles(ctx, db, pattern, scan, acc); err != nil {
+	if err := searchSessionColumn(ctx, db, searchTitleSQL, "제목 검색", SourceTitle, pattern, scan, acc); err != nil {
+		return nil, err
+	}
+	if err := searchSessionColumn(ctx, db, searchWorkspaceSQL, "작업 폴더 경로 검색", SourceWorkspace, pattern, scan, acc); err != nil {
 		return nil, err
 	}
 	if err := searchFiles(ctx, db, pattern, scan, acc); err != nil {
@@ -100,15 +107,20 @@ func (r *Reader) Search(ctx context.Context, q SearchQuery) ([]Hit, error) {
 	return acc.resolve(ctx, db, q, limit)
 }
 
-// ── 출처 1: sessions.title ──────────────────────────────────────────────────
+// ── 출처 1·2: sessions.title · sessions.workspace_path ──────────────────────
 
 const searchTitleSQL = `SELECT s.id FROM sessions s
 WHERE s.title LIKE ? ESCAPE '\'
 ORDER BY s.started_at DESC LIMIT ?`
 
-func searchTitles(ctx context.Context, db sqlQuerier, pattern string, limit int, acc *hitAccumulator) (err error) {
-	const op = "제목 검색"
-	rows, err := db.QueryContext(ctx, searchTitleSQL, pattern, limit)
+const searchWorkspaceSQL = `SELECT s.id FROM sessions s
+WHERE s.workspace_path LIKE ? ESCAPE '\'
+ORDER BY s.started_at DESC LIMIT ?`
+
+// searchSessionColumn 은 sessions 의 한 컬럼을 뒤져 세션 id 만 거둔다. 두 출처가 질의문과
+// 출처 이름만 다르고 나머지는 같아서 하나로 묶었다.
+func searchSessionColumn(ctx context.Context, db sqlQuerier, query, op, source, pattern string, limit int, acc *hitAccumulator) (err error) {
+	rows, err := db.QueryContext(ctx, query, pattern, limit)
 	if err != nil {
 		return queryErr(op, err)
 	}
@@ -119,12 +131,12 @@ func searchTitles(ctx context.Context, db sqlQuerier, pattern string, limit int,
 		if serr := rows.Scan(&id); serr != nil {
 			return queryErr(op, serr)
 		}
-		acc.mark(id, SourceTitle)
+		acc.mark(id, source)
 	}
 	return nil
 }
 
-// ── 출처 2: file_changes.file_path ──────────────────────────────────────────
+// ── 출처 3: file_changes.file_path ──────────────────────────────────────────
 
 // 파일 변경은 세션에 직접 매달리지 않는다. tool_calls → turns 를 거쳐야 세션에 닿는다.
 const searchFileSQL = `SELECT t.session_id, f.file_path
@@ -156,7 +168,7 @@ func searchFiles(ctx context.Context, db sqlQuerier, pattern string, limit int, 
 	return nil
 }
 
-// ── 출처 3: turns.prompt_text ───────────────────────────────────────────────
+// ── 출처 4: turns.prompt_text ───────────────────────────────────────────────
 
 // v3 에는 원문 테이블이 없다. 남는 원문은 사용자 프롬프트 하나뿐이고 그것은 턴에 붙어 있다
 // (store/resolve.go 의 promptText). 발췌는 FTS5 의 snippet() 이 하던 일인데 그 함수도

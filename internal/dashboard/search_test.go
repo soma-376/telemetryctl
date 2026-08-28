@@ -123,6 +123,33 @@ func TestSearchMergesSourcesPerSession(t *testing.T) {
 	}
 }
 
+// 작업 폴더 경로도 검색 출처다 (PROJ-90). 제목·원문 어디에도 없는 낱말이라도 그 세션이
+// 어느 폴더에서 돌았는지로 되찾을 수 있어야 한다.
+func TestSearchCoversWorkspacePath(t *testing.T) {
+	f := newFixture(t)
+	f.write(store.Batch{Sessions: []session.Session{
+		newSession("s-ws-a", testNow.Add(-2*time.Hour), func(s *session.Session) {
+			s.Title = "제목에는 없는 낱말"
+			s.WorkspacePath = workspaceB
+		}),
+		newSession("s-ws-b", testNow.Add(-time.Hour), func(s *session.Session) {
+			s.Title = "제목에는 없는 낱말"
+			s.WorkspacePath = workspaceA
+		}),
+	}})
+
+	hits, err := f.reader.Search(context.Background(), SearchQuery{Text: "pulsemetry-backend"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(hits) != 1 || hits[0].SessionKey != "s-ws-a" {
+		t.Fatalf("결과 = %+v, want s-ws-a 하나", hits)
+	}
+	if !containsString(hits[0].Sources, SourceWorkspace) {
+		t.Errorf("Sources = %v, want %q 포함", hits[0].Sources, SourceWorkspace)
+	}
+}
+
 // LIKE 의 오른쪽은 질의 언어가 아니라 그냥 문자열이라 FTS5 시절의 문법 오류는 사라졌다.
 // 그래도 와일드카드와 SQL 주입 입력은 여전히 값 바인딩과 escape 로 막아야 한다.
 func TestSearchSurvivesHostileInput(t *testing.T) {

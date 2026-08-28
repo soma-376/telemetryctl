@@ -298,6 +298,7 @@ func (r *Reader) Sessions(ctx context.Context, q SessionQuery) ([]SessionRow, er
 func (r *Reader) Session(ctx context.Context, id int64) (SessionDetail, error)
 func (r *Reader) Breakdown(ctx context.Context, q BreakdownQuery) ([]Row, error)
 func (r *Reader) Search(ctx context.Context, q SearchQuery) ([]Hit, error)
+func (r *Reader) Activity(ctx context.Context, q ActivityQuery) (ActivityPage, error)
 func (r *Reader) Vendors(ctx context.Context) ([]VendorStatus, error)
 func (r *Reader) MCPUsage(ctx context.Context, lastNSessions int) ([]MCPRow, error)
 func (r *Reader) Status(ctx context.Context) (Status, error)
@@ -343,10 +344,36 @@ func (s *Service) Stop() error            // ServiceShutdown 자리
 | 오늘의 활동 / 세션 리스트 | `Sessions(q)` |
 | 세션 상세 (수치 + 파일 변경 + 툴 타임라인 + MCP) | `Session(id)` |
 | Agent 사용 비율 · 시간대별 집중도 · 일별 추이 | `Breakdown(q)` |
-| 검색 (제목·파일명·원문) | `Search(q)` |
+| 검색 (제목·작업 폴더 경로·파일명·원문) | `Search(q)` |
+| Activity 목록 (필터·검색·더 불러오기) | `Activity(q)` |
 | Settings 연결 상태 | `Vendors()` |
 | Insights MCP 카드 | `MCPUsage(n)` |
 | Settings 저장소·데몬 상태 | `Status()` |
+
+### 6.1.2 Activity 목록 (`Activity`, PROJ-90)
+
+`Sessions(q)` 가 단순 목록이라면 `Activity(q)` 는 Activity 화면 한 장이다. 날짜·프로젝트·벤더·진행
+상태 필터와 통합 검색을 한 질의에 담고 다음 페이지 정보를 함께 돌려준다.
+
+- **검색 대상은 네 컬럼이다** — `sessions.title` · `sessions.workspace_path` ·
+  `file_changes.file_path` · `turns.prompt_text`. v3 에 FTS 가 없어 전부 와일드카드를 escape 한
+  `LIKE` 이고 (ADR 0009), 파일 경로는 `file_changes → tool_calls → turns` JOIN 으로 세션에 닿는다.
+  그 JOIN 은 **`EXISTS` 안에 가둔다** — 바깥에 풀면 세션 한 줄이 자식 행 수만큼 복제돼 토큰·비용
+  합계가 그 배수로 부풀어 오른다.
+- **원문 저장을 꺼도 제목·작업 폴더 경로·파일 경로 검색은 그대로 동작한다** (`--no-store-content`).
+- **페이지네이션은 `started_at DESC, sessions.id DESC` 의 keyset 커서다.** OFFSET 을 쓰지 않는
+  이유는 페이지 사이에 데몬이 세션을 하나 넣으면 뒤 페이지가 통째로 밀려 중복·누락이 생기기
+  때문이다. 2순위 `id` 는 같은 초에 시작한 세션들의 순서를 고정한다.
+- **`HasMore` 가 "더 불러오기" 의 유일한 근거다.** `Limit+1` 개를 받아 한 개가 남는지로 판정한다 —
+  줄 수가 `Limit` 에 딱 맞아떨어질 때 마지막 페이지를 구분하려면 이 방법뿐이다. `NextCursor` 는
+  마지막 페이지에서도 마지막 줄을 가리킨다(0 으로 비우면 처음부터 다시 받는 호출자가 생긴다).
+- **`ActivityRow.WorkType` 은 아직 항상 빈 문자열이다.** 작업 유형은 턴 분류(PROJ-92)의 결과이고
+  v3 `turns` 에는 그 값을 담을 컬럼이 없다. 그 전까지 추측해 채우지 않는다.
+
+정렬·커서 비교는 `COALESCE(started_at, 0)` 을 **양쪽에 똑같이** 쓴다. `sessions.started_at` 이
+NULL 일 수 있어서 한쪽만 COALESCE 하면 그런 세션이 첫 페이지에는 보이고 다음 페이지부터 조용히
+사라진다. 대가로 `ix_sessions_started` 를 못 쓰지만, 로컬 규모에서는 한 줄마다 도는 상관
+서브쿼리가 비용의 대부분이다.
 
 `Today` 의 `Cards` 는 `cost_usd`·`tokens`·`sessions_started`·`active_seconds` 네 장이다
 (`dashboard.MetricCostUSD` 등 상수). `Breakdown` 은 `Dim` 다섯 가지 × `BucketBy` 세 가지

@@ -154,6 +154,24 @@ func absentCases() []absentCase {
 			},
 		},
 		{
+			method: "Activity",
+			call: func(ctx context.Context, r *Reader) (any, error) {
+				return r.Activity(ctx, ActivityQuery{Text: "토큰"})
+			},
+			check: func(t *testing.T, got any) {
+				page := got.(ActivityPage)
+				if page.Rows == nil || len(page.Rows) != 0 {
+					t.Errorf("Activity.Rows = %v, want 빈 슬라이스", page.Rows)
+				}
+				if page.HasMore {
+					t.Error("HasMore = true — 미설치인데 다음 페이지가 있다고 한다")
+				}
+				if page.NextCursor.ID != 0 {
+					t.Errorf("NextCursor = %+v, want 빈 커서", page.NextCursor)
+				}
+			},
+		},
+		{
 			method: "Vendors",
 			call:   func(ctx context.Context, r *Reader) (any, error) { return r.Vendors(ctx) },
 			check: func(t *testing.T, got any) {
