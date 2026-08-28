@@ -302,6 +302,7 @@ func (r *Reader) Activity(ctx context.Context, q ActivityQuery) (ActivityPage, e
 func (r *Reader) Vendors(ctx context.Context) ([]VendorStatus, error)
 func (r *Reader) MCPUsage(ctx context.Context, lastNSessions int) ([]MCPRow, error)
 func (r *Reader) Status(ctx context.Context) (Status, error)
+func (r *Reader) WorkspaceFolder(ctx context.Context, sessionID int64) (WorkspaceFolder, error)
 
 func (r *Reader) Available() bool     // DB 파일이 실제로 열렸는가
 func (r *Reader) Reopen() error       // 아직 못 연 DB 를 다시 시도
@@ -349,6 +350,8 @@ func (s *Service) Stop() error            // ServiceShutdown 자리
 | Settings 연결 상태 | `Vendors()` |
 | Insights MCP 카드 | `MCPUsage(n)` |
 | Settings 저장소·데몬 상태 | `Status()` |
+| Tray 스냅샷 (상태·마지막 갱신·활성/최근 세션·벤더 한도·가장 빠듯한 한도) | `Service.Tray(q)` · `Service.RefreshTray(q)` |
+| 세션의 작업 폴더 열기 | `Service.OpenWorkspace(sessionID)` |
 
 ### 6.1.2 Activity 목록 (`Activity`, PROJ-90)
 
@@ -684,6 +687,141 @@ UTC 정시 버킷**이다. UTC+5:30·+5:45 같은 오프셋에서는 정시 버�
 행 스캔 1회. 전날은 읽지 않는다(증감률이 없다). 두 출처를 한 질의에 `JOIN` 으로 묶지 않는 이유는
 §6.1.2 와 같다 — 행이 곱해져 모든 `SUM` 이 부푼다. §6.8 과 마찬가지로 **`llm_calls.called_at` 에는
 인덱스가 없어** 하루치 행 수가 커지면 이 스캔이 먼저 느려진다.
+
+### 6.10 `Tray(q)` — 트레이 한 장 (PROJ-96)
+
+트레이는 창을 열지 않고 곁눈질하는 화면이라 **한 응답**에 다 들어 있어야 한다 — 모니터링 상태,
+마지막 갱신 시각, 활성·최근 세션, 벤더 한도, 가장 빠듯한 한도. 다섯 번 물으면 다섯 개의 실패
+지점과 다섯 개의 로딩 상태가 생긴다.
+
+```go
+func NewTrayMonitor(r *Reader) *TrayMonitor
+func (m *TrayMonitor) Snapshot(ctx context.Context, q TrayQuery) (TraySnapshot, error) // 주기 준수
+func (m *TrayMonitor) Refresh(ctx context.Context, q TrayQuery) (TraySnapshot, error)  // 즉시 갱신
+```
+
+`Service` 가 모니터를 **하나만** 들고 있다 (`Service.Tray` · `Service.RefreshTray`). 호출마다 새로
+만들면 "마지막 정상 스냅샷" 이 매번 사라져 실패가 곧 빈 화면이 된다.
+
+#### 로컬 부분은 새 SQL 을 쓰지 않는다
+
+`Status()`(§6.1) 와 `Home(q)`(§6.8) 를 그대로 부른다. 같은 질문에 두 벌의 질의를 두면 트레이와 본
+화면이 서로 다른 숫자를 말하기 시작하고, 어느 쪽이 맞는지 판정할 근거가 없다.
+
+| 스냅샷 필드 | 출처 |
+|---|---|
+| `monitoring.*` | `Status()` — `Available` · `Daemon.Running/Stale` · `NewestEventAt` · `RunningSessions` |
+| `active_agents` · `active_sessions` · `recent_sessions` | `Home(q)` |
+| `limits` · `limits_observed_at` | `internal/vendorlimit`.`Collect` |
+| `tightest_limit` | `limits` 에서 계산 |
+
+#### 갱신 주기는 60초다 (`DefaultTrayInterval`)
+
+주기를 정하는 것은 로컬 조회가 아니라 **벤더 한도 조회**다. 한 응답으로 묶인 이상 주기는 가장 비싼
+쪽에 맞춘다.
+
+- 벤더 한도는 남의 비공개 API 다. 초 단위로 두드리면 차단이 **사용자 계정**에 걸린다.
+- 한도 창은 5시간·7일 단위로 움직인다. 1분 사이에 의미 있게 변하지 않는다.
+- 트레이는 계속 보고 있는 화면이 아니다. 1분 지연은 인지되지 않는다.
+
+`Snapshot` 은 주기 안이면 직전 값을 그대로 준다. 단 **조회 조건(`TrayQuery`)이 달라지면** 주기와
+무관하게 다시 만든다 — 시간대가 다른 스냅샷을 캐시라고 돌려주면 화면이 남의 날짜를 그린다.
+트레이의 「새로고침」 같은 명시적 조작은 `RefreshTray` 로 주기를 건너뛴다.
+
+#### 새로고침 실패 = 마지막 정상 스냅샷 + stale
+
+로컬 조회가 실패하면 트레이를 비우지 않는다. 직전 정상 스냅샷을 그대로 두고 `stale`·`stale_reason`
+만 세운다. 트레이에서 숫자가 사라지는 것은 "지금 값을 못 읽었다" 가 아니라 "활동이 없다" 로 읽히고,
+그 오해는 사용자가 도구를 끄게 만든다.
+
+- `refreshed_at` — **마지막으로 성공한** 갱신 시각. 실패해도 움직이지 않는다.
+- `checked_at` — 마지막 **시도** 시각. 실패해도 움직인다.
+- 한 번도 성공한 적이 없으면 빈 모양(슬라이스는 전부 non-nil)을 `stale` 로 돌려준다.
+
+`Snapshot`·`Refresh` 가 error 를 내는 것은 **시간대 오타 같은 호출자 버그뿐**이다. 갱신 실패는
+오류가 아니라 상태다.
+
+#### 부분 장애가 다른 벤더와 최근 세션을 지우지 않는다
+
+`vendorlimit.Collect` 는 error 를 반환하지 않고 벤더마다 `state`·`reason` 을 돌려준다. 여기서는 그
+결과를 **손대지 않고 그대로** 실어 보낸다 — 실패한 벤더도 `unavailable` 로 자리를 지켜야 화면이
+"아직 로딩 중" 과 구분한다. 한 벤더의 실패는 `stale` 사유가 아니다.
+
+#### 「가장 빠듯한 한도」 는 결정론이다
+
+같은 입력에 늘 같은 답을 내야 한다. 그러지 않으면 볼 때마다 다른 창이 강조되고 사용자는 그 표시를
+믿지 않게 된다.
+
+1. **후보**: `state == available` 인 벤더의 창만. `unavailable` 벤더는 이길 수도, 선택을 흔들 수도 없다.
+2. **사용률 내림차순** (`used_ratio`). "빠듯하다" 의 1차 정의다.
+3. 동률이면 **초기화가 빠른 쪽** (`resets_in_seconds` 오름차순). 초기화 시각을 **모르는 창**
+   (`resets_in_seconds == 0`)은 아는 창보다 항상 뒤다 — 0 을 "0초 뒤" 로 읽으면 정보 없는 창이 늘 이긴다.
+4. 그래도 같으면 **벤더 이름 오름차순** → **창 종류**(5시간 → 주 → 월 → 미상) → **`label` 오름차순**
+   → 입력 순서. 여기까지 오면 전순서다.
+
+후보가 없으면 `tightest_limit.found = false` 이고 나머지 필드는 영값이다.
+
+### 6.11 `OpenWorkspace(sessionID)` — 작업 폴더 열기 (PROJ-96)
+
+```go
+func (s *Service) OpenWorkspace(ctx context.Context, sessionID int64) (WorkspaceFolder, error)
+func (s *Service) WorkspaceFolder(ctx context.Context, sessionID int64) (WorkspaceFolder, error) // 열지 않고 판정만
+```
+
+#### 프런트가 경로를 건넬 자리가 타입에 없다
+
+**공개 입구의 인자는 세션 식별자 하나다.** 경로를 담을 매개변수가 존재하지 않으므로, 프런트가 임의
+경로를 열게 만드는 입력 자체가 성립하지 않는다. 검증으로 막는 것과 인자가 없는 것은 다르다 —
+검증은 언젠가 조건 하나가 느슨해지면 뚫리지만 없는 인자는 뚫릴 자리가 없다. 열 경로는 언제나
+`sessions.workspace_path` 에서 우리가 직접 읽은 값이다 (ADR 0010).
+
+"사용자가 고른 폴더를 연다" 같은 요구가 생기면 그것은 이 함수의 인자를 늘리는 일이 아니라 별도 결정이다.
+
+#### 검증 — 값의 모양부터, 그다음 파일 시스템
+
+순서가 의미를 갖는다. 모양이 이상한 값으로 `Stat` 을 부르면 그 자체가 부작용이 될 수 있는 경로가 있다.
+
+| 사유 (`reason`) | 언제 |
+|---|---|
+| `session_not_found` | 그 id 의 세션이 없다. **DB 부재도 이것**이다 (미설치는 오류가 아니다) |
+| `path_missing` | 세션은 있으나 `workspace_path` 가 비어 있다 |
+| `path_unsafe` | 경로에 제어 문자(개행·CR·NUL)가 있다 |
+| `path_not_absolute` | 절대 경로가 아니다 — 상대 경로는 우리 프로세스의 CWD 기준으로 해석된다 |
+| `path_not_clean` | `filepath.Clean` 결과와 다르다 (`..`·`.` 조각, 중복·끝 구분자) |
+| `path_not_found` | 그 경로가 지금 없다 (프로젝트를 옮겼거나 지웠다) |
+| `path_not_directory` | 디렉터리가 아니다 — 파일을 넘기면 연결 프로그램이 그것을 **실행**할 수 있다 |
+| `path_unreadable` | 확인할 권한이 없다 |
+| `unsupported_platform` | 이 OS 의 파일 관리자 호출 방법을 모른다 |
+| `open_failed` | 검증은 통과했으나 파일 관리자 실행이 실패했다 |
+
+`..` 를 펴 주지 않고 거절하는 이유는 "우리가 연 곳" 과 "DB 에 적힌 곳" 을 언제나 같게 두기 위해서다.
+**거절된 경로는 응답의 `path` 에 실리지 않는다** — 되돌려 주면 화면이 그것을 다시 어딘가로 넘길 수 있다.
+
+`openable` 은 **검증 결과**이고 `opened` 는 **호출 결과**다. 둘을 뭉치면 화면이 "경로가 잘못됐다" 와
+"파일 관리자가 없다" 를 구분해 안내하지 못한다.
+
+#### 셸을 거치지 않는다 — argv 호출
+
+| OS | 명령 | 비고 |
+|---|---|---|
+| darwin | `open <path>` | |
+| linux | `xdg-open <path>` | 헤드리스에서는 실행 실패 → `open_failed` |
+| windows | `explorer <path>` | **성공해도 종료 코드 1** 을 낸다. 실패로 보면 안 된다 |
+| 그 밖 | — | `unsupported_platform` |
+
+`exec.CommandContext(name, argv...)` 다. `sh -c` 도, 문자열 결합도, 명령으로의 `%s` 서식도 없다.
+그래서 경로에 `;` · `&&` · `$(...)` · 백틱이 들어 있어도 그것은 **파일 이름의 일부**로 전달된다 —
+그런 이름의 디렉터리는 실제로 만들 수 있고 사용자는 그것을 열 권리가 있으므로, 걸러내는 것이 아니라
+정확히 한 인자로 넘기는 것이 정답이다. 경로는 언제나 argv 의 **마지막** 항목이고 절대 경로만 오므로
+`-` 로 시작해 옵션으로 오인될 값이 들어올 수 없다.
+
+실제 실행은 `FolderOpener` 라는 작은 seam 뒤에 있다. 테스트가 진짜 파일 관리자를 띄우지 않게 하고,
+"무엇이 argv 로 넘어갔는가" 를 단언할 수 있게 한다 — 셸을 거치지 않는다는 성질은 그 단언으로만
+회귀 검증된다.
+
+#### 범위 밖
+
+「계속하기」와 「다른 에이전트로 넘기기」는 이 티켓의 범위가 아니다.
 
 ---
 
