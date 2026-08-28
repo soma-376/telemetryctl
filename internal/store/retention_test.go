@@ -455,3 +455,32 @@ func TestPurgeContentBefore(t *testing.T) {
 		}
 	})
 }
+
+// meta 와 구조화 집계는 보존 정책의 대상이 아니다. meta 가 사라지면 스키마 버전을 잃어
+// 다음 기동이 마이그레이션을 처음부터 다시 돌린다.
+func TestPruneKeepsMetaAndPromotedFields(t *testing.T) {
+	db := openTestDB(t)
+	if err := db.SetMeta(context.Background(), MetaRetentionDays, "400"); err != nil {
+		t.Fatalf("SetMeta: %v", err)
+	}
+	seedRetention(t, db, baseTime)
+	seedUsage(t, db, baseTime) // 최근 세션 — 지워지지 않아야 한다
+
+	if _, err := db.Prune(context.Background(), baseTime); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+
+	if got, ok, err := db.Meta(context.Background(), MetaRetentionDays); err != nil || !ok || got != "400" {
+		t.Fatalf("meta.retention_days = %q (있음=%t, err=%v)", got, ok, err)
+	}
+	if v, err := db.SchemaVersion(context.Background()); err != nil || v != LatestSchemaVersion() {
+		t.Fatalf("스키마 버전 = %d (err=%v)", v, err)
+	}
+	// 최근 세션의 승격 행과 비원문 필드는 그대로다.
+	if got := scanOne(t, db, `SELECT cost_usd FROM llm_calls`); got != 0.5 {
+		t.Errorf("llm_calls.cost_usd = %v", got)
+	}
+	if got := scanOne(t, db, `SELECT error_type FROM tool_calls`); got != "EACCES" {
+		t.Errorf("tool_calls.error_type = %v", got)
+	}
+}
