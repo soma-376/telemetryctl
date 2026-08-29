@@ -52,14 +52,35 @@ contracts/*.schema.json      ★ manifest·envelope JSON Schema — 계약의 �
 ## 명령어
 
 ```bash
-task build     # CLI(bin/pulsemetry) + GUI(Pulsemetry) → artifacts/build/{os}-{arch}
-task test      # go test ./... + 프런트엔드 svelte-check
-go run ./cmd/telemetryctl enroll --invite <code> --server <url>
+# 개발
+task dev:gui                 # GUI 를 핫리로드로 띄운다
+task dev:daemon              # 데몬을 포그라운드로 실행 (옵션은 -- 뒤에)
+task cli -- enroll --invite <code> --server <url>
+
+# 빌드
+task build                   # CLI(bin/pulsemetry) + GUI(Pulsemetry) → artifacts/build/{os}-{arch}
+task build:gui               # GUI 만
+task build:cli               # CLI + 데몬만
+
+# 검증
+task test                    # 전체. CI 가 보는 것과 같다
+task check:cli               # CLI 빌드·vet·race 테스트
+task check:cli:nocgo         # CGO 없이 빌드되는지 (ADR 0002)
+task check:format            # gofmt · go mod tidy -diff
+task check:frontend          # svelte-check
 ```
 
-**`go build ./...` 를 직접 쓰지 않는다.** `cmd/pulsemetry-gui` 가 `//go:embed all:frontend/dist` 로
-Vite 산출물을 요구하는데 그 디렉터리는 gitignore 라, 프런트를 빌드한 적 없는 체크아웃에서는
-컴파일이 그 자리에서 실패한다. `task build` 가 프런트 → `dist` → Go 순서를 지킨다 (PROJ-110).
+**`go build ./...` · `go test ./...` 를 직접 쓰지 않는다.** 이유가 둘이다.
+
+1. `cmd/pulsemetry-gui` 가 `//go:embed all:frontend/dist` 로 Vite 산출물을 요구하는데 그 디렉터리는
+   gitignore 라, 프런트를 빌드한 적 없는 체크아웃에서는 컴파일이 그 자리에서 실패한다.
+   `task build` 가 프런트 → `dist` → Go 순서를 지킨다 (PROJ-110).
+2. `./...` 는 GUI 패키지까지 컴파일한다. GUI 는 OS 의 창 시스템을 링크하므로 리눅스는
+   GTK4·WebKitGTK 개발 패키지가, macOS 는 C 툴체인이 있어야 한다. 순수 Go 기준의 검사가
+   성립하지 않는 범위라, `check:*` 는 `./cmd/telemetryctl ./internal/...` 만 본다.
+   GUI 가 그 OS 에서 빌드되는지는 CI 의 `product-build` 잡이 본다.
+
+**`task test` 하나로 CI 가 보는 전부를 로컬에서 돌린다.** 푸시 전에 이것만 통과시키면 된다.
 
 ## 이 레포에서 특히 조심할 것
 

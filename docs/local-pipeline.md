@@ -524,17 +524,29 @@ Windows 에서 데몬의 prune 이 막힌다.
 
 ### 6.7 CI
 
-`.github/workflows/go.yml` 의 세 잡이 이렇게 나뉜다 (PROJ-110).
+`.github/workflows/build.yml` 의 세 잡이 이렇게 나뉜다 (PROJ-110).
 
-- `build-test` — 3개 OS 매트릭스. `setup-node` → `npm ci` → `npm run build` 로 `frontend/dist` 를
-  만든 뒤 `go build`·`go vet`·`go test -race` 를 돈다. **프런트 빌드를 앞에 두지 않으면 embed 가
-  깨진다** (6.5절 아래 주의).
-- `product-build` — Windows. `task build` 로 실제 배포 산출물을 만든다.
-- `format-deps` — gofmt 와 `go mod tidy -diff`.
+**CI 는 무엇을 검사하는지 모른다.** 언제·어디서·무슨 도구로 돌릴지만 정하고 루트 `Taskfile.yml`
+을 부른다. 그래서 워크플로에 `go` 명령이 한 줄도 없고, 개발자가 `task test` 로 로컬에서 같은 것을
+돌릴 수 있다.
 
-> **주의.** `//go:embed all:frontend/dist` 는 컴파일 시점에 그 디렉터리를 읽는데 `dist/` 는
-> gitignore 다. 따라서 `go build ./...` 를 프런트 빌드 없이 돌리면 **로컬에서도** 실패한다.
+- `build-test` — 3개 OS 매트릭스. `task check:cli` 와 `task check:cli:nocgo`. GUI 를 빼고
+  `./cmd/telemetryctl ./internal/...` 만 본다 — 아래 주의 참고.
+- `product-build` — 3개 OS 매트릭스. `task build` 로 실제 배포 산출물을 만든다. 리눅스 러너에는
+  `libgtk-4-dev`·`libwebkitgtk-6.0-dev` 를 먼저 설치한다. **GUI 가 그 OS 에서 빌드되는지 아는
+  곳은 이 잡뿐이다.**
+- `static-checks` — 실행하지 않고 읽기만 하는 검사. gofmt, `go mod tidy -diff`, svelte-check.
+  결과가 OS 에 의존하지 않아 리눅스 하나에서만 돈다.
+
+> **주의 1 — embed.** `//go:embed all:frontend/dist` 는 컴파일 시점에 그 디렉터리를 읽는데
+> `dist/` 는 gitignore 다. 따라서 `go build` 를 프런트 빌드 없이 돌리면 **로컬에서도** 실패한다.
 > 표준 진입점은 `task build` 다 (AGENTS.md 「명령어」).
+>
+> **주의 2 — 검사 범위.** `./...` 로 검사하면 GUI 패키지까지 컴파일한다. GUI 는 리눅스에서 GTK4,
+> macOS 에서 Objective-C 를 링크하므로 순수 Go 기준의 검사가 성립하지 않는다. 특히
+> `CGO_ENABLED=0` 가드(ADR 0002)는 **배포되는 CLI 바이너리**를 지키려는 것이지 GUI 를 지키려는
+> 것이 아니다. `./...` 로 두면 규칙이 자기 자신에게 걸려 넘어진다 — 실제로 GUI 가 처음 CI 를 타던
+> 날 ubuntu·macOS 가 이것 때문에 깨졌다.
 
 ### 6.8 `Home(q)` — 선택 날짜의 요약과 최근 활동 (PROJ-88)
 
@@ -1195,8 +1207,8 @@ systemd `TimeoutStopSec=20` 은 `daemon.DefaultShutdownTimeout`(15초)보다 커
 계획서 「검증」을 실제 명령으로 고친 것이다. 4.3절의 정정이 5번에 반영돼 있다.
 
 ```sh
-# 0. 자동 검증 (task test 는 go test 와 프런트 svelte-check 를 함께 돈다)
-task build && task test && go vet ./...
+# 0. 자동 검증 (task test 는 CI 가 보는 전부를 돈다 — 빌드·vet·race 테스트·gofmt·tidy·svelte-check)
+task build && task test
 
 # 1. 상위 Collector 대역 — 받은 본문을 덤프하는 간이 서버를 띄운다.
 #    (state.json 의 manifest.otlp.endpoint 가 그곳을 가리키게 하거나, --no-forward 로 이 단계를 건너뛴다)

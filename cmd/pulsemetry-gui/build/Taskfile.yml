@@ -20,46 +20,6 @@ tasks:
     cmds:
       - npm install
 
-  install:frontend:deps:bun:
-    dir: frontend
-    sources:
-      - package.json
-      - bun.lock
-      - bun.lockb
-    generates:
-      - node_modules
-    preconditions:
-      - sh: bun --version
-        msg: "bun not found"
-    cmds:
-      - bun install
-
-  install:frontend:deps:pnpm:
-    dir: frontend
-    sources:
-      - package.json
-      - pnpm-lock.yaml
-    generates:
-      - node_modules
-    preconditions:
-      - sh: pnpm --version
-        msg: "pnpm not found"
-    cmds:
-      - pnpm install
-
-  install:frontend:deps:yarn:
-    dir: frontend
-    sources:
-      - package.json
-      - yarn.lock
-    status:
-      - test -d node_modules || test -f .pnp.cjs
-    preconditions:
-      - sh: yarn --version
-        msg: "yarn not found"
-    cmds:
-      - yarn install
-
   build:frontend:
     label: build:frontend (DEV={{.DEV}} RUNNER={{.PACKAGE_MANAGER}})
     summary: Build the frontend project
@@ -106,64 +66,6 @@ tasks:
     vars:
       SCRIPT: "{{.SCRIPT}}"
 
-  frontend:run:yarn:
-    dir: frontend
-    cmds:
-      - yarn {{.SCRIPT}}
-    vars:
-      SCRIPT: "{{.SCRIPT}}"
-
-  frontend:run:pnpm:
-    dir: frontend
-    cmds:
-      - pnpm run {{.SCRIPT}}
-    vars:
-      SCRIPT: "{{.SCRIPT}}"
-
-  frontend:run:bun:
-    dir: frontend
-    cmds:
-      - bun run {{.SCRIPT}}
-    vars:
-      SCRIPT: "{{.SCRIPT}}"
-
-  frontend:vendor:puppertino:
-    summary: Fetches Puppertino CSS into frontend/public for consistent mobile styling
-    sources:
-      - frontend/public/puppertino/puppertino.css
-    generates:
-      - frontend/public/puppertino/puppertino.css
-    cmds:
-      - |
-        set -euo pipefail
-        mkdir -p frontend/public/puppertino
-        # If bundled Puppertino exists, prefer it. Otherwise, try to fetch, but don't fail build on error.
-        if [ ! -f frontend/public/puppertino/puppertino.css ]; then
-          echo "No bundled Puppertino found. Attempting to fetch from GitHub..."
-          if curl -fsSL https://raw.githubusercontent.com/codedgar/Puppertino/main/dist/css/full.css -o frontend/public/puppertino/puppertino.css; then
-            curl -fsSL https://raw.githubusercontent.com/codedgar/Puppertino/main/LICENSE -o frontend/public/puppertino/LICENSE || true
-            echo "Puppertino CSS downloaded to frontend/public/puppertino/puppertino.css"
-          else
-            echo "Warning: Could not fetch Puppertino CSS. Proceeding without download since template may bundle it."
-          fi
-        else
-          echo "Using bundled Puppertino at frontend/public/puppertino/puppertino.css"
-        fi
-        # Ensure index.html includes Puppertino CSS and button classes
-        INDEX_HTML=frontend/index.html
-        if [ -f "$INDEX_HTML" ]; then
-          if ! grep -q 'href="/puppertino/puppertino.css"' "$INDEX_HTML"; then
-            # Insert Puppertino link tag after style.css link
-            awk '
-              /href="\/style.css"\/?/ && !x { print; print "    <link rel=\"stylesheet\" href=\"/puppertino/puppertino.css\"/>"; x=1; next }1
-            ' "$INDEX_HTML" > "$INDEX_HTML.tmp" && mv "$INDEX_HTML.tmp" "$INDEX_HTML"
-          fi
-          # Replace default .btn with Puppertino primary button classes if present
-          sed -E -i'' 's/class=\"btn\"/class=\"p-btn p-prim-col\"/g' "$INDEX_HTML" || true
-        fi
-
-
-
   generate:bindings:
     summary: Generates bindings for the frontend
     run: once
@@ -204,23 +106,11 @@ tasks:
     cmds:
       - npm run dev -- --port {{.VITE_PORT}} --strictPort
 
-  frontend:dev:yarn:
-    dir: frontend
-    cmds:
-      - yarn dev --port {{.VITE_PORT}} --strictPort
-
-  frontend:dev:pnpm:
-    dir: frontend
-    cmds:
-      - pnpm dev --port {{.VITE_PORT}} --strictPort
-
-  frontend:dev:bun:
-    dir: frontend
-    cmds:
-      - bun run dev --port {{.VITE_PORT}} --strictPort
 
   update:build-assets:
     summary: Updates the build assets
+    # build/config.yml 의 info 나 fileAssociations 를 고친 뒤 이것을 돌린다.
+    # 아이콘·매니페스트·Info.plist 등 생성 자산을 config 기준으로 다시 만든다.
     dir: build
     cmds:
       - wails3 update build-assets -name "{{.APP_NAME}}" -binaryname "{{.APP_NAME}}" -config config.yml -dir .

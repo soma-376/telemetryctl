@@ -19,6 +19,38 @@ vars:
   CLI_PKGS: "./cmd/telemetryctl ./internal/..."
 
 tasks:
+  # ── 개발 ────────────────────────────────────────────────────────────────
+  # 하루에 제일 많이 치는 것들이라 맨 앞에 둔다.
+
+  dev:gui:
+    desc: GUI를 핫리로드로 띄운다. 프런트와 Go 변경이 모두 반영된다.
+    # 실제 오케스트레이션은 build/config.yml 의 dev_mode 가 한다 — Go 재빌드, vite
+    # 개발 서버, 앱 실행을 각각 띄우고 파일 변경을 감시한다. 포트가 겹치면
+    # build/devport.mjs 가 9245 부터 빈 포트를 찾는다.
+    dir: cmd/pulsemetry-gui
+    interactive: true
+    cmds:
+      - wails3 task dev
+
+  dev:daemon:
+    # 플래그를 기본으로 넣지 않는다. --no-forward 를 박아두면 상위 전송 경로를
+    # 디버깅할 때 왜 아무것도 안 나가는지 찾느라 시간을 쓴다. 필요할 때 넘긴다:
+    #
+    #   task dev:daemon -- --no-forward --data-dir ./tmp
+    desc: 데몬을 포그라운드로 실행한다. 옵션은 -- 뒤에 붙인다.
+    interactive: true
+    cmds:
+      - go run ./cmd/telemetryctl daemon {{.CLI_ARGS}}
+
+  cli:
+    # go run 인 이유: 빌드된 바이너리를 쓰면 build:cli 를 잊었을 때 옛 코드를 실행하고
+    # 그 사실을 모른다. 개발 중에는 "고쳤는데 반영이 안 되네" 가 컴파일 1~2초보다 비싸다.
+    desc: "CLI를 실행한다. 예: task cli -- status"
+    interactive: true
+    cmds:
+      - go run ./cmd/telemetryctl {{.CLI_ARGS}}
+
+  # ── 빌드 ────────────────────────────────────────────────────────────────
   # 산출물 배치는 배포 패키지(PROJ-111)와 같은 모양을 빌드 단계에서부터 쓴다.
   # 빌드한 것과 배포되는 것의 이름·경로가 다르면 문제를 재현할 때 서로를 못 믿는다.
   #
@@ -72,22 +104,24 @@ tasks:
       - task: build:cli
 
   test:
-    desc: 전체 Go 테스트와 프런트엔드 검사를 실행한다.
-    cmds:
-      - go test ./...
-      - task: test:frontend
-
-  test:frontend:
-    dir: cmd/pulsemetry-gui/frontend
-    cmds:
-      - npm run check
-
-  check:
-    desc: 푸시 전에 돌린다. CI 가 검사하는 것과 같다.
+    # 우산은 하나만 둔다. check 라는 별도 우산을 같이 두면 둘이 거의 같은 뜻이 되어
+    # 새로 온 사람이 무엇을 쳐야 할지 모른다. 사람들이 반사적으로 치는 쪽을 남겼다.
+    #
+    # 여기에 gofmt·go mod tidy 가 들어가는 것이 요점이다. 그래야 "task test 하나로
+    # CI 가 보는 전부를 로컬에서 돌린다" 가 성립하고, 푸시한 뒤에야 포맷 때문에 빨간
+    # 것을 보는 일이 없다.
+    #
+    # go test ./... 를 직접 부르지 않는 이유: check:cli 가 이미 CLI 범위로 race·cover
+    # 테스트를 돌린다. ./... 로 두면 GUI 까지 컴파일하려 들어 리눅스·macOS 에서 깨진다
+    # (GUI 에는 테스트 파일이 없어 잃는 것도 없다).
+    desc: 전체 검사. CI 가 보는 것과 같다.
     cmds:
       - task: check:cli
       - task: check:cli:nocgo
       - task: check:format
+      - task: check:frontend
+
+  # ── 검증 ────────────────────────────────────────────────────────────────
 
   check:cli:
     desc: CLI·데몬을 빌드·정적검사·테스트한다.
@@ -141,3 +175,15 @@ tasks:
       # 끝난다. 워크스페이스를 더럽히지 않아 CI 와 로컬이 같은 명령을 쓸 수 있다.
       # 실패하면 `go mod tidy` 를 직접 돌려서 고친다.
       - go mod tidy -diff
+
+  check:frontend:
+    desc: Svelte 컴포넌트와 Go 바인딩의 타입이 맞는지 검사한다.
+    # vite build 는 타입을 검사하지 않는다 — esbuild 가 타입 표기만 벗겨내고 지나간다.
+    # 그래서 타입이 깨져도 번들은 멀쩡히 만들어지고, 화면에서 런타임에 터진다.
+    # 이것을 돌리는 곳이 없으면 Go 구조체가 바뀌어 바인딩이 어긋나도 아무도 모른다.
+    #
+    # test 가 아니라 check 인 이유: 코드를 실행하지 않고 읽기만 한다. 그래서 OS 를 타지
+    # 않고, CI 에서도 static-checks 잡 하나에서만 돈다 (3개 러너에서 돌릴 이유가 없다).
+    dir: cmd/pulsemetry-gui/frontend
+    cmds:
+      - npm run check
