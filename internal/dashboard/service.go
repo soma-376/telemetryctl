@@ -36,6 +36,16 @@ type Service struct {
 	// initErr 는 생성 시점에 발견한 경로 오류다. 생성자는 실패할 수 없으므로 (GUI 가
 	// 필드 초기화에서 서비스를 만든다) 여기 담아 두고 Start 가 보고한다.
 	initErr error
+
+	// tray 는 트레이 스냅샷의 갱신 주기와 마지막 정상값을 들고 있다 (tray.go).
+	// 서비스 하나에 하나여야 한다 — 호출마다 새로 만들면 "마지막 정상 스냅샷" 이
+	// 매번 사라져 실패가 곧 빈 화면이 된다.
+	tray *TrayMonitor
+
+	// opener 는 작업 폴더를 여는 자리다 (openfolder.go). 운영 경로는 exec 로 OS 파일
+	// 관리자를 argv 호출한다. 비공개 필드라 GUI 가 바꿔치기할 수 없고, 패키지 안의
+	// 테스트만 진짜 실행을 대신할 수 있다.
+	opener FolderOpener
 }
 
 // NewService 는 dbPath 를 보는 조회 서비스를 만든다. 아직 DB 를 열지는 않는다.
@@ -47,9 +57,14 @@ func NewService(dbPath string) *Service {
 	if err != nil {
 		// 조회는 전부 "미설치" 로 동작해야 한다. 경로가 없어도 now 가 살아 있는 Reader 를
 		// 둔다 — nil 을 두면 Start 를 건너뛴 호출자가 그 자리에서 터진다.
-		return &Service{reader: &Reader{now: time.Now}, initErr: err}
+		r = &Reader{now: time.Now}
+		return newServiceFor(r, err)
 	}
-	return &Service{reader: r}
+	return newServiceFor(r, nil)
+}
+
+func newServiceFor(r *Reader, initErr error) *Service {
+	return &Service{reader: r, initErr: initErr, tray: NewTrayMonitor(r), opener: execOpener{}}
 }
 
 // Start 는 GUI 의 ServiceStartup 자리다. DB 부재는 실패가 아니다.
@@ -132,4 +147,35 @@ func (s *Service) MCPUsage(ctx context.Context, lastNSessions int) ([]MCPRow, er
 func (s *Service) Status(ctx context.Context) (Status, error) {
 	s.reconnect()
 	return s.reader.Status(ctx)
+}
+
+// Tray 는 트레이 한 장이다 — 모니터링 상태·마지막 갱신 시각·활성/최근 세션·벤더 한도·
+// 가장 빠듯한 한도가 한 응답에 들어 있다 (tray.go).
+//
+// 갱신 주기(DefaultTrayInterval) 안이면 직전 스냅샷을 그대로 준다. 갱신이 실패해도
+// 에러가 아니라 마지막 정상 스냅샷 + Stale 이다.
+func (s *Service) Tray(ctx context.Context, q TrayQuery) (TraySnapshot, error) {
+	s.reconnect()
+	return s.tray.Snapshot(ctx, q)
+}
+
+// RefreshTray 는 주기를 무시하고 즉시 다시 만든다. 트레이의 "새로고침" 이 부른다.
+func (s *Service) RefreshTray(ctx context.Context, q TrayQuery) (TraySnapshot, error) {
+	s.reconnect()
+	return s.tray.Refresh(ctx, q)
+}
+
+// OpenWorkspace 는 세션의 작업 폴더를 OS 파일 관리자로 연다.
+//
+// **인자가 세션 id 하나다.** 프런트가 임의 경로를 건넬 자리가 타입에 없고, 열 경로는
+// 언제나 sessions.workspace_path 에서 우리가 직접 읽은 값이다 (openfolder.go).
+func (s *Service) OpenWorkspace(ctx context.Context, sessionID int64) (WorkspaceFolder, error) {
+	s.reconnect()
+	return openWorkspace(ctx, s.reader, s.opener, sessionID)
+}
+
+// WorkspaceFolder 는 열지 않고 열 수 있는지만 판정한다. 화면이 메뉴 항목을 비활성화할 때 쓴다.
+func (s *Service) WorkspaceFolder(ctx context.Context, sessionID int64) (WorkspaceFolder, error) {
+	s.reconnect()
+	return s.reader.WorkspaceFolder(ctx, sessionID)
 }

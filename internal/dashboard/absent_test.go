@@ -154,6 +154,24 @@ func absentCases() []absentCase {
 			},
 		},
 		{
+			method: "Activity",
+			call: func(ctx context.Context, r *Reader) (any, error) {
+				return r.Activity(ctx, ActivityQuery{Text: "토큰"})
+			},
+			check: func(t *testing.T, got any) {
+				page := got.(ActivityPage)
+				if page.Rows == nil || len(page.Rows) != 0 {
+					t.Errorf("Activity.Rows = %v, want 빈 슬라이스", page.Rows)
+				}
+				if page.HasMore {
+					t.Error("HasMore = true — 미설치인데 다음 페이지가 있다고 한다")
+				}
+				if page.NextCursor.ID != 0 {
+					t.Errorf("NextCursor = %+v, want 빈 커서", page.NextCursor)
+				}
+			},
+		},
+		{
 			method: "Vendors",
 			call:   func(ctx context.Context, r *Reader) (any, error) { return r.Vendors(ctx) },
 			check: func(t *testing.T, got any) {
@@ -191,6 +209,42 @@ func absentCases() []absentCase {
 				}
 				if got := string(b); containsAny(got, `"active_vendors":null`, `"listen_addrs":null`) {
 					t.Errorf("JSON 에 null 슬라이스가 있다: %s", got)
+				}
+			},
+		},
+		{
+			method: "WorkspaceFolder",
+			call: func(ctx context.Context, r *Reader) (any, error) {
+				return r.WorkspaceFolder(ctx, 42)
+			},
+			check: func(t *testing.T, got any) {
+				f := got.(WorkspaceFolder)
+				// 미설치는 "열 수 없다" 이지 오류가 아니다. 사유는 기계 판독 가능해야 한다.
+				if f.Openable || f.Reason != OpenReasonSessionNotFound {
+					t.Errorf("WorkspaceFolder = %+v, want 열 수 없음/session_not_found", f)
+				}
+				// 열 수 없는 결과에 경로가 실리면 화면이 그것을 다시 어딘가로 넘길 수 있다.
+				if f.Path != "" {
+					t.Errorf("Path = %q, want 빈 문자열", f.Path)
+				}
+			},
+		},
+		{
+			method: "SessionMetrics",
+			call: func(ctx context.Context, r *Reader) (any, error) {
+				return r.SessionMetrics(ctx, SessionMetricsQuery{SessionID: 42})
+			},
+			check: func(t *testing.T, got any) {
+				m := got.(SessionMetrics)
+				if m.Found {
+					t.Error("Found = true")
+				}
+				if m.Turns == nil {
+					t.Error("Turns 가 nil — JSON 에서 null 이 되어 프런트엔드가 터진다")
+				}
+				// 상한은 DB 가 없어도 응답에 있어야 한다. 화면이 분기 없이 그린다.
+				if m.TurnLimit != defaultSessionTurns {
+					t.Errorf("TurnLimit = %d, want %d", m.TurnLimit, defaultSessionTurns)
 				}
 			},
 		},

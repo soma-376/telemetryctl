@@ -124,6 +124,12 @@ func running(s *session.Session) {
 
 func codex(s *session.Session) { s.Vendor = vendorCodex }
 
+// workspace 는 세션의 작업 폴더 원경로를 바꾼다 (ADR 0010). 작업 폴더 열기 테스트가
+// 실재하는 임시 디렉터리를 가리키게 하는 손잡이다.
+func workspace(path string) func(*session.Session) {
+	return func(s *session.Session) { s.WorkspacePath = path }
+}
+
 // ── 이벤트 ──────────────────────────────────────────────────────────────────
 
 // baseEvent 는 events 의 NOT NULL 계약을 만족하는 최소 이벤트다.
