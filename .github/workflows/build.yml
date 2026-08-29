@@ -1,4 +1,4 @@
-name: Go CI
+name: "Build & Test"
 
 on:
   push:
@@ -39,25 +39,19 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: cmd/pulsemetry-gui/frontend/package-lock.json
+      # 이 잡은 프런트엔드를 빌드하지 않는다. 아래 Go 스텝들이 GUI 를 제외하므로
+      # //go:embed all:frontend/dist 가 걸리지 않고, dist 도 필요 없다.
+      # GUI 는 product-build 잡이 task build 로 프런트부터 순서대로 만든다.
 
-      - name: Install frontend dependencies
-        working-directory: cmd/pulsemetry-gui/frontend
-        run: npm ci
-
-      - name: Build frontend assets
-        working-directory: cmd/pulsemetry-gui/frontend
-        run: npm run build
-
+      # 범위가 ./... 이 아닌 이유: GUI(cmd/pulsemetry-gui)는 OS 의 창 시스템을 링크한다.
+      # 리눅스는 GTK4·WebKitGTK 개발 패키지가, macOS 는 Objective-C 를 위한 C 툴체인이
+      # 있어야 컴파일된다. 러너에 그것이 없으면 CLI 를 검사하려던 자리에서 GUI 가 딸려
+      # 들어와 깨진다. GUI 빌드는 아래 product-build 잡이 task build 로 확인한다.
       - name: Build
-        run: go build ./...
+        run: go build ./cmd/telemetryctl ./internal/...
 
       - name: Vet
-        run: go vet ./...
+        run: go vet ./cmd/telemetryctl ./internal/...
 
       - name: Test (race + cover)
         # -race 는 CGO 를 요구한다. 3개 러너 이미지 모두 C 컴파일러를 갖고 있어 그대로 돈다
@@ -67,7 +61,7 @@ jobs:
         # 즉 러너 이미지에서 컴파일러가 빠지는 날 조용히 race 검사 없이 통과하지 않는다.
         env:
           CGO_ENABLED: "1"
-        run: go test -race -cover ./...
+        run: go test -race -cover ./cmd/telemetryctl ./internal/...
 
       - name: Build without CGO
         # ADR 0002 회귀 방지. 순수 Go SQLite 드라이버(modernc.org/sqlite)를 고른 이유가
@@ -75,9 +69,13 @@ jobs:
         # 섞여 들어오면 여기서 잡힌다.
         # 위 -race 스텝과 반드시 별개 스텝이어야 한다 — -race 는 CGO_ENABLED=1 이 필수라
         # 잡 전체에 CGO_ENABLED=0 을 걸면 race 테스트가 돌지 못한다.
+        #
+        # 범위가 CLI 인 것이 이 검사의 요점이다. 지키려는 대상은 사용자 머신에 설치되는
+        # **CLI 바이너리**이지 GUI 가 아니다. GUI 는 macOS 에서 Objective-C 로 창을 띄우므로
+        # C 가 반드시 필요하고, ./... 로 두면 규칙이 자기 자신에게 걸려 넘어진다.
         env:
           CGO_ENABLED: "0"
-        run: go build ./...
+        run: go build ./cmd/telemetryctl ./internal/...
 
   product-build:
     name: Product Build (Windows)
