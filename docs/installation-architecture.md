@@ -245,9 +245,9 @@ manifest 는 최대 하나이고, 활성 manifest 가 없으면 enroll 은 409 `
 
 ## 3.4 변수 범위
 
-> **주의 — 초안 어휘.** 이 절의 표는 초기 설계 초안이다. 현행 토큰 모델(OTLP 전송 인증은
-> `telemetry_token`(`ptt_`), `installation_token` 은 재발급 전용)과 신원 결정 경로의 정본은
-> §2 도식과 허브 `contracts/enrollment-api.md`·`telemetry-ingest.md` 다. `department_id` 류는 현행 스키마에 없다.
+> **주의 — 초안 어휘.** 이 절의 변수 표는 초기 설계 초안이라 `department_id` · `device_id` 류
+> 현행 스키마에 없는 필드를 담고 있다 (현행 필수 집합은 §3.5). 토큰 역할과 신원 결정 경로의 정본은
+> §2 도식과 허브 `contracts/enrollment-api.md`·`telemetry-ingest.md` 다.
 
 ### 회사 단위 변수
 
@@ -277,7 +277,8 @@ SaaS 고객 예시:
 https://ingest.your-service.com
 ```
 
-SaaS에서는 공통 endpoint를 사용하되, 인증된 installation token으로 tenant를 구분한다.
+SaaS에서는 공통 endpoint를 사용하되, 요청에 실린 `telemetry_token`(`ptt_`)으로 tenant를 구분한다 —
+auth-proxy 가 토큰 조회로 tenant 를 결정한다 (§2 도식).
 
 ---
 
@@ -296,18 +297,15 @@ PC 또는 설치 환경마다 달라지는 값이다.
 | `last_verified_at` | 마지막 연결 확인 시간 |
 | `operating_environment` | Windows, WSL 등 실행 환경 |
 
-`installation_token`에는 다음 권한만 부여한다.
+`installation_token` 은 설치의 장기 자격증명이지만 권한은 하나뿐이다.
 
 ```text
 허용:
-- OTLP 데이터 전송
-- 자신의 설치 상태 갱신
+- telemetry_token 재발급 (POST /v1/installations/telemetry-token)
 
 금지:
-- 대시보드 조회
-- 조직 설정 변경
-- 다른 사용자 또는 설치 조회
-- 팀 또는 프로젝트 정보 변경
+- OTLP 데이터 전송 — telemetry_token(ptt_) 의 몫이다
+- 그 외 모든 API
 ```
 
 ---
@@ -325,16 +323,14 @@ tenant_id
 project_id
 ```
 
-이 값은 서버에서 신뢰 가능한 정보로 결정한다.
+이 값은 서버에서 신뢰 가능한 정보로 결정한다. 현행 경로는 OTLP 수신 시 auth-proxy 가
+`telemetry_token` 으로 신원을 푸는 것이다.
 
 ```text
-installation_token
-→ installation 조회
-→ tenant_id 확인
-→ 사용자 identity 매핑
-→ user_id 결정
-→ team_id 및 department_id 연결
-→ repository를 기준으로 project_id 연결
+telemetry_token (ptt_)
+→ auth-proxy 가 HMAC-SHA256 해시로 enrollment.telemetry_tokens 조회
+→ token · installation · member · tenant 가 모두 활성인지 확인
+→ 신원 헤더 4종 부여 (x-pulsemetry-token-id · -tenant-id · -installation-id · -member-id)
 ```
 
 클라이언트가 직접 보낸 `tenant_id`, `team_id`, `project_id`는 신뢰하지 않는다.
