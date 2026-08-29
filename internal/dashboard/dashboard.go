@@ -74,6 +74,23 @@ type Reader struct {
 // DB 파일이 없어도 에러가 아니다 — Reader 는 열리고 모든 조회가 빈 결과를 돌려준다.
 // 나중에 데몬이 DB 를 만들면 Reopen 으로 다시 시도할 수 있다.
 func Open(dbPath string) (*Reader, error) {
+	r, err := newReader(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.attach(); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// newReader 는 아직 DB 에 붙지 않은 Reader 다. 경로 검증만 한다.
+//
+// Open 과 나뉘어 있는 이유는 Service 때문이다 (service.go). GUI 서비스는 생성과 기동이
+// 별개라 — 생성자는 실패할 수 없고 ServiceStartup 이 나중에 불린다 — 그 사이에도
+// 유효한 Reader 가 있어야 한다. now 가 nil 인 Reader 가 밖으로 나가면 첫 조회에서
+// 터지므로 초기화는 여기 한 곳에서만 한다.
+func newReader(dbPath string) (*Reader, error) {
 	if strings.TrimSpace(dbPath) == "" {
 		return nil, errors.New("dashboard: 데이터베이스 경로가 비어 있음")
 	}
@@ -81,11 +98,7 @@ func Open(dbPath string) (*Reader, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dashboard: 데이터베이스 경로 해석 실패 (%s)", dbPath)
 	}
-	r := &Reader{path: abs, dataDir: filepath.Dir(abs), now: time.Now}
-	if err := r.attach(); err != nil {
-		return nil, err
-	}
-	return r, nil
+	return &Reader{path: abs, dataDir: filepath.Dir(abs), now: time.Now}, nil
 }
 
 // Reopen 은 아직 열지 못한 DB 를 다시 열어 본다.

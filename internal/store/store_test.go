@@ -53,11 +53,16 @@ func TestOpenAppliesMigrations(t *testing.T) {
 	}
 }
 
-func TestSchemaV3NamedIndexesAndForeignKeys(t *testing.T) {
+func TestSchemaNamedIndexesAndForeignKeys(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 
-	indexes := []string{"ux_turns_virtual", "ix_events_name", "ix_llm_turn", "ix_fc_tool"}
+	// v3 가 만든 넷과 v4 가 더한 읽기 인덱스 셋이 전부다. 목록 밖의 인덱스가 생기면
+	// 아래 계수 단언이 잡는다 — 인덱스는 마이그레이션으로만 늘어야 한다.
+	indexes := []string{
+		"ux_turns_virtual", "ix_events_name", "ix_llm_turn", "ix_fc_tool",
+		"ix_tool_calls_turn", "ix_turns_session", "ix_sessions_started",
+	}
 	for _, name := range indexes {
 		var n int
 		if err := db.SQL().QueryRowContext(ctx,

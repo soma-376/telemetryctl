@@ -412,3 +412,24 @@ var schemaV3 = []string{
 )`,
 	`CREATE INDEX ix_fc_tool ON file_changes (tool_call_id)`,
 }
+
+// schemaV4 는 조회 계층(internal/dashboard)이 요구하는 읽기 인덱스를 더한다 (ADR 0009).
+//
+// v3 DDL 은 쓰기 경로가 필요로 하는 UNIQUE 와 승격 테이블 인덱스만 만들었다. 조회는 반대
+// 방향으로 탐색한다 — 세션 하나에서 턴을, 턴에서 도구 호출을 찾고, 세션 목록을 시작 시각
+// 순으로 훑는다. 그 세 경로에 인덱스가 없으면 세션 상세 한 장이 turns · tool_calls 전체
+// 스캔을 세 번 돈다.
+//
+// **배포된 schemaV3 의 문장은 고치지 않는다** (migrate.go 머리말). 인덱스는 덧붙이는 것이라
+// 기존 행을 건드리지 않고, 이미 v3 를 적용한 설치본도 다음 기동에서 이 문장만 실행한다.
+//
+// ix_llm_turn 은 v3 에 이미 있어 여기서 다시 만들지 않는다. events(turn_id) 는
+// UNIQUE (turn_id, seq) 가 이미 선두 컬럼으로 받쳐 준다.
+var schemaV4 = []string{
+	// 세션 상세의 도구 타임라인·MCP 집계가 턴에서 도구 호출로 내려간다.
+	`CREATE INDEX ix_tool_calls_turn ON tool_calls (turn_id)`,
+	// 세션 상세와 세션별 상관 서브쿼리가 전부 이 방향으로 탄다.
+	`CREATE INDEX ix_turns_session ON turns (session_id)`,
+	// 세션 목록의 ORDER BY started_at DESC 와 구간 필터.
+	`CREATE INDEX ix_sessions_started ON sessions (started_at)`,
+}

@@ -209,14 +209,15 @@ func printDataStatus(w io.Writer, st dashboard.Status) {
 	if !st.Available {
 		return
 	}
+	// v3 의 도메인 테이블을 부모에서 자식 순서로 읽는다 (docs/sqlite-schema/README.md).
 	c := st.Counts
-	fmt.Fprintf(w, "    데이터: 세션 %s개(진행 중 %s) · 이벤트 %s · 원문 %s · 툴 %s · 파일 %s · 롤업 %s · 벤더 %s\n",
-		formatInt(c.Sessions), formatInt(st.RunningSessions), formatInt(c.Events),
-		formatInt(c.EventContent), formatInt(c.ToolEvents), formatInt(c.SessionFiles),
-		formatInt(c.RollupHourly), formatInt(c.Vendors))
+	fmt.Fprintf(w, "    데이터: 세션 %s개(진행 중 %s) · 턴 %s · 이벤트 %s · LLM 호출 %s · 툴 호출 %s · 파일 변경 %s · 벤더 %s\n",
+		formatInt(c.Sessions), formatInt(st.RunningSessions), formatInt(c.Turns),
+		formatInt(c.Events), formatInt(c.LLMCalls), formatInt(c.ToolCalls),
+		formatInt(c.FileChanges), formatInt(c.Vendors))
 	fmt.Fprintf(w, "    이벤트 구간: %s ~ %s (%s)\n",
 		formatUnixLocal(st.OldestEventAt), formatUnixLocal(st.NewestEventAt), zoneLabel(time.Now()))
-	fmt.Fprintf(w, "    마지막 롤업: %s\n", formatUnixLocal(st.LastRollupAt))
+	fmt.Fprintf(w, "    마지막 플러시: %s\n", formatUnixLocal(st.LastFlushAt))
 	if len(st.ActiveVendors) > 0 {
 		fmt.Fprintf(w, "    활성 벤더: %s\n", strings.Join(st.ActiveVendors, ", "))
 	}

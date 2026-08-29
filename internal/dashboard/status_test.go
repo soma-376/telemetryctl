@@ -19,29 +19,24 @@ func TestStatus(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.write(testBatch{
+	f.write(store.Batch{
+		Sessions: []session.Session{newSession("s1", testNow.Add(-2*time.Hour), running)},
 		Events: []store.EventRecord{
-			prompt("s1", testNow.Add(-2*time.Hour), 1, "인증 토큰 검증"),
-			prompt("s1", testNow.Add(-time.Hour), 2, "두 번째 프롬프트"),
-		},
-		Sessions: []session.Session{
-			newSession("s1", testNow.Add(-2*time.Hour), func(s *session.Session) {
-				s.Status = session.StatusRunning
-				s.EndedAt = event.Opt[event.UnixSec]{}
-				s.Files = []session.File{{PathHash: "h", Name: "a.go", Edits: 1, LastTS: event.SecFromTime(testNow)}}
-				s.MCP = []session.MCPUsage{{ServerName: "github", Connected: true}}
-				s.Tools = []session.ToolEvent{{TS: event.SecFromTime(testNow), ToolName: "Read"}}
+			promptRecord("s1", "turn-1", testNow.Add(-2*time.Hour), 1, "인증 토큰 검증"),
+			llmRecord("s1", "turn-1", testNow.Add(-90*time.Minute), 2, llmSpec{Cost: 1}),
+			toolRecord("s1", "turn-1", "call-1", testNow.Add(-time.Hour), 3, toolSpec{
+				ToolName: "Edit",
+				Success:  event.Some(true),
+				Target:   workspaceA + "/a.go",
+				File:     fileChange(workspaceA+"/a.go", 3, 0),
 			}),
-		},
-		Rollups: []testRollupRow{
-			rollupRow(testNow, testDimTotal, "", testRollupBucket{CostUSD: 1}),
 		},
 	})
 	if err := f.db.SetMeta(ctx, store.MetaRetentionDays, "45"); err != nil {
 		t.Fatalf("SetMeta: %v", err)
 	}
-	lastRollup := testNow.Add(-5 * time.Minute).Unix()
-	if err := f.db.SetMeta(ctx, store.MetaLastRollupAt, strconv.FormatInt(lastRollup, 10)); err != nil {
+	lastFlush := testNow.Add(-5 * time.Minute).Unix()
+	if err := f.db.SetMeta(ctx, store.MetaLastRollupAt, strconv.FormatInt(lastFlush, 10)); err != nil {
 		t.Fatalf("SetMeta: %v", err)
 	}
 
@@ -52,15 +47,27 @@ func TestStatus(t *testing.T) {
 	if !st.Available {
 		t.Fatal("Available = false")
 	}
-	if st.Counts.Events != 2 || st.Counts.EventContent != 2 {
-		t.Errorf("Counts = %+v, want events=2 content=2", st.Counts)
+
+	// v3 의 도메인 테이블 여섯을 센다. v1 의 event_content·tool_events·session_files·
+	// mcp_session_usage·rollup_hourly 는 테이블 자체가 없다.
+	c := st.Counts
+	switch {
+	case c.Events != 3:
+		t.Errorf("events = %d, want 3", c.Events)
+	case c.Turns != 1:
+		t.Errorf("turns = %d, want 1", c.Turns)
+	case c.Sessions != 1:
+		t.Errorf("sessions = %d, want 1", c.Sessions)
+	case c.LLMCalls != 1:
+		t.Errorf("llm_calls = %d, want 1", c.LLMCalls)
+	case c.ToolCalls != 1:
+		t.Errorf("tool_calls = %d, want 1", c.ToolCalls)
+	case c.FileChanges != 1:
+		t.Errorf("file_changes = %d, want 1", c.FileChanges)
+	case c.Vendors != 1:
+		t.Errorf("vendors = %d, want 1", c.Vendors)
 	}
-	if st.Counts.Sessions != 1 || st.Counts.SessionFiles != 1 || st.Counts.ToolEvents != 1 || st.Counts.MCPSessionUsage != 1 {
-		t.Errorf("Counts = %+v", st.Counts)
-	}
-	if st.Counts.RollupHourly != 1 || st.Counts.Vendors != 1 {
-		t.Errorf("Counts = %+v", st.Counts)
-	}
+
 	if st.RunningSessions != 1 || len(st.ActiveVendors) != 1 {
 		t.Errorf("running = %d, vendors = %v", st.RunningSessions, st.ActiveVendors)
 	}
@@ -70,19 +77,18 @@ func TestStatus(t *testing.T) {
 	if st.RetentionDays != 45 {
 		t.Errorf("RetentionDays = %d, want 45", st.RetentionDays)
 	}
-	if st.LastRollupAt != lastRollup {
-		t.Errorf("LastRollupAt = %d, want %d", st.LastRollupAt, lastRollup)
+	if st.LastFlushAt != lastFlush {
+		t.Errorf("LastFlushAt = %d, want %d", st.LastFlushAt, lastFlush)
 	}
 	if st.DatabaseBytes <= 0 {
 		t.Errorf("DatabaseBytes = %d, want > 0", st.DatabaseBytes)
 	}
-	// events.ts 는 나노초지만 밖으로는 초로 나가야 한다.
-	wantOldest := testNow.Add(-2 * time.Hour).Unix()
-	if st.OldestEventAt != wantOldest {
-		t.Errorf("OldestEventAt = %d, want %d (초 단위)", st.OldestEventAt, wantOldest)
+	// v3 의 events.occurred_at 은 초다. 나노초 변환이 남아 있으면 여기서 어긋난다.
+	if want := testNow.Add(-2 * time.Hour).Unix(); st.OldestEventAt != want {
+		t.Errorf("OldestEventAt = %d, want %d (초 단위)", st.OldestEventAt, want)
 	}
-	if st.NewestEventAt != testNow.Add(-time.Hour).Unix() {
-		t.Errorf("NewestEventAt = %d", st.NewestEventAt)
+	if want := testNow.Add(-time.Hour).Unix(); st.NewestEventAt != want {
+		t.Errorf("NewestEventAt = %d, want %d", st.NewestEventAt, want)
 	}
 	if st.GeneratedAt != testNow.Unix() {
 		t.Errorf("GeneratedAt = %d, want %d", st.GeneratedAt, testNow.Unix())
@@ -145,6 +151,19 @@ func TestStatusPayloadIsSafeToShare(t *testing.T) {
 	}
 }
 
+// 공개 응답 타입의 json 태그는 전부 snake_case 여야 한다 (ADR 0004). 태그가 곧 TS 필드명이라
+// 하나라도 어긋나면 프런트엔드가 조용히 undefined 를 읽는다.
+func TestPublicTypesUseSnakeCaseTags(t *testing.T) {
+	values := []any{
+		TodaySummary{}, Card{}, Totals{}, Row{}, BreakdownQuery{},
+		SessionQuery{}, SessionRow{}, SessionDetail{}, FileRow{}, ToolRow{}, SessionMCPRow{},
+		SearchQuery{}, Hit{}, VendorStatus{}, MCPRow{}, Status{}, Counts{}, DaemonStatus{},
+	}
+	for _, v := range values {
+		assertSnakeCaseTags(t, v)
+	}
+}
+
 // 에러 메시지는 Promise reject 로 사용자 화면에 뜬다. 내부 SQL 이 그대로 노출되면 안 된다.
 func TestErrorsDoNotLeakSQL(t *testing.T) {
 	f := newFixture(t)
@@ -164,20 +183,10 @@ func TestErrorsDoNotLeakSQL(t *testing.T) {
 	f.reader.ro = ro
 
 	var msgs []string
-	if _, err := f.reader.Sessions(ctx, SessionQuery{}); err != nil {
-		msgs = append(msgs, err.Error())
-	}
-	if _, err := f.reader.Today(ctx, seoul); err != nil {
-		msgs = append(msgs, err.Error())
-	}
-	if _, err := f.reader.Search(ctx, SearchQuery{Text: "토큰"}); err != nil {
-		msgs = append(msgs, err.Error())
-	}
-	if _, err := f.reader.Vendors(ctx); err != nil {
-		msgs = append(msgs, err.Error())
-	}
-	if _, err := f.reader.Status(ctx); err != nil {
-		msgs = append(msgs, err.Error())
+	for _, tc := range absentCases() {
+		if _, err := tc.call(ctx, f.reader); err != nil {
+			msgs = append(msgs, err.Error())
+		}
 	}
 	if len(msgs) == 0 {
 		t.Fatal("닫힌 핸들로 조회했는데 에러가 하나도 없다 — 테스트가 무의미하다")

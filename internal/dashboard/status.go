@@ -37,9 +37,12 @@ type Status struct {
 	// RetentionDays 는 meta.retention_days 에 기록된 모든 로컬 데이터의 고정 보존일이다.
 	// 0 이면 데몬이 아직 기록하지 않았다. JSON 필드는 GUI 호환성을 위해 유지한다.
 	RetentionDays int `json:"retention_days"`
-	// LastRollupAt 은 마지막 롤업 플러시 시각(UTC unix 초)이다. 0 이면 아직 없음.
-	LastRollupAt int64 `json:"last_rollup_at"`
+	// LastFlushAt 은 데몬이 마지막으로 세션 스냅샷을 플러시한 시각(UTC unix 초)이다.
+	// 0 이면 아직 없음. meta 키 이름(last_rollup_at)은 v1 시절 그대로지만 v3 에는
+	// 롤업 테이블이 없고 이 값은 "데몬이 마지막으로 일한 시각" 으로만 읽어야 한다.
+	LastFlushAt int64 `json:"last_flush_at"`
 
+	// OldestEventAt·NewestEventAt 은 events.occurred_at 의 범위(UTC unix 초)다.
 	OldestEventAt int64 `json:"oldest_event_at"`
 	NewestEventAt int64 `json:"newest_event_at"`
 
@@ -56,15 +59,19 @@ type Status struct {
 
 // Counts 는 테이블별 행 수다. 보존 정책이 실제로 도는지, 원문 저장이 켜져 있는지를
 // 사람이 눈으로 확인하는 유일한 수단이다.
+//
+// 필드가 v3 의 도메인 테이블 일곱 중 여섯이다 (meta 는 사용자에게 의미가 없다).
+// v1 의 event_content · tool_events · session_files · mcp_session_usage · rollup_hourly
+// 는 v3 에 테이블 자체가 없어 사라졌다 — 없는 테이블을 세는 필드를 0 으로 남겨 두면
+// 화면이 "원문이 하나도 없다" 는 잘못된 진단을 내놓는다 (원문은 turns.prompt_text 다).
 type Counts struct {
-	Events          int64 `json:"events"`
-	EventContent    int64 `json:"event_content"`
-	ToolEvents      int64 `json:"tool_events"`
-	Sessions        int64 `json:"sessions"`
-	SessionFiles    int64 `json:"session_files"`
-	MCPSessionUsage int64 `json:"mcp_session_usage"`
-	RollupHourly    int64 `json:"rollup_hourly"`
-	Vendors         int64 `json:"vendors"`
+	Events      int64 `json:"events"`
+	Turns       int64 `json:"turns"`
+	Sessions    int64 `json:"sessions"`
+	LLMCalls    int64 `json:"llm_calls"`
+	ToolCalls   int64 `json:"tool_calls"`
+	FileChanges int64 `json:"file_changes"`
+	Vendors     int64 `json:"vendors"`
 }
 
 // DaemonStatus 는 runtime.json 에서 읽은 데몬 좌표다 (비밀 없음).
@@ -86,18 +93,19 @@ type DaemonStatus struct {
 
 // countsSQL 은 한 번의 왕복으로 모든 행 수를 센다. 테이블마다 질의를 나누면 그 사이에 데몬이
 // 쓰기를 커밋해 서로 어긋난 숫자가 한 화면에 뜬다.
+//
+// events.occurred_at 은 v3 에서 **초** 다 (ADR 0009). v1 의 나노초 변환은 사라졌다.
 const countsSQL = `SELECT
   (SELECT COUNT(*) FROM events),
-  (SELECT COUNT(*) FROM event_content),
-  (SELECT COUNT(*) FROM tool_events),
+  (SELECT COUNT(*) FROM turns),
   (SELECT COUNT(*) FROM sessions),
-  (SELECT COUNT(*) FROM session_files),
-  (SELECT COUNT(*) FROM mcp_session_usage),
-  (SELECT COUNT(*) FROM rollup_hourly),
+  (SELECT COUNT(*) FROM llm_calls),
+  (SELECT COUNT(*) FROM tool_calls),
+  (SELECT COUNT(*) FROM file_changes),
   (SELECT COUNT(*) FROM vendors),
-  (SELECT COUNT(*) FROM sessions WHERE status = 'running'),
-  (SELECT COALESCE(MIN(ts),0) FROM events),
-  (SELECT COALESCE(MAX(ts),0) FROM events)`
+  (SELECT COUNT(*) FROM sessions WHERE ended_at IS NULL),
+  (SELECT COALESCE(MIN(occurred_at),0) FROM events),
+  (SELECT COALESCE(MAX(occurred_at),0) FROM events)`
 
 // Status 는 로컬 파이프라인의 현재 상태다.
 //
@@ -121,18 +129,14 @@ func (r *Reader) Status(ctx context.Context) (Status, error) {
 	}
 	st.Available = true
 
-	// events.ts 는 나노초다. 밖으로 나가는 시각은 전부 초라 여기서 내린다.
-	var oldestNano, newestNano int64
 	c := &st.Counts
 	if err := db.QueryRowContext(ctx, countsSQL).Scan(
-		&c.Events, &c.EventContent, &c.ToolEvents, &c.Sessions, &c.SessionFiles,
-		&c.MCPSessionUsage, &c.RollupHourly, &c.Vendors,
-		&st.RunningSessions, &oldestNano, &newestNano,
+		&c.Events, &c.Turns, &c.Sessions, &c.LLMCalls, &c.ToolCalls,
+		&c.FileChanges, &c.Vendors,
+		&st.RunningSessions, &st.OldestEventAt, &st.NewestEventAt,
 	); err != nil {
 		return Status{}, queryErr("로컬 상태 조회", err)
 	}
-	st.OldestEventAt = nanoToSec(oldestNano)
-	st.NewestEventAt = nanoToSec(newestNano)
 
 	version, err := r.schemaVersion(ctx)
 	if err != nil {
@@ -143,11 +147,11 @@ func (r *Reader) Status(ctx context.Context) (Status, error) {
 	if st.RetentionDays, err = r.metaInt(ctx, store.MetaRetentionDays); err != nil {
 		return Status{}, err
 	}
-	lastRollup, err := r.metaInt(ctx, store.MetaLastRollupAt)
+	lastFlush, err := r.metaInt(ctx, store.MetaLastRollupAt)
 	if err != nil {
 		return Status{}, err
 	}
-	st.LastRollupAt = int64(lastRollup)
+	st.LastFlushAt = int64(lastFlush)
 
 	vendors, _, err := activeAgents(ctx, db)
 	if err != nil {
@@ -155,13 +159,6 @@ func (r *Reader) Status(ctx context.Context) (Status, error) {
 	}
 	st.ActiveVendors = vendors
 	return st, nil
-}
-
-func nanoToSec(n int64) int64 {
-	if n == 0 {
-		return 0
-	}
-	return n / 1e9
 }
 
 func (r *Reader) schemaVersion(ctx context.Context) (int, error) {

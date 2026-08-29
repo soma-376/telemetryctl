@@ -273,6 +273,51 @@ func (h *harness) postFixture(name string) *http.Response {
 	return h.post(kind, fixture(h.t, name))
 }
 
+// waitDecoded 는 수신기가 배치 n 건을 디코드할 때까지 기다린다.
+//
+// **두 픽스처를 순서대로 넣어야 할 때 필요하다.** 수신기는 디코드 워커를 2개 돌리므로
+// (receiver.DefaultWorkers) POST 응답이 돌아왔다고 해서 그 배치가 파이프라인에 먼저
+// 들어갔다는 보장이 없다. 순서가 뒤집히면 턴 경계 판정이 달라진다 — 세션의 첫 프롬프트를
+// 아직 못 본 상태에서 도착한 이벤트는 가상 턴으로 가기 때문이다 (session/turn.go).
+//
+// 그 순서 의존은 테스트가 만든 것이 아니라 조립기의 계약이다. 그래서 계약을 바꾸는 대신
+// 테스트가 배치를 한 건씩 밀어 넣는다.
+func (h *harness) waitDecoded(n int64) {
+	h.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		st := h.health()
+		if st.Stats.Decoded >= n && st.QueueDepth == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			h.t.Fatalf("수신기가 배치 %d건을 디코드하지 못했다 (decoded=%d, queue=%d)\n%s",
+				n, st.Stats.Decoded, st.QueueDepth, h.logs.String())
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// healthSnapshot 은 /healthz 응답 중 테스트가 보는 부분이다.
+type healthSnapshot struct {
+	QueueDepth int            `json:"queue_depth"`
+	Stats      receiver.Stats `json:"stats"`
+}
+
+func (h *harness) health() healthSnapshot {
+	h.t.Helper()
+	resp, err := http.Get(h.info.Endpoint + receiver.HealthPath)
+	if err != nil {
+		h.t.Fatalf("healthz 요청: %v", err)
+	}
+	defer resp.Body.Close()
+	var out healthSnapshot
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		h.t.Fatalf("healthz 응답 해석: %v", err)
+	}
+	return out
+}
+
 // openDB 는 종료된 데몬이 남긴 DB 를 연다.
 func (h *harness) openDB() *sql.DB {
 	h.t.Helper()
