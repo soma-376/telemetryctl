@@ -18,10 +18,46 @@ Claude Code·Codex 의 시그널을 직접 받고, 정규화·집계해 로컬 S
 - GUI(PROJ-35)를 만드는 사람 — 6절이 계약이고 5절이 그 배경이다
 
 결정의 **배경과 대안**은 ADR 에 있다. 이 문서는 "무엇이 어떻게 구현돼 있는가" 만 다룬다.
-ADR 목록과 Status 는 [`docs/adr/README.md`](adr/README.md) 인덱스가 단일 출처다.
+
+| ADR | 내용 |
+|---|---|
+| [0001](adr/0001-로컬-OTLP-수신기-인라인-프록시-토폴로지.md) | loopback 수신기 + 상위 전달 (재배선 opt-in 부분은 0006 이 대체) |
+| [0002](adr/0002-로컬-집계-저장소로-SQLite-채택.md) | `modernc.org/sqlite` + WAL (FTS5 조항은 0009 가 대체) |
+| [0003](adr/0003-원문과-tool-details를-로컬에만-보관.md) | 원문·tool details 는 로컬에만, 포워더가 제거해 전달 |
+| [0004](adr/0004-GUI-연동을-Go-패키지-공유로.md) | Wails v3 가 `internal/dashboard` 직접 import |
+| [0005](adr/0005-세션을-1급-엔티티로-조립.md) | 이벤트를 `session.id` 로 묶어 세션을 1급 엔티티로 |
+| [0006](adr/0006-로컬-파이프라인을-opt-out으로-전환하고-OTel-설정을-고정한다.md) | 배선은 opt-out 기본 ON, 로컬 OTel 설정 고정, 회사 준수는 forward 가 집행 |
+| [0007](adr/0007-데몬은-비정상-종료일-때만-자동-재시작한다.md) | 자동 실행 등록의 재시작 정책 — 비정상 종료일 때만 되살린다 |
+| [0008](adr/0008-로컬-데이터를-400일간-보존한다.md) | 모든 로컬 데이터 400일 고정 보존 |
+| [0009](adr/0009-로컬-저장-모델을-v3로-전환한다.md) | v3 저장 모델 확정 — FTS 대신 `LIKE`, `rollup_hourly` 폐기, 세션 상태 2종, 삭제 순서 |
+| [0010](adr/0010-v3가-요구하는-식별-정보를-로컬에만-저장한다.md) | v3가 요구하는 경로·이메일·계정 ID를 로컬에만 저장, 상위 전달은 불변 |
 
 기존 설치 아키텍처는 [설치 아키텍처](installation-architecture.md)에 있다. 이 문서의 `§4.5`·`§5.4`
 같은 표기는 그 문서의 절 번호다.
+
+---
+
+## 1-1. 로컬 대시보드 범위 (PROJ-83)
+
+**지원 벤더는 Claude Code와 Codex 둘뿐이다.** Gemini CLI와 Cursor는 로컬 화면 범위 밖이며,
+이는 제품 PRD의 Non-goal("Cursor·Gemini CLI 등 그 밖의 도구 연동")과 일치한다.
+
+**PRD의 「데몬 GUI」 Non-goal과의 관계.** PRD는 데몬 GUI를 Non-goal로 두되
+"데이터 계층은 있으나 화면을 만들지 않는다"고 적는다. PROJ-83이 만드는 것은 **그 데이터 계층**이다.
+즉 Go 측 저장·보존·조회 계층과 화면별 조회 계약까지가 범위이고, Wails 화면 구현은 범위 밖이다.
+두 문서는 충돌하지 않는다.
+
+화면별 조회 계약이 대상으로 삼는 네 화면은 Home · Activity · Session Detail · Tray다.
+
+유지되는 구조 원칙 (변경 없음):
+- SQLite/WAL, 데몬이 소유하고 **GUI는 read-only**로 연다 (ADR 0002)
+- GUI는 `internal/dashboard`를 **직접 import**한다. **로컬 HTTP 조회 API를 만들지 않는다** (ADR 0004)
+- 모든 로컬 데이터 **400일 보존** (ADR 0008)
+
+> **현재 미충족 항목.** `cmd/pulsemetry-gui`(Wails v3 + Svelte)는 `develop`에 없고
+> `feature/PROJ-44-gui`에만 있다. `develop`의 `go.mod`에는 Wails 의존성이 없다. 따라서
+> "Wails 바인딩 최신성 검사"와 "GUI 모듈 빌드" 검증은 해당 브랜치가 병합된 뒤에야 가능하다.
+> PROJ-83 범위에서는 **Go 조회 계층까지** 구현하고 이 검증은 후속으로 이월한다.
 
 ---
 

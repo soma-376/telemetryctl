@@ -47,6 +47,27 @@ vendors
 | `ix_fc_tool` | `file_changes(tool_call_id)` | 도구 호출별 파일 변경 조회 |
 
 DDL에 없는 인덱스, `ON DELETE CASCADE`, 기본값, 추가 `CHECK` 제약은 만들지 않는다.
+읽기 인덱스가 필요하면 **마이그레이션 v4 이후로 덧붙이고**, 이미 배포된 `schemaV3`의 문장은
+고치지 않는다.
+
+## 계약 규칙
+
+이 규칙들은 [ADR 0009](../adr/0009-로컬-저장-모델을-v3로-전환한다.md)와
+[ADR 0010](../adr/0010-v3가-요구하는-식별-정보를-로컬에만-저장한다.md)이 확정했다.
+
+- **모든 시각 컬럼의 단위는 Unix 초다.** 나노초를 쓰는 컬럼은 없다.
+- **`events.seq`는 로컬 수집 도착 순서**이고 벤더 시각이 아니다. 이미 저장된 행의 `seq`는
+  재번호하지 않으며, 순서가 뒤집혀 도착해도 정상 입력으로 취급한다.
+  독자는 `ORDER BY occurred_at, seq`로 읽는다.
+- **삭제는 자식에서 부모 순서**로 한다. 모든 외래 키가 `NO ACTION`이라 순서를 어기면 실패한다.
+  `file_changes → tool_calls → llm_calls → events → turns → sessions → vendors`.
+  `vendors` 삭제는 `AND vendor NOT IN (SELECT vendor_id FROM sessions)`로 보호한다.
+- **세션 상태는 저장하지 않고 조회 시점에 계산한다.** `ended_at IS NULL`이면 `running`,
+  아니면 `completed`. `abandoned`·`handoff`는 산출하지 않는다.
+- **`sessions.workspace_path`·`user_email`·`user_account_id`, `file_changes.file_path`,
+  `tool_calls.error_message`는 식별 정보를 담는다.** 로컬 저장 전용이며 상위 전달에는 실리지
+  않는다. 상위 전달 스크럽은 `internal/forward`가 원본 바이트에 대해 수행한다.
+- **원문 전문 검색은 `LIKE`로 한다.** v3에는 FTS 테이블이 없다.
 
 ## 연결 PRAGMA
 

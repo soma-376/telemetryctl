@@ -6,9 +6,9 @@
 |---|---|---|---|
 | `id` | `INTEGER` | 기본 키 | SQLite rowid 별칭 |
 | `turn_id` | `INTEGER` | 필수, FK | `turns.id` 참조 |
-| `seq` | `INTEGER` | 필수 | 턴 내 순서의 유일 원천 |
+| `seq` | `INTEGER` | 필수 | 턴 내 **로컬 수집 도착 순서**. 벤더 시각이 아니다 |
 | `event_name` | `TEXT` | 필수 | 원본 이벤트 종류 |
-| `occurred_at` | `INTEGER` | 선택 | 이벤트 발생 시각 |
+| `occurred_at` | `INTEGER` | 선택 | 이벤트 발생 시각 (**Unix 초**) |
 | `record_hash` | `TEXT` | 필수, UNIQUE | 원본 레코드 중복 방지 해시 |
 | `payload` | `BLOB` | 선택, CHECK | SQLite JSONB. `json_valid(payload, 8)`을 만족해야 함 |
 
