@@ -52,10 +52,14 @@ contracts/*.schema.json      ★ manifest·envelope JSON Schema — 계약의 �
 ## 명령어
 
 ```bash
-go build ./...
-go test ./...
+task build     # CLI(bin/pulsemetry) + GUI(Pulsemetry) → artifacts/build/{os}-{arch}
+task test      # go test ./... + 프런트엔드 svelte-check
 go run ./cmd/telemetryctl enroll --invite <code> --server <url>
 ```
+
+**`go build ./...` 를 직접 쓰지 않는다.** `cmd/pulsemetry-gui` 가 `//go:embed all:frontend/dist` 로
+Vite 산출물을 요구하는데 그 디렉터리는 gitignore 라, 프런트를 빌드한 적 없는 체크아웃에서는
+컴파일이 그 자리에서 실패한다. `task build` 가 프런트 → `dist` → Go 순서를 지킨다 (PROJ-110).
 
 ## 이 레포에서 특히 조심할 것
 

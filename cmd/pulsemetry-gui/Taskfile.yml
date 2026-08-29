@@ -1,8 +1,11 @@
 version: '3'
 
 vars:
-  APP_NAME: "pulsemetry-gui"
-  BIN_DIR: "bin"
+  # 사용자에게 보이는 제품 이름이다. 바이너리 이름뿐 아니라 NSIS 설치 프로그램·MSIX·
+  # 서명 대상 이름까지 이 값에서 나온다 (build/windows/Taskfile.yml).
+  # pulsemetry-gui 는 Go 패키지 이름이지 사용자가 볼 이름이 아니다.
+  APP_NAME: "Pulsemetry"
+  BIN_DIR: '{{.BIN_DIR | default "bin"}}'
   PACKAGE_MANAGER: '{{.PACKAGE_MANAGER | default "npm"}}'
   VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
   # Target OS for build/package/run. Defaults to the host OS, and is overridden

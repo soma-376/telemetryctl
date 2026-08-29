@@ -1,0 +1,57 @@
+version: 3
+
+vars:
+  BUILD_DIR: "artifacts/build/{{OS}}-{{ARCH}}"
+
+tasks:
+  # 산출물 배치는 배포 패키지(PROJ-111)와 같은 모양을 빌드 단계에서부터 쓴다.
+  # 빌드한 것과 배포되는 것의 이름·경로가 다르면 문제를 재현할 때 서로를 못 믿는다.
+  #
+  #   {BUILD_DIR}/Pulsemetry.exe        사용자가 더블클릭하는 앱
+  #   {BUILD_DIR}/bin/pulsemetry.exe    터미널에서 치는 CLI (daemon 서브커맨드 포함)
+  #
+  # CLI 를 하위 디렉터리에 두는 것은 취향이 아니라 제약이다. Windows·macOS 의 파일
+  # 시스템은 대소문자를 구분하지 않아 Pulsemetry.exe 와 pulsemetry.exe 가 같은
+  # 디렉터리에 공존할 수 없다. 둘 다 각자의 올바른 이름을 지키려면 경로를 나눠야 한다.
+  prepare:build:
+    internal: true
+    cmds:
+      - cmd: powershell -NoProfile -Command New-Item -ItemType Directory -Force -Path {{.BUILD_DIR}}/bin
+        platforms: [windows]
+      - cmd: mkdir -p {{.BUILD_DIR}}/bin
+        platforms: [linux, darwin]
+
+  build:cli:
+    # 이름이 cli 인 것은 이 바이너리가 CLI 이기 때문이다. daemon 은 그 서브커맨드 하나다
+    # (enroll·status·stats·sessions·local·autostart 와 나란히 있다). 산출물을
+    # pulsemetry-daemon 으로 부르면 사용자가 `pulsemetry-daemon enroll` 을 쳐야 한다.
+    desc: CLI와 데몬을 함께 제공하는 pulsemetry 바이너리를 빌드한다.
+    deps:
+      - prepare:build
+    cmds:
+      - go build -o {{.BUILD_DIR}}/bin/pulsemetry{{exeExt}} ./cmd/telemetryctl
+
+  build:gui:
+    desc: Wails GUI와 임베드할 프런트엔드를 빌드한다.
+    deps:
+      - prepare:build
+    dir: cmd/pulsemetry-gui
+    cmds:
+      - wails3 task build BIN_DIR=../../{{.BUILD_DIR}}
+
+  build:
+    desc: CLI와 GUI를 공통 산출물 디렉터리에 빌드한다.
+    cmds:
+      - task: build:gui
+      - task: build:cli
+
+  test:
+    desc: 전체 Go 테스트와 프런트엔드 검사를 실행한다.
+    cmds:
+      - go test ./...
+      - task: test:frontend
+
+  test:frontend:
+    dir: cmd/pulsemetry-gui/frontend
+    cmds:
+      - npm run check

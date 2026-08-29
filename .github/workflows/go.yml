@@ -39,6 +39,20 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: cmd/pulsemetry-gui/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: cmd/pulsemetry-gui/frontend
+        run: npm ci
+
+      - name: Build frontend assets
+        working-directory: cmd/pulsemetry-gui/frontend
+        run: npm run build
+
       - name: Build
         run: go build ./...
 
@@ -64,6 +78,34 @@ jobs:
         env:
           CGO_ENABLED: "0"
         run: go build ./...
+
+  product-build:
+    name: Product Build (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: cmd/pulsemetry-gui/frontend/package-lock.json
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.11
+
+      - name: Install Task runner
+        run: go install github.com/go-task/task/v3/cmd/task@v3.40.1
+
+      - name: Build product
+        run: task build
 
   format-deps:
     name: Format & Dependencies

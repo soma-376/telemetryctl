@@ -65,9 +65,10 @@ Claude Code·Codex 의 시그널을 직접 받고, 정규화·집계해 로컬 S
 > `Service` 가 `Reader` 의 모든 조회를 감싼다는 것. **생성물이 최신인지는 검사하지 못한다.**
 >
 > `feature/PROJ-44-gui` 병합 뒤 후속 티켓이 해야 할 일:
-> `(cd gui && go build ./...)` 를 빌드 단계에 추가하고, `wails3 generate bindings` 를 CI 에서
-> 돌려 생성물에 diff 가 없음을 단언한다 (ADR 0004 Follow-up 이 "GUI 티켓에서 정한다" 고 남긴
-> 항목이다). 그때 `binding_test.go` 의 머리말도 함께 갱신한다.
+> `wails3 generate bindings` 를 CI 에서 돌려 생성물에 diff 가 없음을 단언한다 (ADR 0004 Follow-up 이
+> "GUI 티켓에서 정한다" 고 남긴 항목이다). 그때 `binding_test.go` 의 머리말도 함께 갱신한다.
+> GUI 빌드 자체는 PROJ-110 이 이미 CI 에 넣었다 — `build-test` 잡이 프런트를 먼저 빌드하고,
+> `product-build` 잡이 `task build` 로 실제 산출물을 만든다.
 
 ---
 
@@ -478,36 +479,41 @@ enroll 전 · 데몬 첫 실행 전)는 정상이다.
   `LoadLocation` 이 실패하고, 그러면 이 API 의 핵심 인자가 통째로 못 쓰인다. 표준 라이브러리라
   `go.mod` 는 바뀌지 않고 대가는 바이너리 수백 KB 다.
 
-### 6.5 `gui/go.mod` 의 모듈 경로 제약 — 먼저 읽어라
+### 6.5 GUI 는 루트 모듈을 함께 쓴다
 
-**`internal/` 은 Go 언어 차원의 접근 제한이다.** `gui/` 가 별도 모듈이므로 그 규칙을 만족시키지
-못하면 `internal/dashboard` import 가 **컴파일 단계에서 거부된다.** 모르고 시작하면 첫 빌드에서 막힌다.
+**별도 `go.mod` 를 두지 않는다.** GUI 는 `cmd/pulsemetry-gui/` 에 있고 루트 `go.mod` 를 그대로
+쓰므로 `internal/dashboard` import 에 아무 제약이 없다 (ADR 0004 개정).
 
-상위 모듈 경로는 `github.com/your-org/pulsemetry` 다. 따라서:
+초안은 `gui/` 를 별도 모듈로 두려 했다. 근거는 "Wails 의존성이 CLI 바이너리로 샌다" 였는데
+**사실이 아니다** — Go 링커는 실제로 import 된 패키지만 넣으므로, `cmd/telemetryctl` 이 Wails 를
+import 하지 않는 한 그 바이너리에 Wails 코드는 들어가지 않는다 (`go version -m` 으로 확인 가능).
 
-```text
-gui/go.mod
-  module github.com/your-org/pulsemetry/gui      ← 반드시 상위 모듈 경로 아래
-  require github.com/your-org/pulsemetry v0.0.0
-  replace github.com/your-org/pulsemetry => ../   ← 로컬 소스를 가리킨다
-```
+모듈을 나눴다면 치렀을 대가는 이렇다. 모듈 경계는 곧 **버전 경계**라, 매일 함께 바뀌는
+`internal/dashboard` 와 GUI 사이에 태그·bump 사이클이 생기거나 `replace`·`go.work` 로 우회하게
+된다(후자는 형식만 남고 격리는 없다). 게다가 `internal/` 규칙 때문에 모듈 경로를 상위 경로
+아래(`.../gui`)에 정확히 맞춰야 하고, 벗어나면 `use of internal package ... not allowed` 로 거부된다.
 
-`module pulsemetry-gui` 나 `module github.com/your-org/pulsemetry-gui` 처럼 상위 경로 밖에 두면
-`use of internal package ... not allowed` 로 거부된다. 이 배치를 벗어날 방법은 없다 — 유일한 대안은
-`dashboard` 를 `internal/` 밖으로 옮기는 것인데, 그러면 공개 API 표면이 하나 늘어난다.
+분리를 다시 볼 조건은 셋 중 하나다 — `internal/dashboard` 인터페이스가 안정될 때, GUI 와 데몬의
+릴리스 주기가 갈릴 때, 데몬을 외부에서 라이브러리로 쓰기 시작할 때.
 
 ### 6.6 Wails 쪽
 
 ```go
-// gui 쪽 — 여기서만 Wails
-func (s *DashboardService) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error
-func (s *DashboardService) ServiceShutdown() error
-func (s *DashboardService) Today(tz string) (dashboard.TodaySummary, error)
+// cmd/pulsemetry-gui/dashboard.go — 여기서만 Wails
+func (d *Dashboard) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error
+func (d *Dashboard) ServiceShutdown() error
+func (d *Dashboard) Tray(ctx context.Context, q dashboard.TrayQuery) (dashboard.TraySnapshot, error)
 ```
 
-`application.NewService(&DashboardService{})` 로 등록하고 `wails3 generate bindings` 로 TS 바인딩을
-생성하면 JS 에서 `await DashboardService.Today("Asia/Seoul")` 이 된다. Go 의 `error` 는 Promise
-reject 로 전파된다.
+`application.NewService(NewDashboard())` 로 등록하고 `wails3 generate bindings` 로 TS 바인딩을
+생성하면 JS 에서 `await Dashboard.Tray({tz, recent_limit})` 이 된다. `context.Context` 인자는
+생성기가 떼어 내고, Go 의 `error` 는 Promise reject 로 전파된다.
+
+**`dashboard.Service` 를 그대로 등록하지 않는다.** Wails 는 공개 메서드를 전부 바인딩하므로
+`Reader() *Reader` 까지 프런트로 나가고, 수명주기 훅 이름이 `ServiceStartup`·`ServiceShutdown`
+이라 `Service.Start`·`Stop` 이 저절로 불리지 않는다. 위 타입이 그 이름을 맞추고 노출면을 화면이
+쓰는 것만으로 좁힌다. 반환 타입은 `dashboard` 패키지 것을 그대로 써서 TS 모델이 원본 구조체에서
+나오게 한다 — GUI 전용 DTO 를 만들면 필드가 늘 때마다 두 곳을 고쳐야 한다.
 
 DB 경로는 `runtime.json`(7.4절)의 `database_path` 에서 얻거나, `~/.pulsemetry/pulsemetry.db` 를
 직접 쓴다. **GUI 는 SQLite 를 직접 열지 않는다** — 스키마 지식은 `internal/dashboard` 밖으로 나가지
@@ -518,9 +524,17 @@ Windows 에서 데몬의 prune 이 막힌다.
 
 ### 6.7 CI
 
-현재 `.github/workflows/go.yml` 에 **`gui/` 스텝이 없다.** 디렉터리와 별도 `go.mod` 가 아직 없어
-지금 넣으면 무조건 실패하기 때문이다. GUI 티켓에서 `working-directory: gui` 스텝과 `gui/go.sum`
-캐시 경로를 함께 추가해야 한다. 검증 명령은 `(cd gui && go build ./...)` 다.
+`.github/workflows/go.yml` 의 세 잡이 이렇게 나뉜다 (PROJ-110).
+
+- `build-test` — 3개 OS 매트릭스. `setup-node` → `npm ci` → `npm run build` 로 `frontend/dist` 를
+  만든 뒤 `go build`·`go vet`·`go test -race` 를 돈다. **프런트 빌드를 앞에 두지 않으면 embed 가
+  깨진다** (6.5절 아래 주의).
+- `product-build` — Windows. `task build` 로 실제 배포 산출물을 만든다.
+- `format-deps` — gofmt 와 `go mod tidy -diff`.
+
+> **주의.** `//go:embed all:frontend/dist` 는 컴파일 시점에 그 디렉터리를 읽는데 `dist/` 는
+> gitignore 다. 따라서 `go build ./...` 를 프런트 빌드 없이 돌리면 **로컬에서도** 실패한다.
+> 표준 진입점은 `task build` 다 (AGENTS.md 「명령어」).
 
 ### 6.8 `Home(q)` — 선택 날짜의 요약과 최근 활동 (PROJ-88)
 
@@ -1181,8 +1195,8 @@ systemd `TimeoutStopSec=20` 은 `daemon.DefaultShutdownTimeout`(15초)보다 커
 계획서 「검증」을 실제 명령으로 고친 것이다. 4.3절의 정정이 5번에 반영돼 있다.
 
 ```sh
-# 0. 자동 검증
-go build ./... && go vet ./... && go test -race -cover ./...
+# 0. 자동 검증 (task test 는 go test 와 프런트 svelte-check 를 함께 돈다)
+task build && task test && go vet ./...
 
 # 1. 상위 Collector 대역 — 받은 본문을 덤프하는 간이 서버를 띄운다.
 #    (state.json 의 manifest.otlp.endpoint 가 그곳을 가리키게 하거나, --no-forward 로 이 단계를 건너뛴다)
@@ -1241,7 +1255,7 @@ go run ./cmd/telemetryctl status
 변경·툴 타임라인이 잡히는지, 회사 Collector 대역에는 원문 없이 도착하는지 확인한다. `local disable`
 후 두 벤더 설정이 재배선 전과 바이트 단위로 같은지도 확인한다.
 
-**GUI 연동**: `cd gui && wails3 generate bindings` 후 JS 에서 `DashboardService.Today("Asia/Seoul")`
+**GUI 연동**: `cd cmd/pulsemetry-gui && wails3 task common:generate:bindings` 후 JS 에서 `Dashboard.Tray({tz, recent_limit})`
 과 `Session(id)` 가 정상 반환하는지 확인한다(6.5절의 모듈 경로 제약을 먼저 만족시켜야 한다).
 
 ### 8.1 자동 실행 등록 체크리스트 (PROJ-55)
@@ -1251,23 +1265,24 @@ go run ./cmd/telemetryctl status
 systemd user manager 도 `XDG_RUNTIME_DIR` 도 없다. 그래서 아래는 사람이 실제 장비에서 한다.
 
 ```sh
-go build -o dist/telemetryctl ./cmd/telemetryctl   # go run 으로는 등록할 수 없다 (7.7절)
+task build:cli   # go run 으로는 등록할 수 없다 (7.7절)
+PM="$PWD/artifacts/build/$(go env GOOS)-$(go env GOARCH)/bin/pulsemetry"
 
 # 0. 자동화된 부분 (환경 변수 게이트)
-PULSEMETRY_E2E_AUTOSTART=1 PULSEMETRY_E2E_EXEC="$PWD/dist/telemetryctl" \
+PULSEMETRY_E2E_AUTOSTART=1 PULSEMETRY_E2E_EXEC="$PM" \
   go test -race -run TestE2E ./internal/autostart/
 ```
 
-1. `./dist/telemetryctl autostart enable` → `등록됨` + `데몬: 실행 중 (헬스체크 응답 확인)`
-2. `./dist/telemetryctl status` → 자동 실행 블록이 데몬 줄 바로 뒤에 나오는지
+1. `$PM autostart enable` → `등록됨` + `데몬: 실행 중 (헬스체크 응답 확인)`
+2. `$PM status` → 자동 실행 블록이 데몬 줄 바로 뒤에 나오는지
 3. `launchctl print gui/$UID/com.your-org.pulsemetry.daemon`
    / `systemctl --user status pulsemetry-daemon.service`
-4. **로그아웃 후 다시 로그인**(또는 재부팅) → 데몬이 스스로 돌아왔는지 (`telemetryctl status`)
-5. `kill -9 $(pgrep -f 'telemetryctl daemon')` → **재시작되어야 한다** (비정상 종료, ADR 0007)
+4. **로그아웃 후 다시 로그인**(또는 재부팅) → 데몬이 스스로 돌아왔는지 (`$PM status`)
+5. `kill -9 $(pgrep -f 'pulsemetry daemon')` → **재시작되어야 한다** (비정상 종료, ADR 0007)
 6. `launchctl bootout gui/$UID/com.your-org.pulsemetry.daemon`
    / `systemctl --user stop pulsemetry-daemon.service`
    → **정지 상태를 유지해야 한다.** 되살아나면 ADR 0007 의 회귀다
-7. `./dist/telemetryctl autostart disable` → plist/unit 이 사라지고 `status` 가 `등록 안 됨`
+7. `$PM autostart disable` → plist/unit 이 사라지고 `status` 가 `등록 안 됨`
 8. macOS 만: 시스템 설정 → 일반 → 로그인 항목에 항목이 보이는지 (거기서 끄면 등록이 남아 있어도
    실행되지 않는다 — 우리가 읽을 수 없는 상태다, 9절 한계 표)
 9. 등록물이 진짜 홈에 남지 않았는지 (단위 테스트가 새지 않았음을 확인하는 용도)

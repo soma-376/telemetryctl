@@ -3,6 +3,8 @@
 /pulsemetry.exe
 /dist/
 /bin/
+/artifacts/
+/.task/
 
 # Go test and coverage artifacts
 *.test
