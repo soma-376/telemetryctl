@@ -7,19 +7,21 @@
 목표 설치 경험은 다음과 같다.
 
 ```powershell
-irm https://get.your-service.com/windows | iex
+irm "https://get.your-service.com/windows?code=<초대코드>" | iex
 ```
 
 개발자는 위 명령어 한 줄만 실행하고, 설치 스크립트가 다음 작업을 자동으로 수행한다.
 
-1. 브라우저 기반 회사 계정 로그인
-2. 사용자 및 소속 회사 확인
-3. 설치별 인증 정보 발급
+1. 초대 코드로 enroll 호출 (코드가 곧 자격증명이다 — 이 흐름에는 로그인이 없다)
+2. 소속 회사 확인과 대상 멤버 `invited → active` 전환
+3. 설치 자격 봉투 수신 (`installation_id` · `installation_token` · `telemetry_token`)
 4. Codex 전역 OTel 설정 적용
 5. Claude Code 전역 OTel 설정 적용
 6. 기존 설정 충돌 및 백업 처리
 7. Collector 연결 상태 확인
-8. 설치 완료 상태 서버 등록
+8. 데몬 자동 실행 등록 (macOS·리눅스)
+
+사용자 **회원가입·로그인은 이 설치 흐름과 별개로 진행되는 다른 흐름**이다. §3.2 를 본다.
 
 ---
 
@@ -28,13 +30,13 @@ irm https://get.your-service.com/windows | iex
 ```text
 개발자
   │
-  │ irm https://get.your-service.com/windows | iex
+  │ irm "https://get.your-service.com/windows?code=<초대코드>" | iex
   ▼
 설치 스크립트
   │
-  ├─ 브라우저 로그인
-  ├─ Enrollment API 호출
-  ├─ 설치별 토큰 발급
+  ├─ 바이너리 내려받기 (GET /bin/{filename})
+  ├─ Enrollment API 호출 (초대 코드가 자격증명 — 이 흐름에 로그인 없음)
+  ├─ 설치 자격 봉투 수신 (installation_token · telemetry_token)
   ├─ 기존 설정 검사 및 백업
   ├─ Codex config.toml 수정
   ├─ Claude Code settings.json 수정
@@ -43,14 +45,23 @@ irm https://get.your-service.com/windows | iex
   ▼
 Codex / Claude Code
   │
+  │ OTLP/HTTP → localhost. 벤더 설정에 들어가는 것은 로컬 ingest 토큰뿐이다
+  ▼
+telemetryctl 데몬  (로컬 인라인 프록시 — ADR 0001·0006, 기본 ON)
+  │
+  ├─ 로컬 집계·저장 (SQLite)
+  ├─ 프롬프트 원문·tool 상세 제거 (ADR 0003)
+  └─ 회사 telemetry token(ptt_) 을 Authorization 에 주입 (OS 키링에서 꺼낸다)
+  │
   │ OTLP/HTTP + HTTPS
   ▼
-Authentication Gateway
+auth-proxy  (ai-telemetry-pipeline)
   │
-  ├─ installation token 검증
-  ├─ tenant_id 결정
-  ├─ rate limit
-  └─ 요청 크기 제한
+  ├─ telemetry token(ptt_) 검증 — HMAC-SHA256 해시로 enrollment.telemetry_tokens 조회
+  ├─ installation · member · tenant 가 모두 활성일 때만 통과
+  ├─ 신원 헤더 4종 부여 (x-pulsemetry-token-id · -tenant-id · -installation-id · -member-id)
+  ├─ 요청 크기 제한 (MAX_OTLP_BODY_SIZE, 기본 10 MiB)
+  └─ rate limit — 아직 구현이 없다
   │
   ▼
 OpenTelemetry Collector
@@ -63,6 +74,9 @@ OpenTelemetry Collector
   ▼
 Adapter → Enrichment → ClickHouse
 ```
+
+위 그림은 **설치 흐름**만 그린 것이다. 사용자 회원가입·로그인은 여기에 없는 별개 흐름이며
+§3.2 (b) 가 다룬다.
 
 ---
 
@@ -81,69 +95,159 @@ install.ps1 -Endpoint "https://telemetry.company.com" -Token "..." -TenantId "..
 대신 공통 설치 명령어를 사용한다.
 
 ```powershell
-irm https://get.your-service.com/windows | iex
+irm "https://get.your-service.com/windows?code=<초대코드>" | iex
 ```
 
-설치 스크립트가 브라우저 로그인 이후 서버에서 해당 사용자와 회사에 맞는 설정을 받아온다.
+설치 스크립트가 초대 코드로 enroll 을 호출해 회사 manifest 와 이 설치의 자격을 받아온다.
+이 흐름에는 로그인 단계가 없다 — 사용자 로그인은 별개 흐름이며 §3.2 (b) 가 다룬다.
 
 ---
 
-## 3.2 권장 Enrollment 흐름
+## 3.2 설치 흐름과 로그인 흐름은 별개다
+
+`pulsemetry-backend` ADR 0007(`Accepted`) 이 둘을 나눠 적고 있다 —
+「사용자가 telemetryctl 를 설치하는 플로우」와 「**(동시에)** 사용자가 telemetryctl 인증을
+위하여 회원가입을 하는 플로우」. enroll 은 로그인을 기다리지 않고, 로그인은 enroll 의
+자격증명을 쓰지 않는다.
+
+### (a) 설치·enroll 흐름 — 현재 구현됨
+
+**enroll 엔드포인트에는 인증이 없다.** 초대 코드 자체가 자격증명이다
+(backend 명세 §2 엔드포인트 표, §4.2).
 
 ```text
-1. 사용자가 설치 명령어 실행
-2. 설치 스크립트가 브라우저 로그인 페이지 실행
-3. 사용자가 회사 계정으로 로그인
-4. 서버가 tenant와 사용자 확인
-5. 서버가 installation 생성
-6. 설치별 ingest token 발급
-7. 설정 manifest 반환
-8. 설치 스크립트가 설정 파일에 적용
-9. 첫 telemetry 수신 여부 확인
+1. 관리자가 POST /v1/invitations 로 초대 코드를 발급한다 (X-Admin-Token 인증)
+2. 사용자가 초대 코드가 실린 한 줄 설치 명령을 실행한다
+     irm "<server>/windows?code=<초대코드>" | iex
+3. 서버가 코드를 정규식으로만 검증하고(DB 조회 없음 — 코드 탐색 오라클 방지)
+   코드가 박힌 부트스트랩 스크립트를 내려준다
+4. 스크립트가 OS·아키텍처를 판별해 GET /bin/{filename} 으로 바이너리를 받는다
+5. 스크립트가 `enroll --invite <코드> --server <주소>` 를 실행한다
+6. 서버가 초대 코드를 원자적으로 소비하고 installation 을 만든다
+   대상 멤버가 suspended 면 403 으로 끊고 롤백한다 — 코드는 살아 있다
+7. enroll 성공이 대상 멤버를 invited → active 로 전환한다
+   이 전환이 없으면 auth-proxy 가 이후 모든 텔레메트리를 401 로 막는다
+8. 서버가 봉투를 내려준다 — {installation_id, installation_token, telemetry_token, manifest}
+9. 클라이언트가 로컬 파이프라인을 배선한다
+   벤더 설정에는 로컬 ingest 토큰만 들어가고, 회사 telemetry token 은 OS 키링에 저장된다
+10. 데몬 자동 실행을 best-effort 로 등록한다 (macOS·리눅스, **이 레포** ADR 0007)
 ```
+
+**설계에 있으나 아직 없는 두 단계.** `pulsemetry-backend` ADR 0007 Context 는 1번과 2번 사이에 **초대 링크가 담긴
+메일 발송**과 **OS 를 감지해 설치 명령어를 안내하는 페이지**를 둔다. backend 명세 §1 이
+"초대 이메일 발송" 을 범위 밖으로 두고 §2 엔드포인트 표에도 안내 페이지가 없어서, 지금은
+관리자가 코드를 직접 전달한다.
+
+초대 코드가 설치 명령 URL 에 노출되는 것은 **알고 수용한 위험**이다. 코드는 일회성이고
+enroll 이 원자적으로 소비하며, 서버는 코드의 존재 여부를 응답으로 알려 주지 않는다.
+
+### (b) 회원가입·로그인 흐름 — 채택됐으나 미구현
+
+`pulsemetry-backend` ADR 0007 이 정한 흐름이다. **아직 구현이 없다** — backend 명세 §1 이
+"사용자 로그인" 을 범위 밖으로 둔다. 범위 밖이라는 것은 설계에 없다는 뜻이 아니라
+**그 서버 명세가 다루지 않는다**는 뜻이다.
+
+```text
+1. 관리자가 대시보드에서 사용자 정보를 등록하고 초대한다
+2. 초대 링크가 담긴 메일이 발송된다
+3. 사용자가 회원가입 링크로 이동해 id + pw + 초대 코드를 입력한다
+4. 회원가입이 끝나면 (a) 대로 CLI 를 내려받는다
+5. CLI 설치 후 사용자가 로그인한다 — 웹 페이지를 띄워 로그인하고
+   콜백 URL 로 CLI 에 AT 와 RT 를 전달한다
+   (Codex·Claude Code 를 CLI 에서 로그인하는 방식과 같다)
+6. CLI 가 해당 사용자 tenant 의 활성 manifest 를 적용한다 (배정 단위는 tenant — 허브 ADR 0002)
+```
+
+여기서 쓰는 토큰은 설치 자격증명(`pit_`·`ptt_`)과 성격이 다르다.
+
+| | 형태 | 담는 것 | 폐기 |
+|---|---|---|---|
+| AT | 단수명 **JWT** | tenant · member · role + **적용 중인 manifest revision** | 만료로 자동 |
+| RT | DB 에 저장하는 **불투명 토큰** | — | 사용 시 회전. 서버가 폐기할 수 있다 |
+
+manifest 재동기화 응답이 **새 AT·RT 를 함께 내려준다.** manifest 갱신과 토큰 재발급이 한 응답,
+한 트랜잭션이다. 새 토큰이 곧 manifest 적용이 끝났다는 증거이고, 적용에 실패한 클라이언트는
+낡은 토큰을 든 채 계속 거부된다(fail-closed).
+
+**아직 정해지지 않은 것** — 전부 ADR 0007 Follow-up 에 있고, 이 레포와 함께 정하기로 돼 있다.
+
+- 콜백 주소 규칙과 PKCE 적용 여부 (별도 ADR 로 미뤄져 있다)
+- AT 클레임 스키마(발급자·수명·revision 필드명)와 재동기화 응답 봉투
+- 데몬 → 서버 구간이 사용자 AT 를 실을지, 지금처럼 installation 귀속 `telemetry_token` 을
+  유지할지. **현재는 `telemetry_token` 이다.**
+- fail-closed 의 한계 — 클라이언트에서 새 AT 저장과 manifest 반영은 원자적이지 않다.
+  반영 완료 후에만 새 AT 를 저장하는 프로토콜을 계약으로 정의해야 한다.
 
 ---
 
-## 3.3 서버가 반환할 설정 Manifest 예시
+## 3.3 서버가 반환하는 봉투와 Manifest
+
+기계 판독 원본은 `contracts/enrollment-envelope.schema.json` 과
+`contracts/enrollment-manifest.schema.json` 이다. 아래는 그 사본이 아니라 읽기용 예시다.
+
+**자격은 manifest 밖에 둔다(봉투 분리).** `installation_id` 와 두 토큰은 "설정" 이 아니라 이
+설치의 자격이다. 클라이언트는 `DisallowUnknownFields` 로 파싱하고 그 설정이 중첩 manifest 까지
+적용되므로, **manifest 안에 봉투 필드가 하나라도 있으면 설치가 그 자리에서 실패한다.**
 
 ```json
 {
-  "schema_version": 1,
-  "config_revision": 12,
-
   "installation_id": "ins_01JABC",
-  "installation_token": "inst_xxxxxxxxx",
+  "installation_token": "pit_...",
+  "telemetry_token": "ptt_...",
+  "manifest": {
+    "schema_version": 1,
+    "config_revision": 12,
 
-  "otlp": {
-    "endpoint": "https://telemetry.company.com",
-    "protocol": "http/protobuf",
-    "compression": "gzip",
-    "timeout_ms": 10000
-  },
+    "otlp": {
+      "endpoint": "https://telemetry.company.com",
+      "protocol": "http/protobuf",
+      "compression": "gzip",
+      "timeout_ms": 10000
+    },
 
-  "signals": {
-    "logs": true,
-    "metrics": true,
-    "traces": false
-  },
+    "signals": {
+      "logs": true,
+      "metrics": true,
+      "traces": false
+    },
 
-  "privacy": {
-    "collect_user_prompts": false,
-    "collect_assistant_responses": false,
-    "collect_tool_details": false,
-    "collect_tool_content": false,
-    "collect_user_email": false
-  },
+    "privacy": {
+      "collect_user_prompts": false,
+      "collect_assistant_responses": false,
+      "collect_tool_details": false,
+      "collect_tool_content": false,
+      "collect_user_email": false,
+      "collect_raw_api_bodies": false
+    },
 
-  "resource_attributes": {
-    "deployment.environment": "production"
+    "repository_allowlist": [],
+    "resource_attributes": {
+      "deployment.environment": "production"
+    }
   }
 }
 ```
 
+**토큰이 둘인 이유**는 역할이 다르기 때문이다.
+
+| 토큰 | 접두사 | 저장 위치 | 용도 | 교체 |
+|---|---|---|---|---|
+| `installation_token` | `pit_` | OS 키링 | 이 설치의 장기 신원. 재발급 요청의 근거 | 하지 않는다 |
+| `telemetry_token` | `ptt_` | OS 키링 (데몬이 상위 전송 시 `Authorization` 에 주입) | 텔레메트리 전송 | 언제든 재발급 |
+
+`telemetry_token` 은 **벤더 설정 파일로 나가지 않는다.** enroll 이 로컬 파이프라인을 배선하면서
+Codex·Claude 설정에는 로컬 ingest 토큰이 들어간다(§4.5 의 평문 노출 위험이 여기서 줄어든다).
+
+`config_revision` 은 서버가 저장된 `manifests.version` 으로 덮어써서 내려준다. tenant 당 활성
+manifest 는 최대 하나이고, 활성 manifest 가 없으면 enroll 은 409 `manifest_not_configured` 다.
+
 ---
 
 ## 3.4 변수 범위
+
+> **주의 — 초안 어휘.** 이 절의 변수 표는 초기 설계 초안이라 `department_id` · `device_id` 류
+> 현행 스키마에 없는 필드를 담고 있다 (현행 필수 집합은 §3.5). 토큰 역할과 신원 결정 경로의 정본은
+> §2 도식과 허브 `contracts/enrollment-api.md`·`telemetry-ingest.md` 다.
 
 ### 회사 단위 변수
 
@@ -173,7 +277,8 @@ SaaS 고객 예시:
 https://ingest.your-service.com
 ```
 
-SaaS에서는 공통 endpoint를 사용하되, 인증된 installation token으로 tenant를 구분한다.
+SaaS에서는 공통 endpoint를 사용하되, 요청에 실린 `telemetry_token`(`ptt_`)으로 tenant를 구분한다 —
+auth-proxy 가 토큰 조회로 tenant 를 결정한다 (§2 도식).
 
 ---
 
@@ -184,7 +289,7 @@ PC 또는 설치 환경마다 달라지는 값이다.
 | 변수 | 역할 |
 |---|---|
 | `installation_id` | 설치 단위 식별자 |
-| `installation_token` | OTLP 전송 인증용 토큰 |
+| `installation_token` | 설치 장기 신원 — 재발급 요청 전용 (OTLP 전송 인증은 `telemetry_token`) |
 | `device_id` | 장치 구분이 필요한 경우 사용 |
 | `config_revision` | 현재 적용된 설정 버전 |
 | `installer_version` | 설치 프로그램 버전 |
@@ -192,18 +297,15 @@ PC 또는 설치 환경마다 달라지는 값이다.
 | `last_verified_at` | 마지막 연결 확인 시간 |
 | `operating_environment` | Windows, WSL 등 실행 환경 |
 
-`installation_token`에는 다음 권한만 부여한다.
+`installation_token` 은 설치의 장기 자격증명이지만 권한은 하나뿐이다.
 
 ```text
 허용:
-- OTLP 데이터 전송
-- 자신의 설치 상태 갱신
+- telemetry_token 재발급 (POST /v1/installations/telemetry-token)
 
 금지:
-- 대시보드 조회
-- 조직 설정 변경
-- 다른 사용자 또는 설치 조회
-- 팀 또는 프로젝트 정보 변경
+- OTLP 데이터 전송 — telemetry_token(ptt_) 의 몫이다
+- 그 외 모든 API
 ```
 
 ---
@@ -221,16 +323,14 @@ tenant_id
 project_id
 ```
 
-이 값은 서버에서 신뢰 가능한 정보로 결정한다.
+이 값은 서버에서 신뢰 가능한 정보로 결정한다. 현행 경로는 OTLP 수신 시 auth-proxy 가
+`telemetry_token` 으로 신원을 푸는 것이다.
 
 ```text
-installation_token
-→ installation 조회
-→ tenant_id 확인
-→ 사용자 identity 매핑
-→ user_id 결정
-→ team_id 및 department_id 연결
-→ repository를 기준으로 project_id 연결
+telemetry_token (ptt_)
+→ auth-proxy 가 HMAC-SHA256 해시로 enrollment.telemetry_tokens 조회
+→ token · installation · member · tenant 가 모두 활성인지 확인
+→ 신원 헤더 4종 부여 (x-pulsemetry-token-id · -tenant-id · -installation-id · -member-id)
 ```
 
 클라이언트가 직접 보낸 `tenant_id`, `team_id`, `project_id`는 신뢰하지 않는다.
@@ -241,16 +341,20 @@ installation_token
 
 MVP에서는 아래 정도면 충분하다.
 
-| 변수 | 범위 | 필수 여부 |
-|---|---|---:|
-| `otlp_endpoint` | 회사 | 필수 |
-| `installation_id` | 설치 | 필수 |
-| `installation_token` | 설치 | 필수 |
-| `enabled_signals` | 회사 | 필수 |
-| `privacy_policy` | 회사 | 필수 |
-| `config_revision` | 설치 | 필수 |
-| `installer_version` | 설치 | 권장 |
-| `repository_allowlist` | 회사 | 권장 |
+봉투(자격)와 manifest(설정)를 나눠서 본다.
+
+| 위치 | 필드 | 범위 | 필수 여부 |
+|---|---|---|---:|
+| 봉투 | `installation_id` | 설치 | 필수 |
+| 봉투 | `installation_token` | 설치 | 필수 |
+| 봉투 | `telemetry_token` | 설치 | 필수 |
+| manifest | `otlp.endpoint` | 회사 | 필수 |
+| manifest | `signals` | 회사 | 필수 |
+| manifest | `privacy` | 회사 | 필수 |
+| manifest | `schema_version` | 회사 | 필수 |
+| manifest | `config_revision` | 회사 | 필수 (서버가 `manifests.version` 으로 덮어쓴다) |
+| manifest | `repository_allowlist` | 회사 | 권장 |
+| 요청 | `client_version` | 설치 | 권장 (`installer_version` 은 deprecated) |
 
 ---
 
@@ -769,10 +873,12 @@ MVP에서는 로컬 장기 보관보다 제한된 메모리 queue 또는 짧은 
 다음 명령은 원격 코드를 즉시 실행한다.
 
 ```powershell
-irm https://get.your-service.com/windows | iex
+irm "https://get.your-service.com/windows?code=<초대코드>" | iex
 ```
 
 PoC에는 편리하지만 기업에서는 보안 검토 대상이 된다.
+초대 코드가 명령줄과 셸 히스토리에 남는 것도 이 절의 검토 대상에 포함된다 —
+일회성 코드이고 enroll 이 원자적으로 소비한다는 전제 위에서 수용한 위험이다.
 
 ### 대응 방안
 
@@ -865,7 +971,7 @@ token이 언제 발급·폐기됐는가
   │
   ▼
 Installer
-  ├─ 브라우저 로그인
+  ├─ 초대 코드로 enroll (이 흐름에 로그인 없음 — §3.2 (b) 참고)
   ├─ Windows / WSL 탐지
   ├─ 기존 설정 충돌 검사
   ├─ 설정 백업
@@ -877,11 +983,17 @@ Installer
 Codex / Claude Code
   │
   ▼
-Authentication Gateway
-  ├─ token → tenant_id
+telemetryctl 데몬 (로컬 인라인 프록시)
+  ├─ 로컬 집계·저장
+  ├─ 원문·tool 상세 제거
+  └─ 회사 telemetry token 주입
+  │
+  ▼
+auth-proxy
+  ├─ telemetry token → tenant_id
   ├─ rate limit
   ├─ request size limit
-  └─ installation 상태 확인
+  └─ installation·member·tenant 활성 확인
   │
   ▼
 Collector
@@ -913,10 +1025,15 @@ ClickHouse / PostgreSQL
 
 # 7. MVP 구현 범위
 
+> 이 목록은 **최초 MVP 계획**이다. 현재 구현 상태는 `README.md` 와 `docs/adr/` 를 본다 —
+> 체크 상태를 여기서 따로 관리하지 않는다.
+
 ## 반드시 구현
 
 - [ ] 공통 한 줄 설치 명령
-- [ ] 브라우저 로그인 또는 device code 인증
+- [ ] 초대 코드 기반 enroll — 설치 흐름에는 로그인이 없다 (§3.2 (a))
+- [ ] 웹 로그인 — 콜백 URL 로 AT·RT 전달 (`pulsemetry-backend` ADR 0007 채택, 미구현.
+      콜백 주소 규칙과 PKCE 적용 여부는 별도 ADR)
 - [ ] 설치별 `installation_id` 생성
 - [ ] 설치별 ingest-only token 발급
 - [ ] Codex 설정 파일 안전 병합
@@ -954,16 +1071,16 @@ ClickHouse / PostgreSQL
 ## 설치 명령어
 
 ```powershell
-irm https://get.your-service.com/windows | iex
+irm "https://get.your-service.com/windows?code=<초대코드>" | iex
 ```
 
 ## 사용자별 변수 전달
 
 ```text
-명령어 인자에 직접 삽입하지 않음
-→ 브라우저 로그인
-→ Enrollment API
-→ 회사 및 설치별 설정 manifest 수신
+초대 코드를 설치 URL 에 싣는다 (노출 위험을 알고 수용)
+→ 서버가 코드를 박은 부트스트랩 스크립트를 내려준다
+→ 스크립트가 enroll 호출
+→ 자격 봉투 + 회사 manifest 수신
 ```
 
 ## 인증

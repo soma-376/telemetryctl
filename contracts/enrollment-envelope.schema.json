@@ -66,7 +66,7 @@
           "minLength": 1
         },
         "telemetry_token": {
-          "description": "Codex/Claude OTLP Authorization 헤더에 삽입하는 폐기·교체 가능한 텔레메트리 전송 토큰.",
+          "description": "회사 텔레메트리 전송 토큰(폐기·교체 가능). OS 키링에 저장되고 데몬이 상위 전송 시 Authorization 헤더에 주입한다 — 벤더 설정 파일에 들어가는 것은 로컬 ingest 토큰이다 (backend 명세 §4.3).",
           "type": "string",
           "minLength": 1
         },
