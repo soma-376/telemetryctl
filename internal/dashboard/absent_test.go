@@ -55,6 +55,29 @@ func absentCases() []absentCase {
 			},
 		},
 		{
+			method: "Home",
+			call: func(ctx context.Context, r *Reader) (any, error) {
+				return r.Home(ctx, HomeQuery{TZ: seoul})
+			},
+			check: func(t *testing.T, got any) {
+				sum := got.(HomeSummary)
+				if len(sum.Cards) != 4 {
+					t.Errorf("카드 = %d, want 4", len(sum.Cards))
+				}
+				// 빈 날짜도 창 골격은 유지해야 화면이 분기 없이 그린다.
+				if len(sum.TwoHour.Windows) != 12 || sum.TwoHour.ActiveWindows != 0 {
+					t.Errorf("2시간 창 = %d개/활동 %d개, want 12/0",
+						len(sum.TwoHour.Windows), sum.TwoHour.ActiveWindows)
+				}
+				if sum.Recent == nil || sum.ActiveAgents == nil {
+					t.Error("슬라이스가 nil — JSON 에서 null 이 되어 프런트엔드가 터진다")
+				}
+				if sum.Date == "" || sum.TZ != seoul {
+					t.Errorf("날짜·시간대가 비었다: %+v", sum)
+				}
+			},
+		},
+		{
 			method: "Sessions",
 			call:   func(ctx context.Context, r *Reader) (any, error) { return r.Sessions(ctx, SessionQuery{}) },
 			check: func(t *testing.T, got any) {
