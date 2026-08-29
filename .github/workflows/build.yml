@@ -7,7 +7,7 @@ on:
     branches: ["develop", "main"]
   workflow_dispatch:
 
-# 같은 ref 에 새 커밋이 오면 이전 실행은 취소한다. 3개 OS 매트릭스라 실행 비용이 3배다.
+# 같은 ref 에 새 커밋이 오면 이전 실행은 취소한다. 3개 OS 매트릭스가 둘이라 실행 비용이 크다.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -39,48 +39,31 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      # 이 잡은 프런트엔드를 빌드하지 않는다. 아래 Go 스텝들이 GUI 를 제외하므로
-      # //go:embed all:frontend/dist 가 걸리지 않고, dist 도 필요 없다.
-      # GUI 는 product-build 잡이 task build 로 프런트부터 순서대로 만든다.
+      - name: Install Task runner
+        run: go install github.com/go-task/task/v3/cmd/task@v3.40.1
 
-      # 범위가 ./... 이 아닌 이유: GUI(cmd/pulsemetry-gui)는 OS 의 창 시스템을 링크한다.
-      # 리눅스는 GTK4·WebKitGTK 개발 패키지가, macOS 는 Objective-C 를 위한 C 툴체인이
-      # 있어야 컴파일된다. 러너에 그것이 없으면 CLI 를 검사하려던 자리에서 GUI 가 딸려
-      # 들어와 깨진다. GUI 빌드는 아래 product-build 잡이 task build 로 확인한다.
-      - name: Build
-        run: go build ./cmd/telemetryctl ./internal/...
+      # 무엇을 검사하는지는 루트 Taskfile.yml 이 정한다. 여기서 go 명령을 직접 치면
+      # 같은 지식이 두 곳에 생기고, 그것이 어긋나 이 잡이 깨진 적이 있다.
+      # 이 잡은 프런트엔드도 빌드하지 않는다 — 검사 범위가 GUI 를 빼므로 dist 가 필요 없다.
+      - name: Check CLI
+        run: task check:cli
 
-      - name: Vet
-        run: go vet ./cmd/telemetryctl ./internal/...
-
-      - name: Test (race + cover)
-        # -race 는 CGO 를 요구한다. 3개 러너 이미지 모두 C 컴파일러를 갖고 있어 그대로 돈다
-        # (ubuntu: gcc, macos: Xcode clang, windows: 러너 이미지에 mingw-w64 gcc 포함).
-        # CGO_ENABLED 를 명시해 두는 이유: Go 는 C 컴파일러를 찾지 못하면 CGO_ENABLED 를
-        # 0 으로 기본 설정하는데, 그러면 "-race requires cgo" 로 즉시 실패한다.
-        # 즉 러너 이미지에서 컴파일러가 빠지는 날 조용히 race 검사 없이 통과하지 않는다.
-        env:
-          CGO_ENABLED: "1"
-        run: go test -race -cover ./cmd/telemetryctl ./internal/...
-
-      - name: Build without CGO
-        # ADR 0002 회귀 방지. 순수 Go SQLite 드라이버(modernc.org/sqlite)를 고른 이유가
-        # "배포 바이너리가 C 툴체인을 요구하지 않는 것"이다. CGO 를 요구하는 의존성이
-        # 섞여 들어오면 여기서 잡힌다.
-        # 위 -race 스텝과 반드시 별개 스텝이어야 한다 — -race 는 CGO_ENABLED=1 이 필수라
-        # 잡 전체에 CGO_ENABLED=0 을 걸면 race 테스트가 돌지 못한다.
-        #
-        # 범위가 CLI 인 것이 이 검사의 요점이다. 지키려는 대상은 사용자 머신에 설치되는
-        # **CLI 바이너리**이지 GUI 가 아니다. GUI 는 macOS 에서 Objective-C 로 창을 띄우므로
-        # C 가 반드시 필요하고, ./... 로 두면 규칙이 자기 자신에게 걸려 넘어진다.
-        env:
-          CGO_ENABLED: "0"
-        run: go build ./cmd/telemetryctl ./internal/...
+      - name: Check CLI without CGO
+        run: task check:cli:nocgo
 
   product-build:
-    name: Product Build (Windows)
-    runs-on: windows-latest
+    # 배포되는 모양 그대로(프런트 → dist → Go 임베드 → 산출물 배치)를 3개 OS 에서 만든다.
+    # build-test 잡은 GUI 를 빼고 검사하므로, GUI 가 그 OS 에서 컴파일되는지 아는 곳은
+    # 여기뿐이다. Windows 만 돌던 동안 build/{darwin,linux}/Taskfile.yml 은 아무도 실행해
+    # 본 적 없는 코드였다.
+    name: Product Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    strategy:
+      # 한 OS 가 깨져도 나머지 결과를 봐야 "이 OS 만의 문제"인지 판별할 수 있다.
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
 
@@ -95,6 +78,20 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: cmd/pulsemetry-gui/frontend/package-lock.json
+
+      # Wails v3 의 리눅스 백엔드는 GTK4 와 WebKitGTK 6.0 을 pkg-config 로 찾아 링크한다.
+      # 러너 이미지에는 둘 다 없어서, 이 스텝이 없으면 GUI 빌드가
+      # "Package 'gtk4', required by 'virtual:world', not found" 로 멈춘다.
+      # glib-2.0·gio-unix-2.0·libsoup-3.0 은 이 둘의 의존성으로 함께 딸려온다.
+      #
+      # macOS 는 준비할 것이 없다 — 창을 띄우는 쪽이 Objective-C 라 C 툴체인이 필요한데,
+      # 러너 이미지의 Xcode clang 이 그 역할을 한다. Windows 는 WebView2 를 쓰므로
+      # 시스템 라이브러리도 C 툴체인도 요구하지 않는다.
+      - name: Install Linux GUI build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.11
@@ -121,21 +118,8 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - name: gofmt
-        # gofmt -l 은 미포맷 파일 목록을 출력만 하고 종료 코드는 언제나 0 이다.
-        # `run: gofmt -l .` 로 두면 검사하는 시늉만 하고 항상 통과한다.
-        # 출력이 비어 있지 않으면 명시적으로 실패시켜야 실제로 잡힌다.
-        run: |
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "::error::gofmt 가 적용되지 않은 파일이 있다. 'gofmt -w .' 로 정리해라."
-            echo "$unformatted"
-            exit 1
-          fi
-          echo "gofmt: 미포맷 파일 없음"
+      - name: Install Task runner
+        run: go install github.com/go-task/task/v3/cmd/task@v3.40.1
 
-      - name: go mod tidy check
-        # go.mod / go.sum 이 실제 import 와 어긋난 채로 머지되는 것을 막는다.
-        # -diff 는 파일을 쓰지 않고 필요한 변경을 diff 로 출력하며, 변경이 필요하면
-        # 0 이 아닌 코드로 종료한다. 워크스페이스를 더럽히지 않아 CI 에 적합하다.
-        run: go mod tidy -diff
+      - name: Check format and dependencies
+        run: task check:format

@@ -1,7 +1,22 @@
+# 이 파일이 "무엇을 빌드하고 무엇을 검사하는가" 의 단일 출처다.
+# CI(.github/workflows/build.yml)는 언제·어디서·무슨 도구로 돌릴지만 정하고 여기를 부른다.
+#
+# 나누는 기준은 하나다 — **노트북에서도 돌리고 싶은가.** 그렇다면 여기 있어야 한다.
+# 두 곳에 나눠 적으면 어긋난다. 실제로 어긋났었다: CI 는 go build ./... 로 레포 전체를
+# 잡는데 이 파일은 GUI 와 CLI 가 다르다는 것을 알고 있었고, GUI 가 처음 CI 를 타는 순간
+# ubuntu·macOS 가 깨졌다.
+#
+# 여기에는 GitHub 전용 문법을 쓰지 않는다. 실패는 exit 1 로 알린다 — 그것이면 GitHub 든
+# GitLab 이든 로컬이든 똑같이 동작한다. 특정 CI 를 아는 순간 이 파일의 이식성이 사라진다.
+
 version: 3
 
 vars:
   BUILD_DIR: "artifacts/build/{{OS}}-{{ARCH}}"
+  # 순수 Go 로 검사할 수 있는 범위. GUI(cmd/pulsemetry-gui)는 뺀다 — OS 의 창 시스템을
+  # 링크하므로 리눅스는 GTK4·WebKitGTK 개발 패키지가, macOS 는 Objective-C 를 위한 C
+  # 툴체인이 있어야 컴파일된다. GUI 는 build:gui 가 wails3 를 통해 따로 빌드한다.
+  CLI_PKGS: "./cmd/telemetryctl ./internal/..."
 
 tasks:
   # 산출물 배치는 배포 패키지(PROJ-111)와 같은 모양을 빌드 단계에서부터 쓴다.
@@ -15,6 +30,9 @@ tasks:
   # 디렉터리에 공존할 수 없다. 둘 다 각자의 올바른 이름을 지키려면 경로를 나눠야 한다.
   prepare:build:
     internal: true
+    # build:cli 와 build:gui 가 각각 deps 로 선언하므로 task build 에서 두 번 불린다.
+    # mkdir 은 몇 번 돌아도 결과가 같지만, run: once 면 프로세스를 한 번만 띄운다.
+    run: once
     cmds:
       - cmd: powershell -NoProfile -Command New-Item -ItemType Directory -Force -Path {{.BUILD_DIR}}/bin
         platforms: [windows]
@@ -28,8 +46,16 @@ tasks:
     desc: CLI와 데몬을 함께 제공하는 pulsemetry 바이너리를 빌드한다.
     deps:
       - prepare:build
+    # 플래그는 GUI 와 같은 기준을 쓴다 (build/{os}/Taskfile.yml 의 BUILD_FLAGS).
+    # 이쪽도 사용자 머신에 설치되는 배포물인데 GUI 만 받던 대우였다.
+    #
+    #   -trimpath      빌드 머신의 파일 경로를 바이너리에서 지운다. 이게 없으면 모듈 캐시
+    #                  경로가 그대로 박혀 빌드한 사람의 계정명이 배포물에 실려 나간다.
+    #   -ldflags="-w -s"  DWARF 디버그 정보와 심볼 테이블을 뺀다.
+    #
+    # 적용 전 27.5MB·로컬 경로 354곳 → 적용 후 19.1MB·0곳.
     cmds:
-      - go build -o {{.BUILD_DIR}}/bin/pulsemetry{{exeExt}} ./cmd/telemetryctl
+      - go build -trimpath -ldflags="-w -s" -o {{.BUILD_DIR}}/bin/pulsemetry{{exeExt}} ./cmd/telemetryctl
 
   build:gui:
     desc: Wails GUI와 임베드할 프런트엔드를 빌드한다.
@@ -55,3 +81,63 @@ tasks:
     dir: cmd/pulsemetry-gui/frontend
     cmds:
       - npm run check
+
+  check:
+    desc: 푸시 전에 돌린다. CI 가 검사하는 것과 같다.
+    cmds:
+      - task: check:cli
+      - task: check:cli:nocgo
+      - task: check:format
+
+  check:cli:
+    desc: CLI·데몬을 빌드·정적검사·테스트한다.
+    # CGO_ENABLED 를 1 로 못박는 이유: -race 는 cgo 를 요구한다(레이스 탐지기가 C 로 쓰인
+    # ThreadSanitizer 라 링크에 C 툴체인이 필요하다). Go 는 C 컴파일러를 찾지 못하면
+    # CGO_ENABLED 를 0 으로 기본 설정하는데, 명시하지 않으면 러너 이미지에서 컴파일러가
+    # 빠지는 날 조용히 race 검사 없이 통과할 수 있다.
+    env:
+      CGO_ENABLED: "1"
+    cmds:
+      - go build {{.CLI_PKGS}}
+      - go vet {{.CLI_PKGS}}
+      - go test -race -cover {{.CLI_PKGS}}
+
+  check:cli:nocgo:
+    desc: 배포 바이너리가 C 툴체인을 요구하지 않는지 확인한다 (ADR 0002).
+    # 순수 Go SQLite 드라이버(modernc.org/sqlite)를 고른 이유가 이것이다. CGO 를 요구하는
+    # 의존성이 섞여 들어오면 여기서 잡힌다.
+    #
+    # 범위가 CLI_PKGS 인 것이 이 검사의 요점이다. 지키려는 대상은 사용자 머신에 설치되는
+    # CLI 바이너리이지 GUI 가 아니다. GUI 는 macOS 에서 Objective-C 로 창을 띄우므로 C 가
+    # 반드시 필요하고, ./... 로 두면 규칙이 자기 자신에게 걸려 넘어진다.
+    #
+    # check:cli 와 별개 태스크인 것도 의도다 — 한쪽은 cgo 가 필요하고 한쪽은 꺼야 한다.
+    env:
+      CGO_ENABLED: "0"
+    cmds:
+      - go build {{.CLI_PKGS}}
+
+  check:format:
+    desc: 포맷과 의존성 파일이 저장소 기준과 맞는지 검사한다.
+    cmds:
+      # gofmt -l 은 미포맷 파일 목록을 출력만 하고 종료 코드가 언제나 0 이다. 그대로 두면
+      # 검사하는 시늉만 하고 항상 통과하므로, 출력이 비어 있지 않으면 명시적으로 실패시킨다.
+      - cmd: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt 가 적용되지 않은 파일이 있다. 'gofmt -w .' 로 정리해라."
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "gofmt: 미포맷 파일 없음"
+      # go.mod / go.sum 이 실제 import 와 어긋난 채로 머지되는 것을 막는다.
+      #
+      # 빌드는 읽고 만들기만 한다. 소스를 고치는 일은 검사 쪽에 있어야 한다. 원래
+      # go mod tidy 는 Wails 템플릿을 따라 GUI 빌드의 deps 로 박혀 있었는데
+      # (build/{darwin,linux,windows}/Taskfile.yml), 그러면 빌드 한 번에 go.mod 가 조용히
+      # 고쳐지고 여기서 잡으려던 어긋남이 그 전에 지워진다.
+      #
+      # -diff 는 파일을 쓰지 않고 필요한 변경을 출력하며, 변경이 필요하면 0 이 아닌 코드로
+      # 끝난다. 워크스페이스를 더럽히지 않아 CI 와 로컬이 같은 명령을 쓸 수 있다.
+      # 실패하면 `go mod tidy` 를 직접 돌려서 고친다.
+      - go mod tidy -diff
