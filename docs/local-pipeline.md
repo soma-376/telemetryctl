@@ -76,7 +76,7 @@ telemetryctl daemon
   ├── forward      Batch.Body(원본 바이트) → otlpdecode.Scrub → 회사 Collector
   │                   (여기만 네트워크로 나간다)
   │
-  └── pipeline     Batch.Result → dedup 창 → session.Assembler + rollup.Aggregator
+  └── pipeline     Batch.Result → dedup 창 → session.Assembler(+TurnOf)
                                             → store.Batch (한 트랜잭션)
         │
         ▼ (read-only, WAL)
@@ -88,14 +88,14 @@ internal/dashboard  ←  telemetryctl stats·sessions·status
 
 - **원본 바이트**(`receiver.Batch.Body`)는 포워더로 간다. 포워더가 회사 manifest 의 `Privacy` 기준으로
   원문·tool details 를 제거하고 재인코딩해 상위로 보낸다.
-- **정규화 결과**(`receiver.Batch.Result`)는 세션 조립기·롤업 집계기·저장소로 간다. 원문은 여기서
-  `event_content` 로만 흐른다.
+- **정규화 결과**(`receiver.Batch.Result`)는 세션 조립기·저장소로 간다. v3 에서 원문이 남는 자리는
+  `turns.prompt_text` 하나뿐이다.
 
 `daemon/pipeline.go` 의 `Consume` 은 **`forward.Enqueue` 를 직렬화 지점 밖에서 먼저 호출한다.**
 SQLite 가 느려도 상위 전달이 막히지 않아야 하기 때문이다(§5.4).
 
-집계기 두 개는 `pipeline.run` 이 소유하는 고루틴 하나가 **같은 순서로** 먹인다. 순서가 갈리면
-`sessions` 합계와 `rollup_hourly` 합계가 갈린다.
+조립기는 `pipeline.run` 이 소유하는 고루틴 하나가 **도착 순서대로** 먹인다. 순서가 갈리면 도구 호출
+순번이 밀려 결정 이벤트와 결과 이벤트가 서로 다른 `call_key` 를 얻는다 ([ADR 0009](adr/0009-로컬-저장-모델을-v3로-전환한다.md)).
 
 ---
 
@@ -107,13 +107,12 @@ internal/
   otlpdecode/   protobuf·protojson 디코드, content 제거 재인코딩(Scrub)          (proto 의존 격리)
   receiver/     loopback OTLP/HTTP 수신기 + Sink 인터페이스
   forward/      상위 Collector 전달 (유계 큐 · 제한된 재시도 · 토큰 갱신)
-  session/      이벤트 → 세션 조립, 제목 휴리스틱, 파일·툴 추출                   (순수 함수, 시계 미접근)
-  rollup/       시간 버킷 집계, delta/cumulative 분기                             (순수 함수, IO 없음)
+  session/      이벤트 → 세션 조립, 턴 경계, 제목 휴리스틱, 파일·툴 추출          (순수 함수, 시계 미접근)
   store/        SQLite 스키마·마이그레이션·쓰기·보존 정책·read-only 열기
   dashboard/    화면별 조회 API                                                   (Wails 의존 없음)
   runtimeinfo/  runtime.json (비밀 없음: 주소·pid·데이터 경로)
   autostart/    로그인 시 데몬 자동 실행 등록 (launchd LaunchAgent · systemd user unit)
-  daemon/       위 여덟 개를 잇는 배선 + 틱 루프 + graceful shutdown
+  daemon/       위 패키지들을 잇는 배선 + 틱 루프 + graceful shutdown
 gui/            Wails v3 앱 (별도 go.mod, 아직 없음 — PROJ-35)
 ```
 
@@ -122,7 +121,7 @@ gui/            Wails v3 앱 (별도 go.mod, 아직 없음 — PROJ-35)
 `event` 가 파이프라인 전체의 공용 어휘이고 아무것도 import 하지 않는다. 나머지는 전부 `event` 를
 향한다. `daemon` 만이 다른 패키지를 여럿 import 한다 — 배선이 그 패키지의 유일한 임무다.
 
-`receiver` 는 `store`·`session`·`rollup`·`forward` 중 어느 것도 import 하지 않고 `Sink` 인터페이스만
+`receiver` 는 `store`·`session`·`forward` 중 어느 것도 import 하지 않고 `Sink` 인터페이스만
 노출한다. 그래서 "OTLP 를 받는다" 는 관심사를 파이프라인 없이 `httptest` 로 전부 테스트할 수 있다.
 
 `installer` 는 `receiver`·`store` 를 import 하지 않는다. 하면 `enroll`·`status` 경로까지 protobuf
@@ -148,9 +147,9 @@ gui/            Wails v3 앱 (별도 go.mod, 아직 없음 — PROJ-35)
 
 | 어휘 | 소유자 | 이유 |
 |---|---|---|
-| `event.Content` · `event.ContentKind` | `event` | `otlpdecode` 가 뽑고 `session` 이 제목을 만들고 `store` 가 `event_content.kind` 에 쓴다. 세 지점이 같은 타입이어야 어긋남을 컴파일러가 잡는다 |
+| `event.Content` · `event.ContentKind` | `event` | `otlpdecode` 가 뽑고 `session` 이 제목을 만들고 `store` 가 `turns.prompt_text` 에 쓴다. 세 지점이 같은 타입이어야 어긋남을 컴파일러가 잡는다 |
 | `event.Path` · `event.NormalizePath` | `event` | `project_hash`+`project_name`, `file_path_hash`+`file_name`, `target_hash`+`target_name` 세 쌍의 **유일한 생산자**. 전체 경로가 이 타입을 통과할 자리가 없다 |
-| `event.CumulativeState` | `event` | `session` 과 `rollup` 이 각자 갖고 있던 리셋 판정이 이미 갈라져 있었다. `Step` 하나로 합치고 계열 저장·용량 정책만 각자에게 남겼다 |
+| `event.CumulativeState` | `event` | `session` 이 누적 계열의 리셋과 콜드 스타트를 판정한다. 규칙이 여러 벌이면 같은 스트림에서 서로 다른 비용이 나온다 |
 
 `otlpdecode.Content`·`otlpdecode.Target` 은 남아 있지만 `event.Content`/`event.Path` 를 싣는
 껍데기다 — `EventIndex`·`DedupKey` 는 한 번의 디코드 결과 안에서만 뜻이 있기 때문이다.
@@ -161,21 +160,19 @@ gui/            Wails v3 앱 (별도 go.mod, 아직 없음 — PROJ-35)
 
 ### 3.4 `daemon` 이 중복 제거를 한 겹 더 한다
 
-같은 이벤트를 세 소비자가 받는데 중복에 대한 태도가 셋 다 다르다.
+같은 이벤트를 두 소비자가 받는데 중복에 대한 태도가 다르다.
 
 | 소비자 | 중복 처리 |
 |---|---|
-| `store` | `events.dedup_key` UNIQUE. 영구적이고 재시작에도 유효하다 |
-| `rollup` | 자체 유계 FIFO 창(16384). `rollup_hourly` 는 UPSERT 누적이라 한 번 더한 값을 되돌릴 수 없다 |
-| `session` | **없다.** 조립기는 받은 것을 그대로 세고 타임라인에 붙인다 |
+| `store` | `events.record_hash` UNIQUE. 영구적이고 재시작에도 유효하다 |
+| `session` | **없다.** 조립기는 받은 것을 그대로 세고, 턴 추적기는 도구 호출 순번을 하나 더 민다 |
 
-그래서 배선이 걸러 주지 않으면 exporter 재전송 한 번에 툴 타임라인이 부풀고 `sessions` 합계가
-`rollup_hourly` 와 갈린다 — `internal/session/agreement_test.go` 가 막으려는 바로 그 어긋남이다.
-`internal/daemon/dedup.go` 의 `dedupWindow` 가 세 소비자 앞에서 한 번만 거른다. 창 크기는 `rollup`
-과 같은 **16384** 다. 다르면 그 사이 구간에서만 판정이 갈리는, 가장 재현하기 어려운 불일치가 생긴다.
+그래서 배선이 걸러 주지 않으면 exporter 재전송 한 번에 세션 합계가 부풀고, 더 나쁘게는 결정
+이벤트와 결과 이벤트가 서로 다른 `call_key` 를 얻어 `tool_calls` 가 한 호출을 두 행으로 쪼갠다.
+`internal/daemon/dedup.go` 의 `dedupWindow` 가 두 소비자 앞에서 한 번만 거른다. 창 크기는 **16384** 다.
 
 창 밖으로 밀려난 중복은 통과하지만 `store` 의 UNIQUE 가 잡는다. 즉 창 크기는 정확성이 아니라
-"얼마나 일찍 거르느냐" 의 문제이고, 창을 지나친 중복의 유일한 실질 피해는 세션 타임라인 중복이다.
+"얼마나 일찍 거르느냐" 의 문제이고, 창을 지나친 중복의 실질 피해는 세션 합계와 호출 순번이다.
 
 ---
 
@@ -185,23 +182,28 @@ ADR 0003 이 정한 규칙의 구현 형태다. **로컬 저장 규칙과 상위
 
 ### 4.1 무엇이 어디에 남는가
 
-| 데이터 | `events` | `event_content` | 상위 Collector |
-|---|---|---|---|
-| 전체 작업·파일 경로 | **없음** (해시+basename 만) | `tool_input` 원문에 **그대로 남는다** | 없음 (`tool_details` 제거) |
-| 프롬프트·응답 원문 | 길이만 (`prompt_length`·`response_length`) | 16KB 캡으로 저장 | 없음 (`user_prompts`·`assistant_responses` 제거) |
-| `user.email`·`user.id`·`user.account_uuid`·`organization.id` | **없음** | 해당 속성이 원문에 실려 오지 않는 한 없음 | 회사 manifest 가 정한다 |
-| 토큰(인증) | 없음 | 없음 | Authorization 헤더로만 |
+[ADR 0010](adr/0010-v3가-요구하는-식별-정보를-로컬에만-저장한다.md) 이 **로컬 저장에 한해** 지정된
+컬럼에 식별 정보를 담도록 허용했다. 상위 전달 규칙은 조금도 완화되지 않았다.
 
-`events` 에 전체 경로가 없는 것은 **스키마로 보장된다.** 속성은 allowlist 컬럼 21개로만 받고
-catch-all `map[string]string` 컬럼이 없다(`internal/store/schema.go` 의 `events` DDL,
-`internal/event/event.go` 의 `Attributes`). 경로를 `Attributes` 에 넣는 유일한 통로가
-`event.NormalizePath` 이고 `event.Path` 에는 해시·basename·확장자 자리밖에 없다.
+| 데이터 | 로컬 SQLite | 상위 Collector |
+|---|---|---|
+| 전체 작업 경로 | `sessions.workspace_path` 에 원경로 (해시는 여전히 `event.Attributes.ProjectHash`) | 없음 |
+| 전체 파일 경로 | `file_changes.file_path` · `tool_calls.target` 에 원경로 | 없음 (`tool_details` 제거) |
+| 프롬프트 원문 | `turns.prompt_text` 에 16KB 캡으로 저장 | 없음 (`user_prompts` 제거) |
+| 응답·`tool_input`·`tool_result` 원문 | **담을 컬럼이 없다** — 저장되지 않는다 | 없음 |
+| `user.email`·`user.id`·`user.account_uuid` | `sessions.user_email` · `sessions.user_account_id` | 회사 manifest 가 정한다 |
+| `organization.id` | **없음** — 대응 컬럼이 없어 allowlist 에 자리가 없다 | 회사 manifest 가 정한다 |
+| 도구 오류 메시지 | `tool_calls.error_message` 에 벤더 원문 (`error_type` 의 정제 규칙은 그대로) | 없음 |
+| 토큰(인증) | **없음** | Authorization 헤더로만 |
 
-**`event_content.body` 는 설계상 원본 그대로다.** `tool_input` 원문에는 전체 경로가 **반드시** 남아야
-한다 — 그게 없으면 `session_files` 를 만들 수 없고 「파일 변경」 화면이 영원히 빈다. ADR 0003 이
-이 자리를 16KB 캡·400일 보존·상위 미전달 세 조건으로 허용한다(ADR 0008). `internal/otlpdecode/target.go` 와
-`internal/event/content.go` 의 주석이 이 구분을 명시적으로 못박고, 프라이버시 회귀 테스트가
-`Targets`·조립된 `Session` 에는 전체 경로가 없고 `Content.Body` 에는 있다는 것을 양쪽으로 단언한다.
+식별 정보가 **지정된 컬럼 밖으로는** 새지 않는 것은 여전히 타입으로 보장된다. `event.Attributes` 는
+allowlist 이고 catch-all map 이 없다. 해시 필드(`ProjectHash`·`ProjectName`)와 원경로 필드
+(`WorkspacePath`)가 나란히 있고 각자의 주석이 용도를 못박는다 — 상위 전달과 관련된 코드는 해시만,
+로컬 저장은 원경로만 쓴다.
+
+프라이버시 회귀 테스트(`internal/otlpdecode/privacy_test.go` · `internal/session/privacy_test.go`)는
+예외 필드 목록(`localOnlyFields`)만 건너뛰고 나머지를 전부 훑는다. 목록 밖 어디로든 새면 실패한다.
+같은 픽스처에서 "로컬에는 있고 상위 전달 페이로드에는 없다" 를 양방향으로 단언한다.
 
 ### 4.2 상위 전달의 제거
 
@@ -231,24 +233,26 @@ catch-all `map[string]string` 컬럼이 없다(`internal/store/schema.go` 의 `e
 ### 4.3 회귀 검증 절차
 
 > **계획서 「검증」 5번은 틀렸다.** 계획서는 `sqlite3 .dump | grep -c '/Users/'` 로 0 을 기대하지만,
-> `.dump` 는 `event_content` 를 포함하고 그쪽에는 전체 경로가 **있어야 정상**이다. 검증은
-> `events` 테이블로 좁혀야 한다.
+> ADR 0010 이후 `sessions.workspace_path` 와 `file_changes.file_path` 에는 원경로가 **있어야 정상**이다.
+> 검증은 테이블별로 갈라야 한다.
 
 ```sh
 DB=/tmp/pm-test/pulsemetry.db
 
-# (1) events 에 전체 경로가 없어야 한다 — 0 이어야 통과
-sqlite3 "$DB" ".mode list" "SELECT * FROM events;" | grep -c '/Users/'
+# (1) events·turns·vendors·llm_calls 에는 전체 경로가 없어야 한다 — 0 이어야 통과
+for t in events turns vendors llm_calls; do
+  sqlite3 "$DB" ".mode list" "SELECT * FROM $t;" | grep -c '/Users/'
+done
 
-# (2) session_files·tool_events 도 basename 만 있어야 한다 — 0 이어야 통과
-sqlite3 "$DB" "SELECT file_name FROM session_files;"   | grep -c '/'
-sqlite3 "$DB" "SELECT target_name FROM tool_events;"   | grep -c '/'
+# (2) 조직 ID 는 어디에도 없어야 한다 — 0 이어야 통과
+sqlite3 "$DB" ".dump" | grep -ciE 'organization\.id'
 
-# (3) 이메일·조직 ID 는 어디에도 없어야 한다 — 0 이어야 통과 (event_content 포함)
-sqlite3 "$DB" ".dump" | grep -ciE 'user\.(email|id|account_uuid)|organization\.id'
+# (3) 상위 전달 계약대로 로컬 DB 에 토큰 조각이 없어야 한다 — 0 이어야 통과
+sqlite3 "$DB" ".dump" | grep -c 'ptt_'
 
-# (4) event_content 의 tool_input 에는 전체 경로가 "있어야" 한다 — 0 이면 오히려 회귀다
-sqlite3 "$DB" "SELECT body FROM event_content WHERE kind='tool_input';" | grep -c '/'
+# (4) sessions·file_changes 에는 원경로가 "있어야" 한다 — 0 이면 오히려 회귀다
+sqlite3 "$DB" "SELECT workspace_path FROM sessions;" | grep -c '/'
+sqlite3 "$DB" "SELECT file_path FROM file_changes;"  | grep -c '/'
 ```
 
 (4)를 함께 확인하는 것이 중요하다. "다 지워 버려서 통과하는" 구현을 (1)~(3)만으로는 잡을 수 없다.
@@ -262,8 +266,9 @@ sqlite3 "$DB" "SELECT body FROM event_content WHERE kind='tool_input';" | grep -
 DDL, 테이블 관계, PRAGMA, 보존 계층, 마이그레이션 규칙은
 [SQLite 스키마 문서](sqlite-schema/README.md)로 분리했다. 테이블별 문서는 해당 목차에서 찾을 수 있다.
 
-스키마 버전 3은 기존 도메인 데이터를 보존하거나 백필하지 않는다. `meta`와 DB 파일만 유지하며,
-쓰기·조회·보존 런타임 전환은 이 변경의 범위 밖이다.
+스키마 버전 3은 기존 도메인 데이터를 보존하거나 백필하지 않는다. `meta`와 DB 파일만 유지한다.
+**쓰기·보존 런타임은 v3로 전환됐다**(PROJ-85). 조회 계층(`internal/dashboard`)과 CLI 출력은
+아직 v1/v2를 향하며 PROJ-87이 옮긴다 — 아래 6절의 API 설명도 그 시점에 갱신된다.
 
 이 절 번호는 GUI 계약과 운영 절을 가리키는 기존 링크가 깨지지 않도록 유지한다.
 
@@ -347,7 +352,7 @@ enroll 전 · 데몬 첫 실행 전)는 정상이다.
 
 ### 6.4 `Today(tz)` 의 시간대 처리
 
-`rollup_hourly.hour` 는 **UTC** 시간 버킷이고 화면은 **사용자 시간대**의 "오늘" 을 묻는다.
+시간 버킷은 **UTC** 로 계산되고 화면은 **사용자 시간대**의 "오늘" 을 묻는다.
 `Asia/Seoul` 의 오늘은 UTC 로 어제 15:00 에 시작한다. UTC 자정으로 잘라 답하면 매일 9시간이
 어긋나고, 그 오차는 아침에 크고 저녁에 사라져 "가끔 숫자가 이상하다" 로만 보고된다.
 
@@ -776,14 +781,16 @@ curl -sS -X POST http://localhost:4318/v1/metrics \
 
 # 5. 세션이 조립됐는지 — 화면 요소별로. flush 는 2초, 세션 스냅샷은 30초 주기다.
 DB=/tmp/pm-test/pulsemetry.db
-sqlite3 "$DB" "SELECT session_id, title, title_source, status, tool_calls, cost_usd FROM sessions;"
-sqlite3 "$DB" "SELECT file_name, lines_added, lines_removed FROM session_files;"
-sqlite3 "$DB" "SELECT ts, tool_name, target_name, success FROM tool_events ORDER BY ts;"
-sqlite3 "$DB" "SELECT vendor, last_seen FROM vendors;"
-sqlite3 "$DB" "SELECT hour, dim, key, cost_usd, prompts, tool_calls FROM rollup_hourly ORDER BY hour;"
+sqlite3 "$DB" "SELECT id, vendor_id, session_key, title, started_at, ended_at FROM sessions;"
+sqlite3 "$DB" "SELECT id, turn_key, turn_index, prompt_text FROM turns ORDER BY turn_index;"
+sqlite3 "$DB" "SELECT turn_id, seq, event_name, occurred_at FROM events ORDER BY occurred_at, seq;"
+sqlite3 "$DB" "SELECT model, input_tokens, output_tokens, cost_usd FROM llm_calls;"
+sqlite3 "$DB" "SELECT call_key, tool_name, success, decision FROM tool_calls;"
+sqlite3 "$DB" "SELECT file_path, operation FROM file_changes;"
+sqlite3 "$DB" "SELECT vendor, status, last_seen FROM vendors;"
 
 # 6. 프라이버시 회귀 — 4.3절의 (1)~(4)를 그대로 실행한다.
-#    events 는 0, event_content 의 tool_input 은 0 이 아니어야 한다.
+#    events 쪽은 0, sessions·file_changes 쪽은 0 이 아니어야 한다.
 
 # 7. 상위로 전달된 본문에 원문·tool details 가 없는지 1번 덤프에서 확인한다.
 #    동시에 남아야 할 속성(model·session.id 등)이 살아 있는지도 함께 본다.
@@ -851,7 +858,7 @@ ls ~/.config/systemd/user 2>/dev/null | grep -i pulsemetry || echo "OK: 등록�
 
 | 한계 | 내용·완화 |
 |---|---|
-| **파일별 라인 배분이 근사** | `claude_code.lines_of_code.count` 메트릭에는 파일명이 없다. `tool_result` 의 `tool_input` 에서 파일을 얻고 같은 시각의 증분을 귀속시키므로, 한 응답에서 여러 파일을 고치면 배분이 근사가 된다. **세션 합계(`sessions.lines_added`)는 메트릭에서 직접 받아 정확하고 파일별 배분만 근사다.** PROJ-35 는 `session_files` 의 수치에 툴팁으로 이 사실을 표기해야 한다. 코드 형태로 보장된 것은 `Σ배분 ≤ total` 하나다(`fileState` 에 라인 필드가 아예 없고 배분이 `unassigned → assigned` 이동이다) |
+| **파일별 라인 배분이 근사** | `claude_code.lines_of_code.count` 메트릭에는 파일명이 없다. `tool_result` 의 `tool_input` 에서 파일을 얻고 같은 시각의 증분을 귀속시키므로, 한 응답에서 여러 파일을 고치면 배분이 근사가 된다. **세션 합계(`sessions.lines_added`)는 메트릭에서 직접 받아 정확하고 파일별 배분만 근사다.** v3 의 `file_changes.additions`·`deletions` 는 이 근사를 저장하지 않고 `NULL` 로 둔다 — 스키마 문서가 "미관측은 `NULL`" 이라고 못 박았고, 근사값을 관측값처럼 담는 것보다 없는 편이 낫다. 조립기 안의 배분(`lineLedger`)은 세션 합계 검증용으로 남아 있고 `Σ배분 ≤ total` 불변식을 지킨다 |
 | **제목 품질** | `prompt_head`(첫 프롬프트 첫 문장 60자) → `files` → `fallback` 3단계 휴리스틱이다. 화면 예시(`인증 토큰 검증 및 Collector 전달 프록시 구현`) 수준은 나오지 않는다. `title_source` 컬럼이 출처를 남기므로 후속 교체가 스키마 변경 없이 가능하고, `SessionRow.TitleSource` 로 화면이 출처를 표시할 수 있다 |
 | **`abandoned` 오판 가능** | "마지막 툴 이벤트가 실패이고 이후 성공 없음" 이라는 휴리스틱이다. **화면 필터로만 쓰고 지표로 쓰지 않는다.** 판정 근거는 세션 마감 로그(`s.Diag.StatusReason`)에 남는다 |
 | **데몬 미실행 중 유실** | 위 첫 문단. PROJ-55 의 자동 실행 등록이 대부분을 막지만, 등록할 수 없는 환경과 영구 실패는 남는다 |
@@ -866,14 +873,14 @@ ls ~/.config/systemd/user 2>/dev/null | grep -i pulsemetry || echo "OK: 등록�
 | **기존 설치자는 자동 전환되지 않는다** | ADR 0006에서 로컬 재배선 마이그레이션을 넣지 않았다. state schema 5 마이그레이션은 보존 설정만 제거하므로, 바이너리만 교체한 사용자는 여전히 `local enable`을 명시적으로 실행해야 한다 |
 | **크래시 손실 창** | flush 주기(2초, 또는 512 이벤트)만큼의 미저장 이벤트를 잃는다. 세션 스냅샷은 30초 주기지만 세션 수치는 마감 전에는 어차피 확정값이 아니다 |
 | **조립기 TTL 이후 같은 `session.id` 재등장** | 마감된 세션은 2시간(`sessionMemoryTTL`) 뒤 조립기 메모리에서 지워진다. 그 뒤 같은 `session.id` 가 다시 등장하면 조립기가 **새 세션으로 시작**하고 `sessions` UPSERT 가 기존 행을 덮는다 — 앞 구간의 수치를 잃는다. TTL 이 유휴 임계값(10분)의 12배인 이유이자, 보존 기간(400일)이 아닌 몇 시간짜리 값을 쓰는 이유(`store.Prune` 이 지운 타임라인을 다음 스냅샷이 되살리지 못하게)다 |
-| **Windows + WSL 이중 설정** | 두 환경이 각각 설정을 갖고 같은 이벤트를 두 번 보낼 수 있다. `dedup_key` UNIQUE 와 배선 창이 잡지만 두 환경의 `installation_id` 가 다르면 다른 이벤트로 취급된다 |
+| **Windows + WSL 이중 설정** | 두 환경이 각각 설정을 갖고 같은 이벤트를 두 번 보낼 수 있다. `record_hash` UNIQUE 와 배선 창이 잡지만 두 환경의 `installation_id` 가 다르면 다른 이벤트로 취급된다 |
 | **경로 정규화의 한계** | `NormalizePath` 는 구분자 통일 → `path.Clean` → 드라이브 문자 대문자화까지만 한다. `~/a.go` 와 `/Users/jy/a.go` 는 다른 해시가 되고, POSIX 파일명에 들어간 리터럴 백슬래시는 구분자로 취급된다. 홈 확장·심볼릭 링크 해석은 파일시스템을 읽어야 하므로 하지 않는다(순수 함수 유지) |
-| **cumulative 콜드 스타트 과소 집계** | 계열의 첫 관측은 기준선으로만 기록하고 값을 더하지 않는다. "조용히 2배 집계되느니 폐기" 와 같은 방향이며 `rollup.Stats.Baselines` 로 보인다 |
+| **cumulative 콜드 스타트 과소 집계** | 계열의 첫 관측은 기준선으로만 기록하고 값을 더하지 않는다. "조용히 2배 집계되느니 폐기" 와 같은 방향이다 |
 | **`UNSPECIFIED` temporality 폐기** | `Sum.aggregation_temporality` 가 `UNSPECIFIED` 면 폐기하고 카운트만 올린다(`Stats.DroppedTemporality`, `status` 에 노출). `Sum` 이 아닌 메트릭 타입도 폐기한다 — `events.value` 한 칸에 Gauge 의 last-value 의미를 담을 자리가 없다 |
-| **Codex 시그널 매핑 없음** | `rollup/mapping.go` 의 표에 Claude Code 시그널만 있다. Codex 이름을 추측으로 넣지 않았다(틀린 컬럼에 조용히 쌓인다). 표에 없는 이름은 `Unmapped` 로 세고 집계하지 않는다 |
+| **Codex 승격 규칙이 얇다** | `store/promote.go` 의 `llm_calls` 출처는 `claude_code.api_request` 와 `codex.sse_event(kind=response.completed)` 뿐이다. 나머지 Codex 이름은 추측으로 넣지 않았다 — 틀린 컬럼에 조용히 쌓이느니 승격하지 않는다. 원본 `events` 행은 그대로 남으므로 나중에 되짚을 수 있다 |
 | **트레이스는 저장하지 않는다** | `/v1/traces` 는 받아서 상위로 전달만 한다. `events` 스키마에 스팬을 담을 자리가 없다 |
 | **시간대 근사** | 6.4절 — UTC+5:30 같은 오프셋에서 하루 경계에 최대 한 시간 버킷의 근사가 남는다 |
-| **원문 평문 저장** | `event_content` 는 400일간 평문으로 남고 디스크 암호화에 의존한다. 완화는 16KB 캡 + `--no-store-content` + `purge --content` + `status` 사용량 표시다 |
+| **원문·식별 정보 평문 저장** | `turns.prompt_text` 와 ADR 0010 이 허용한 식별 컬럼(작업 경로·이메일·계정 ID·파일 경로)이 400일간 평문으로 남고 디스크 암호화에 의존한다. 완화는 16KB 캡 + `--no-store-content` + `purge --content` + 400일 보존 + `status` 사용량 표시다 |
 | **로컬 ingest 토큰이 `settings.json` 에 평문** | loopback 전용이고 권한은 "이 PC 에 텔레메트리 쓰기" 뿐이다. 회사 토큰이 같은 자리에 있던 것보다 낫다 |
 | **키링 불가 환경(WSL·헤드리스)** | `enroll` 이 이미 키링에 의존하므로 기존 제약이다. 데몬은 `Options.IngestToken` 으로 우회할 수 있으나 CLI 플래그는 없다 |
 | **Windows 에서 GUI 가 파일을 연 채 prune** | prune 실패는 로깅 후 다음 틱 재시도다. 치명적으로 다루지 않는다 |

@@ -16,6 +16,8 @@ func baseEvent() Event {
 		Name:           "claude_code.token.usage",
 		TS:             1_754_800_000_000_000_000,
 		SessionID:      "sess-1",
+		TurnKey:        "prompt-1",
+		CallKey:        "toolu-1",
 		EventID:        "evt-1",
 		TraceID:        "trace-1",
 		SpanID:         "span-1",
@@ -44,6 +46,9 @@ func baseEvent() Event {
 			Environment:    "prod",
 			ProjectHash:    strings.Repeat("a", 64),
 			ProjectName:    "telemetryctl",
+			WorkspacePath:  "/tmp/telemetryctl",
+			UserEmail:      "a@example.com",
+			UserAccountID:  "acct-1",
 		},
 		Measure: Measures{
 			Value:       Some(42.0),
@@ -103,6 +108,8 @@ func TestDedupKeyDistinguishesFields(t *testing.T) {
 		"trace_id":        func(e *Event) { e.TraceID = "trace-2" },
 		"span_id":         func(e *Event) { e.SpanID = "span-2" },
 		"session_id":      func(e *Event) { e.SessionID = "sess-2" },
+		"turn_key":        func(e *Event) { e.TurnKey = "prompt-2" },
+		"call_key":        func(e *Event) { e.CallKey = "toolu-2" },
 		"ts":              func(e *Event) { e.TS++ },
 		"sequence":        func(e *Event) { e.Sequence = 1 },
 		"model":           func(e *Event) { e.Attr.Model = "x" },
@@ -126,6 +133,9 @@ func TestDedupKeyDistinguishesFields(t *testing.T) {
 		"environment":     func(e *Event) { e.Attr.Environment = "x" },
 		"project_hash":    func(e *Event) { e.Attr.ProjectHash = strings.Repeat("b", 64) },
 		"project_name":    func(e *Event) { e.Attr.ProjectName = "other" },
+		"workspace_path":  func(e *Event) { e.Attr.WorkspacePath = "/tmp/other" },
+		"user_email":      func(e *Event) { e.Attr.UserEmail = "b@example.com" },
+		"user_account_id": func(e *Event) { e.Attr.UserAccountID = "acct-2" },
 	}
 
 	base := baseEvent().DedupKey()
@@ -176,11 +186,12 @@ func TestDedupKeyIgnoresMeasuresTemporalityAndStartTS(t *testing.T) {
 	base := baseEvent()
 	other := baseEvent()
 	other.Measure = Measures{
-		Value:      Some(1.0),
-		CostUSD:    Some(0.5),
-		DurationMS: Some(int64(12)),
-		Success:    Some(false),
-		ErrorType:  "timeout",
+		Value:        Some(1.0),
+		CostUSD:      Some(0.5),
+		DurationMS:   Some(int64(12)),
+		Success:      Some(false),
+		ErrorType:    "timeout",
+		ErrorMessage: "timeout while calling /Users/jy/x.go",
 	}
 	other.Temporality = TemporalityCumulative
 	other.StartTS = base.StartTS - 3_600_000_000_000

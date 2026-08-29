@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -32,6 +33,9 @@ const (
 	fixtureEmail   = "kjy02927@gmail.com"
 	fixtureOrgID   = "org_01HXYZQ7K3M9V2"
 	fixturePath    = "/Users/jy/dev/projects/soma-376/telemetryctl"
+	// fixtureFilePath 는 Edit 툴의 tool_input 에 담긴 대상 파일이다.
+	// file_changes.file_path 가 이 값 그대로여야 한다 (ADR 0010).
+	fixtureFilePath = fixturePath + "/internal/otlpdecode/decode.go"
 
 	// fixtureNow 는 픽스처의 마지막 이벤트보다 뒤이면서 유휴 임계값(10분) 안쪽인 시각이다.
 	// 시계를 주입해야 세션 마감과 보존 정책이 벽시계에 의존하지 않는다.
@@ -329,7 +333,33 @@ func countRows(t *testing.T, db *sql.DB, query string, args ...any) int {
 	return n
 }
 
-// dumpText 는 테이블 하나를 문자열로 이어 붙인다. 전체 경로·이메일 부재 단언에 쓴다.
+// assertNoOrphans 는 v3 의 외래 키가 전부 지켜졌는지 본다.
+// NO ACTION 이라 CASCADE 가 정리해 주지 않으므로 순서를 한 번만 틀려도 고아가 남는다.
+func assertNoOrphans(t *testing.T, db *sql.DB) {
+	t.Helper()
+	rows, err := db.Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		t.Fatalf("PRAGMA foreign_key_check: %v", err)
+	}
+	defer rows.Close()
+
+	var found []string
+	for rows.Next() {
+		var table, rowid, parent, fkid any
+		if err := rows.Scan(&table, &rowid, &parent, &fkid); err != nil {
+			t.Fatalf("foreign_key_check 읽기: %v", err)
+		}
+		found = append(found, fmt.Sprintf("%v(rowid=%v) → %v", table, rowid, parent))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("foreign_key_check: %v", err)
+	}
+	if len(found) > 0 {
+		t.Fatalf("외래 키 위반 %d건: %v", len(found), found)
+	}
+}
+
+// dumpText 는 테이블 하나를 문자열로 이어 붙인다. 식별 정보 부재·존재 단언에 쓴다.
 func dumpText(t *testing.T, db *sql.DB, table string) string {
 	t.Helper()
 	rows, err := db.Query("SELECT * FROM " + table)

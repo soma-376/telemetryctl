@@ -32,7 +32,7 @@ func seedSearch(f *fixture) {
 			s.Title = "다른 작업"
 		}),
 	}
-	f.write(store.Batch{
+	f.write(testBatch{
 		Sessions: sessions,
 		Events: []store.EventRecord{
 			prompt("s-content", testNow.Add(-time.Hour), 1, "인증 토큰 검증 및 프록시 경유 전달을 구현해줘"),
@@ -86,7 +86,7 @@ func TestSearchCoversThreeSources(t *testing.T) {
 func TestSearchMergesSourcesPerSession(t *testing.T) {
 	f := newFixture(t)
 	sec := event.SecFromTime(testNow.Add(-time.Hour))
-	f.write(store.Batch{
+	f.write(testBatch{
 		Sessions: []session.Session{
 			newSession("s-all", testNow.Add(-time.Hour), func(s *session.Session) {
 				s.Title = "프록시 구현"
@@ -167,7 +167,7 @@ func TestSearchSurvivesFTSMetacharacters(t *testing.T) {
 // 연산자처럼 보이는 낱말은 낱말로 취급돼야 한다.
 func TestSearchTreatsOperatorsAsWords(t *testing.T) {
 	f := newFixture(t)
-	f.write(store.Batch{
+	f.write(testBatch{
 		Sessions: []session.Session{newSession("s-op", testNow.Add(-time.Hour))},
 		Events: []store.EventRecord{
 			prompt("s-op", testNow.Add(-time.Hour), 1, "AND 게이트 회로를 설명해줘"),
@@ -187,7 +187,7 @@ func TestSearchTreatsOperatorsAsWords(t *testing.T) {
 // 접두 검색 — 검색창은 타이핑 중에도 결과를 보여야 한다.
 func TestSearchMatchesPrefix(t *testing.T) {
 	f := newFixture(t)
-	f.write(store.Batch{
+	f.write(testBatch{
 		Sessions: []session.Session{newSession("s-prefix", testNow.Add(-time.Hour))},
 		Events: []store.EventRecord{
 			prompt("s-prefix", testNow.Add(-time.Hour), 1, "Collector 전달 프록시 구현"),
@@ -206,7 +206,7 @@ func TestSearchMatchesPrefix(t *testing.T) {
 // LIKE 의 와일드카드가 이스케이프되지 않으면 `_` 가 "아무 글자 하나" 로 읽혀 엉뚱한 세션이 걸린다.
 func TestSearchEscapesLikeWildcards(t *testing.T) {
 	f := newFixture(t)
-	f.write(store.Batch{Sessions: []session.Session{
+	f.write(testBatch{Sessions: []session.Session{
 		newSession("s-a", testNow.Add(-2*time.Hour), func(s *session.Session) { s.Title = "a_b 처리" }),
 		newSession("s-b", testNow.Add(-time.Hour), func(s *session.Session) { s.Title = "axb 처리" }),
 	}})

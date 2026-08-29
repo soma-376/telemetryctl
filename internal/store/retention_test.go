@@ -5,276 +5,155 @@ import (
 	"testing"
 	"time"
 
-	"github.com/your-org/pulsemetry/internal/event"
-	"github.com/your-org/pulsemetry/internal/rollup"
 	"github.com/your-org/pulsemetry/internal/session"
 )
 
-const day = 24 * time.Hour
+// 보존 정책의 세부(경계·계수·purge 옵션)는 PROJ-86 의 몫이다. 여기서는 v3 계층에 대해
+// 삭제 순서가 성립하고 최근 데이터가 살아남는다는 것만 고정한다.
 
-// seedRetention 은 단일 400일 컷오프 양쪽을 걸치는 데이터를 넣는다.
-// now 기준 상대 시각으로만 만들어 경계 판정이 벽시계에 의존하지 않는다.
+// seedRetention 은 컷오프 바깥(오래된) 세션과 안쪽(최근) 세션을 하나씩 넣는다.
 func seedRetention(t *testing.T, db *DB, now time.Time) {
 	t.Helper()
-	ctx := context.Background()
+	old := now.Add(-(DefaultRetentionDays + 10) * 24 * time.Hour)
+	const path = "/Users/jy/dev/projects/soma-376/telemetryctl/internal/store/write.go"
 
-	ages := []time.Duration{1 * day, 399 * day, 401 * day}
-	var (
-		recs     []EventRecord
-		sessions []session.Session
-		rollups  []rollup.Row
-	)
-	for i, age := range ages {
-		at := now.Add(-age)
-		ev := newEvent("claude_code.user_prompt", at, i)
-		ev.SessionID = sessionIDFor(i)
-		recs = append(recs, EventRecord{
-			Event:    ev,
-			Contents: []event.Content{{Kind: event.ContentPrompt, Body: "토큰 검증 로직을 고쳐줘"}},
-		})
+	oldSession := newSession("sess-old", old)
+	oldSession.EndedAt = someSec(oldSession.StartedAt + 60)
 
-		s := newSession(sessionIDFor(i), at)
-		sessions = append(sessions, s)
+	mustWrite(t, db, Batch{
+		Sessions: []session.Session{oldSession, newSession("sess-new", now)},
+		Events: []EventRecord{
+			evrec("claude_code.user_prompt", old, 0,
+				sess("sess-old"), inTurn("p-old"), promptBody("오래된 프롬프트")),
+			evrec("claude_code.api_request", old, 1, sess("sess-old"), inTurn("p-old"), cost(1)),
+			evrec("claude_code.tool_result", old, 2,
+				sess("sess-old"), inTurn("p-old"), call("claude_code:old-1"), toolName("Edit"),
+				succeeded(true), targetPath(path), fileChange(session.OperationModify, path)),
 
-		r := rollup.Row{Hour: event.HourOf(event.NanoFromTime(at)), Dim: rollup.DimTotal}
-		r.CostUSD = 1
-		rollups = append(rollups, r)
-	}
-
-	// vendors 는 이벤트에서 파생되므로 가장 오래된 이벤트가 first_seen, 최신이 last_seen 이다.
-	if _, err := db.Write(ctx, Batch{Events: recs, Sessions: sessions, Rollups: rollups}); err != nil {
-		t.Fatalf("시드 Write: %v", err)
-	}
-	for i, age := range ages {
-		at := now.Add(-age).Unix()
-		id := sessionIDFor(i)
-		if _, err := db.SQL().ExecContext(ctx, `
-			INSERT INTO turns (session_id, turn_index, started_at, last_event_at)
-			VALUES (?, 1, ?, ?)`, id, at, at); err != nil {
-			t.Fatalf("turns 시드: %v", err)
-		}
-		if _, err := db.SQL().ExecContext(ctx, `
-			INSERT INTO session_phases
-			  (session_id, phase_index, phase_type, start_turn_index, end_turn_index, started_at, last_event_at, turn_count)
-			VALUES (?, 1, 'implementation', 1, 1, ?, ?, 1)`, id, at, at); err != nil {
-			t.Fatalf("session_phases 시드: %v", err)
-		}
-	}
+			evrec("claude_code.user_prompt", now, 0,
+				sess("sess-new"), inTurn("p-new"), promptBody("최근 프롬프트")),
+		},
+	})
 }
 
-func sessionIDFor(i int) string { return []string{"fresh", "mid", "ancient"}[i] }
-
-// 모든 로컬 데이터가 같은 400일 보존 기간을 따르는지 검사한다.
-func TestPruneUsesUnifiedRetention(t *testing.T) {
+func TestPruneRemovesOldLayersInOrder(t *testing.T) {
 	db := openTestDB(t)
-	ctx := context.Background()
-	now := baseTime
-	seedRetention(t, db, now)
-
-	res, err := db.Prune(ctx, now)
-	if err != nil {
-		t.Fatalf("Prune: %v", err)
-	}
-
-	// 401일 된 이벤트와 원문만 사라진다.
-	if res.Events != 1 || res.EventContent != 1 {
-		t.Errorf("이벤트 삭제 = %d/%d, want 1/1", res.Events, res.EventContent)
-	}
-	if n := countRows(t, db, "events"); n != 2 {
-		t.Errorf("events = %d행, want 2", n)
-	}
-
-	// 401일 된 세션과 종속 데이터도 함께 사라진다.
-	if res.Sessions != 1 {
-		t.Errorf("sessions 삭제 = %d, want 1", res.Sessions)
-	}
-
-	// 399일 된 데이터는 이벤트·원문·타임라인·세션 모두 온전하다.
-	if n := countWhere(t, db, "sessions", "session_id = 'mid'"); n != 1 {
-		t.Fatalf("399일 된 세션이 사라졌다")
-	}
-	if n := countWhere(t, db, "session_files", "session_id = 'mid'"); n != 1 {
-		t.Errorf("399일 된 세션의 파일 목록이 사라졌다")
-	}
-	if n := countWhere(t, db, "tool_events", "session_id = 'mid'"); n != 2 {
-		t.Errorf("399일 된 세션의 툴 타임라인 = %d행, want 2", n)
-	}
-	if n := countWhere(t, db, "events", "session_id = 'mid'"); n != 1 {
-		t.Errorf("399일 된 세션의 이벤트 = %d행, want 1", n)
-	}
-	if n := countWhere(t, db, "event_content", "event_id IN (SELECT id FROM events WHERE session_id = 'mid')"); n != 1 {
-		t.Errorf("399일 된 세션의 원문 = %d행, want 1", n)
-	}
-	// 수치도 남아 있어야 Today·Activity 의 세션 카드가 계속 보인다.
-	var toolCalls int64
-	if err := db.SQL().QueryRowContext(ctx,
-		`SELECT tool_calls FROM sessions WHERE session_id = 'mid'`).Scan(&toolCalls); err != nil {
-		t.Fatalf("sessions 조회: %v", err)
-	}
-	if toolCalls != 2 {
-		t.Errorf("31일 된 세션의 tool_calls = %d, want 2", toolCalls)
-	}
-
-	// 1일 된 것은 전부 온전하다.
-	for _, table := range []string{"session_files", "tool_events"} {
-		if n := countWhere(t, db, table, "session_id = 'fresh'"); n == 0 {
-			t.Errorf("1일 된 세션의 %s 가 사라졌다", table)
-		}
-	}
-}
-
-// 세션 계층 삭제는 CASCADE 로 종속 테이블을 정리한다.
-func TestPruneSessionCascade(t *testing.T) {
-	db := openTestDB(t)
-	now := baseTime
-	seedRetention(t, db, now)
-
-	res, err := db.Prune(context.Background(), now)
-	if err != nil {
-		t.Fatalf("Prune: %v", err)
-	}
-	if res.Turns != 1 || res.SessionPhases != 1 || res.SessionFiles != 1 || res.MCPUsage != 1 {
-		t.Errorf("CASCADE 계수 = %d/%d/%d/%d, want 1/1/1/1",
-			res.Turns, res.SessionPhases, res.SessionFiles, res.MCPUsage)
-	}
-	for _, table := range []string{"turns", "session_phases", "session_files", "mcp_session_usage", "tool_events"} {
-		if n := countWhere(t, db, table, "session_id = 'ancient'"); n != 0 {
-			t.Errorf("401일 된 세션의 %s 가 %d행 남았다 — CASCADE 가 동작하지 않았다", table, n)
-		}
-	}
-	// 고아 확인
-	if n := countWhere(t, db, "session_files", "session_id NOT IN (SELECT session_id FROM sessions)"); n != 0 {
-		t.Errorf("고아 session_files %d행", n)
-	}
-}
-
-func TestPruneRollupAndVendors(t *testing.T) {
-	db := openTestDB(t)
-	now := baseTime
-	seedRetention(t, db, now)
-
-	res, err := db.Prune(context.Background(), now)
-	if err != nil {
-		t.Fatalf("Prune: %v", err)
-	}
-	if res.RollupHourly != 1 {
-		t.Errorf("rollup_hourly 삭제 = %d, want 1 (401일 된 버킷만)", res.RollupHourly)
-	}
-	if n := countRows(t, db, "rollup_hourly"); n != 2 {
-		t.Errorf("rollup_hourly = %d행, want 2", n)
-	}
-	// last_seen 이 1일 전이라 400일 컷오프에 걸리지 않는다.
-	if res.Vendors != 0 || countRows(t, db, "vendors") != 1 {
-		t.Errorf("vendors 가 잘못 지워졌다 (삭제 %d행)", res.Vendors)
-	}
-}
-
-// 컷오프 경계를 정확히 지키는지 본다 — 경계 직전은 살고 경계 직후는 죽는다.
-func TestPruneCutoffBoundary(t *testing.T) {
-	db := openTestDB(t)
-	ctx := context.Background()
-	now := baseTime
-
-	cutoff := now.Add(-DefaultRetentionDays * day)
-	tests := []struct {
-		name string
-		at   time.Time
-		kept bool
-	}{
-		{"컷오프 1초 전", cutoff.Add(-time.Second), false},
-		{"컷오프 정각", cutoff, true},
-		{"컷오프 1초 후", cutoff.Add(time.Second), true},
-	}
-	for i, tc := range tests {
-		if _, err := db.Write(ctx, Batch{Events: []EventRecord{{Event: newEvent("claude_code.user_prompt", tc.at, i)}}}); err != nil {
-			t.Fatalf("%s Write: %v", tc.name, err)
-		}
-	}
-
-	if _, err := db.Prune(ctx, now); err != nil {
-		t.Fatalf("Prune: %v", err)
-	}
-	for i, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			n := countWhere(t, db, "events", "ts = ?", int64(event.NanoFromTime(tests[i].at)))
-			if want := boolToInt(tc.kept); n != want {
-				t.Fatalf("남은 행 = %d, want %d", n, want)
-			}
-		})
-	}
-}
-
-func boolToInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
-
-// prune 실패는 치명적이지 않아야 한다 (계획서 리스크 표). 트랜잭션 하나라 실패해도
-// 부분 삭제가 남지 않고 다음 틱 재시도가 안전하다.
-func TestPruneIsRepeatable(t *testing.T) {
-	db := openTestDB(t)
-	ctx := context.Background()
 	seedRetention(t, db, baseTime)
 
-	first, err := db.Prune(ctx, baseTime)
+	res, err := db.Prune(context.Background(), baseTime)
 	if err != nil {
-		t.Fatalf("첫 Prune: %v", err)
+		t.Fatalf("Prune: %v", err)
 	}
-	if first.Total() == 0 {
-		t.Fatal("첫 Prune 이 아무것도 지우지 않았다")
+	if res.Total() == 0 {
+		t.Fatal("아무것도 지우지 않았다")
 	}
-	second, err := db.Prune(ctx, baseTime)
-	if err != nil {
-		t.Fatalf("두번째 Prune: %v", err)
+	if res.Sessions != 1 || res.Turns != 1 || res.Events != 3 {
+		t.Fatalf("PruneResult = %+v", res)
 	}
-	if second.Total() != 0 {
-		t.Fatalf("두번째 Prune 이 %d행을 더 지웠다", second.Total())
+	if res.FileChanges != 1 || res.ToolCalls != 1 || res.LLMCalls != 1 {
+		t.Fatalf("승격 계층이 안 지워졌다: %+v", res)
+	}
+	assertNoOrphans(t, db)
+
+	// 최근 세션은 그대로다.
+	if n := countWhere(t, db, "sessions", "session_key = 'sess-new'"); n != 1 {
+		t.Fatal("최근 세션이 지워졌다")
+	}
+	if n := countRows(t, db, "events"); n != 1 {
+		t.Fatalf("events = %d행, want 1", n)
 	}
 }
 
-func TestPurgeContent(t *testing.T) {
+// 같은 컷오프로 두 번 돌려도 안전하다. 실패 시 다음 틱에 그대로 다시 부르는 것이 정상 경로다.
+func TestPruneIsIdempotent(t *testing.T) {
 	db := openTestDB(t)
-	ctx := context.Background()
-	now := baseTime
+	seedRetention(t, db, baseTime)
 
-	for i, age := range []time.Duration{1 * day, 10 * day} {
-		if _, err := db.Write(ctx, Batch{Events: []EventRecord{{
-			Event:    newEvent("claude_code.user_prompt", now.Add(-age), i),
-			Contents: []event.Content{{Kind: event.ContentPrompt, Body: "토큰 검증"}},
-		}}}); err != nil {
-			t.Fatalf("시드 Write: %v", err)
-		}
+	if _, err := db.Prune(context.Background(), baseTime); err != nil {
+		t.Fatalf("첫 Prune: %v", err)
+	}
+	second, err := db.Prune(context.Background(), baseTime)
+	if err != nil {
+		t.Fatalf("두 번째 Prune: %v", err)
+	}
+	if second.Total() != 0 {
+		t.Fatalf("두 번째 Prune 이 %d행을 더 지웠다: %+v", second.Total(), second)
+	}
+}
+
+// 세션이 아직 남아 있는 벤더는 지우지 않는다. sessions.vendor_id 가 NO ACTION 이라
+// 지우는 순간 외래 키 위반이다.
+func TestPruneKeepsVendorWithLiveSessions(t *testing.T) {
+	db := openTestDB(t)
+	seedRetention(t, db, baseTime)
+
+	if _, err := db.Prune(context.Background(), baseTime); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if n := countRows(t, db, "vendors"); n != 1 {
+		t.Fatalf("vendors = %d행, want 1 — 살아 있는 세션의 벤더가 지워졌다", n)
+	}
+	assertNoOrphans(t, db)
+}
+
+// 시각이 아예 없는 세션은 판정할 근거가 없으므로 대상이 아니다.
+func TestPruneKeepsSessionsWithoutTimestamps(t *testing.T) {
+	db := openTestDB(t)
+	if _, err := db.SQL().ExecContext(context.Background(),
+		`INSERT INTO vendors (vendor, first_seen, last_seen, status) VALUES ('codex', 1, 2, 'enabled')`); err != nil {
+		t.Fatalf("vendor 삽입: %v", err)
+	}
+	if _, err := db.SQL().ExecContext(context.Background(),
+		`INSERT INTO sessions (vendor_id, session_key) VALUES ('codex', 'sess-x')`); err != nil {
+		t.Fatalf("session 삽입: %v", err)
 	}
 
-	t.Run("--before 는 그 이전 원문만 지운다", func(t *testing.T) {
-		n, err := db.PurgeContent(ctx, now.Add(-5*day))
-		if err != nil {
-			t.Fatalf("PurgeContent: %v", err)
-		}
-		if n != 1 {
-			t.Fatalf("삭제 = %d행, want 1", n)
-		}
-		// events 는 남는다 — 수치와 롤업은 그대로이고 검색만 불가능해진다.
-		if n := countRows(t, db, "events"); n != 2 {
-			t.Errorf("events = %d행, want 2", n)
-		}
-	})
+	if _, err := db.Prune(context.Background(), baseTime); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if n := countRows(t, db, "sessions"); n != 1 {
+		t.Fatal("시각 없는 세션이 지워졌다 — 근거 없이 지우면 되살릴 방법이 없다")
+	}
+}
 
-	t.Run("--before 없으면 전부", func(t *testing.T) {
-		n, err := db.PurgeContent(ctx, time.Time{})
-		if err != nil {
-			t.Fatalf("PurgeContent: %v", err)
-		}
-		if n != 1 {
-			t.Fatalf("삭제 = %d행, want 1", n)
-		}
-		if n := countRows(t, db, "event_content"); n != 0 {
-			t.Errorf("event_content = %d행, want 0", n)
-		}
-		if n := countRows(t, db, "events"); n != 2 {
-			t.Errorf("events = %d행, want 2", n)
-		}
-	})
+// v3 에서 원문이 남는 자리는 turns.prompt_text 하나다.
+func TestPurgeContentClearsPromptText(t *testing.T) {
+	db := openTestDB(t)
+	seedRetention(t, db, baseTime)
+
+	if n := countWhere(t, db, "turns", "prompt_text IS NOT NULL"); n != 2 {
+		t.Fatalf("사전 조건 실패: 프롬프트가 있는 턴 = %d행", n)
+	}
+
+	n, err := db.PurgeContent(context.Background(), time.Time{})
+	if err != nil {
+		t.Fatalf("PurgeContent: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("지운 행 = %d, want 2", n)
+	}
+	if got := countWhere(t, db, "turns", "prompt_text IS NOT NULL"); got != 0 {
+		t.Fatalf("원문이 %d행 남았다", got)
+	}
+	// 턴·이벤트 행과 수치는 그대로다 — 집계가 변하면 안 된다.
+	if countRows(t, db, "turns") != 2 || countRows(t, db, "events") != 4 {
+		t.Fatal("purge 가 원문 말고 다른 것을 지웠다")
+	}
+}
+
+// --before 는 그 시각 이전에 시작한 턴만 지운다.
+func TestPurgeContentBefore(t *testing.T) {
+	db := openTestDB(t)
+	seedRetention(t, db, baseTime)
+
+	n, err := db.PurgeContent(context.Background(), baseTime.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("PurgeContent: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("지운 행 = %d, want 1", n)
+	}
+	if got := scanOne(t, db, `SELECT prompt_text FROM turns WHERE turn_key = 'p-new'`); got != "최근 프롬프트" {
+		t.Fatalf("최근 프롬프트가 지워졌다: %v", got)
+	}
 }

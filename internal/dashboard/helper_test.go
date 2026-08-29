@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/your-org/pulsemetry/internal/event"
-	"github.com/your-org/pulsemetry/internal/rollup"
 	"github.com/your-org/pulsemetry/internal/session"
 	"github.com/your-org/pulsemetry/internal/store"
 )
@@ -61,16 +60,72 @@ func newFixture(t *testing.T, opts ...store.Option) *fixture {
 	return &fixture{t: t, dir: dir, path: path, db: db, reader: r}
 }
 
-func (f *fixture) write(b store.Batch) {
+// ── v3 전환 중의 자리표시자 ─────────────────────────────────────────────────
+//
+// v3 에는 rollup_hourly 가 없다. 시간 버킷 집계는 조회 시점 GROUP BY 로 만든다 (ADR 0009).
+// 아래 타입들은 이 패키지의 테스트가 **컴파일만** 되게 유지하기 위한 것이다 — 조회 계층을
+// v3 로 옮기고 이 테스트들을 다시 쓰는 것은 PROJ-87 의 몫이라 여기서 손대지 않는다.
+// write 는 Rollups 를 조용히 버리므로 롤업을 읽는 테스트는 실패한 채로 남는다.
+
+type testRollupDim string
+
+const (
+	testDimTotal   testRollupDim = "total"
+	testDimVendor  testRollupDim = "vendor"
+	testDimProject testRollupDim = "project"
+)
+
+type testRollupBucket struct {
+	CostUSD             float64
+	InputTokens         int64
+	OutputTokens        int64
+	CacheReadTokens     int64
+	CacheCreationTokens int64
+
+	APIRequests  int64
+	APIErrors    int64
+	Retries      int64
+	LinesAdded   int64
+	LinesRemoved int64
+	Commits      int64
+	PullRequests int64
+	Prompts      int64
+	ToolCalls    int64
+	ToolAccepts  int64
+	ToolRejects  int64
+
+	ActiveSeconds   float64
+	SessionsStarted int64
+}
+
+// IsZero 는 rollup.Bucket 이 제공하던 것과 같은 판정이다. 기여분이 0 인 행은 넣어도
+// 값이 바뀌지 않는다.
+func (b testRollupBucket) IsZero() bool { return b == testRollupBucket{} }
+
+type testRollupRow struct {
+	Hour   event.Hour
+	Dim    testRollupDim
+	Key    string
+	Bucket testRollupBucket
+}
+
+type testBatch struct {
+	Events   []store.EventRecord
+	Sessions []session.Session
+	Rollups  []testRollupRow
+}
+
+func (f *fixture) write(b testBatch) {
 	f.t.Helper()
-	if _, err := f.db.Write(context.Background(), b); err != nil {
+	batch := store.Batch{Events: b.Events, Sessions: b.Sessions}
+	if _, err := f.db.Write(context.Background(), batch); err != nil {
 		f.t.Fatalf("store.Write: %v", err)
 	}
 }
 
-// rollupRow 는 rollup_hourly 한 행을 만든다. hour 는 그 시각이 속한 UTC 시간 버킷으로 내려간다.
-func rollupRow(at time.Time, dim rollup.Dim, key string, b rollup.Bucket) rollup.Row {
-	return rollup.Row{
+// rollupRow 는 시간 버킷 한 행을 만든다. hour 는 그 시각이 속한 UTC 시간 버킷으로 내려간다.
+func rollupRow(at time.Time, dim testRollupDim, key string, b testRollupBucket) testRollupRow {
+	return testRollupRow{
 		Hour:   event.HourOf(event.NanoFromTime(at)),
 		Dim:    dim,
 		Key:    key,

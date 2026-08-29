@@ -10,6 +10,17 @@ import (
 	"github.com/your-org/pulsemetry/internal/session"
 )
 
+// seedV2 는 v2 스키마의 도메인 행 하나를 직접 넣는다. 이 시점의 DB 는 v3 이전이라
+// store.Write 로는 쓸 수 없다 — Write 는 v3 테이블만 안다.
+func seedV2(t *testing.T, db *DB) {
+	t.Helper()
+	sec := baseTime.Unix()
+	mustExec(t, db, `INSERT INTO vendors (vendor, first_seen, last_seen, events_total)
+		VALUES ('claude_code', ?, ?, 1)`, sec, sec)
+	mustExec(t, db, `INSERT INTO sessions (session_id, vendor, started_at, last_event_at, status)
+		VALUES ('sess-1', 'claude_code', ?, ?, 'running')`, sec, sec)
+}
+
 // v3 이후의 일반 증분 마이그레이션은 기존 데이터를 보존한다. v3 자체만 의도적으로
 // 파괴적이며 이후 마이그레이션까지 데이터 손실을 기본값으로 만들지는 않는다.
 func TestIncrementalMigration(t *testing.T) {
@@ -73,10 +84,8 @@ func TestMigrateV2ToV3RecreatesDomainSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open v2: %v", err)
 	}
-	if _, err := db.Write(ctx, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}}); err != nil {
-		db.Close()
-		t.Fatalf("v2 Write: %v", err)
-	}
+	// v2 스키마에 직접 넣는다. Write 는 v3 를 향하므로 여기서 쓸 수 없다.
+	seedV2(t, db)
 	if err := db.SetMeta(ctx, MetaInstallationID, "inst-1"); err != nil {
 		db.Close()
 		t.Fatalf("v2 meta 설정: %v", err)
@@ -123,10 +132,7 @@ func TestFailedV3MigrationRollsBackDropsAndVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open v2: %v", err)
 	}
-	if _, err := db.Write(ctx, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}}); err != nil {
-		db.Close()
-		t.Fatalf("v2 Write: %v", err)
-	}
+	seedV2(t, db)
 	db.Close()
 
 	brokenV3 := append(append([]string{}, schemaV3...),

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/your-org/pulsemetry/internal/event"
-	"github.com/your-org/pulsemetry/internal/rollup"
 	"github.com/your-org/pulsemetry/internal/runtimeinfo"
 	"github.com/your-org/pulsemetry/internal/session"
 	"github.com/your-org/pulsemetry/internal/store"
@@ -20,7 +19,7 @@ func TestStatus(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	f.write(store.Batch{
+	f.write(testBatch{
 		Events: []store.EventRecord{
 			prompt("s1", testNow.Add(-2*time.Hour), 1, "인증 토큰 검증"),
 			prompt("s1", testNow.Add(-time.Hour), 2, "두 번째 프롬프트"),
@@ -34,8 +33,8 @@ func TestStatus(t *testing.T) {
 				s.Tools = []session.ToolEvent{{TS: event.SecFromTime(testNow), ToolName: "Read"}}
 			}),
 		},
-		Rollups: []rollup.Row{
-			rollupRow(testNow, rollup.DimTotal, "", rollup.Bucket{CostUSD: 1}),
+		Rollups: []testRollupRow{
+			rollupRow(testNow, testDimTotal, "", testRollupBucket{CostUSD: 1}),
 		},
 	})
 	if err := f.db.SetMeta(ctx, store.MetaRetentionDays, "45"); err != nil {

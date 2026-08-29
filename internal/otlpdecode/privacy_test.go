@@ -20,9 +20,23 @@ const (
 	fixtureOrgID       = "org_01HXYZQ7K3M9V2"
 )
 
+// localOnlyFields 는 ADR 0010 이 **로컬 저장에 한해** 식별 정보를 담도록 허용한 필드다.
+//
+// 이 목록은 예외이지 면제가 아니다. 프라이버시 스캐너는 이 필드들만 건너뛰고 나머지를
+// 전부 훑으므로, 여기 없는 어느 필드로든 경로·이메일·계정 ID 가 새면 테스트가 실패한다.
+// 목록을 늘리는 것은 ADR 개정을 요구하는 결정이다.
+var localOnlyFields = []string{
+	"WorkspacePath", // event.Attributes — sessions.workspace_path
+	"UserEmail",     // event.Attributes — sessions.user_email
+	"UserAccountID", // event.Attributes — sessions.user_account_id
+	"ErrorMessage",  // event.Measures  — tool_calls.error_message
+	"RawPath",       // otlpdecode.Target — file_changes.file_path
+}
+
 // TestNoFullPathsInDecodedEvents 는 계획서가 "가장 중요한 테스트" 로 지목한 것이다.
-// project_hash·project_name 은 채워지되 전체 경로 문자열은 events 로 가는 구조체 어디에도
-// 없어야 한다. 리플렉션으로 비공개 필드까지 훑으므로 "어디에도" 를 문자 그대로 검사한다.
+// project_hash·project_name 은 채워지되 전체 경로 문자열은 localOnlyFields 를 뺀 events
+// 구조체 어디에도 없어야 한다. 리플렉션으로 비공개 필드까지 훑으므로 "어디에도" 를
+// 문자 그대로 검사한다.
 func TestNoFullPathsInDecodedEvents(t *testing.T) {
 	fixtures := []struct {
 		name string
@@ -99,9 +113,12 @@ func TestProjectIsHashPlusBasenameOnly(t *testing.T) {
 	}
 }
 
-// TestNoIdentityAttributesAnywhere 는 user.*·organization.id 가 Event 에도 Content 에도
-// 흘러들지 않음을 단언한다. allowlist 에 자리가 없다는 사실을 테스트로 고정한다.
-func TestNoIdentityAttributesAnywhere(t *testing.T) {
+// TestNoIdentityAttributesOutsideLocalOnlyFields 는 신원 값이 **지정된 로컬 저장 전용
+// 필드 밖으로는** 흘러가지 않음을 단언한다.
+//
+// organization.id 는 여전히 allowlist 에 자리가 없다 — ADR 0010 은 v3 컬럼이 요구하는
+// 값만 열었고 조직 ID 를 요구하는 컬럼은 없다.
+func TestNoIdentityAttributesOutsideLocalOnlyFields(t *testing.T) {
 	identities := map[string]string{
 		"user.email":        fixtureUserEmail,
 		"user.id":           fixtureUserID,
@@ -122,9 +139,8 @@ func TestNoIdentityAttributesAnywhere(t *testing.T) {
 		t.Run(f.name, func(t *testing.T) {
 			res := decodeBoth(t, f.kind, f.name, testOptions())
 			// 원문(Contents)·대상 파일(Targets)까지 포함해 검사한다.
-			// 신원 값은 로컬 저장에도 자리가 없다.
-			haystack := append(allStrings(res.Events), allStrings(res.Contents)...)
-			haystack = append(haystack, allStrings(res.Targets)...)
+			haystack := append(allStringsExcept(res.Events, localOnlyFields), allStrings(res.Contents)...)
+			haystack = append(haystack, allStringsExcept(res.Targets, localOnlyFields)...)
 			for key, value := range identities {
 				for _, s := range haystack {
 					if strings.Contains(s, value) {
@@ -155,7 +171,7 @@ func TestRawContentIsSeparatedFromEvents(t *testing.T) {
 		t.Fatalf("tool_input 원문이 원본 그대로가 아니다: %q", input.Body)
 	}
 
-	// 같은 이벤트의 Event 쪽에는 그 경로가 없다.
+	// 같은 이벤트의 Event 쪽에는 그 경로가 없다 (로컬 저장 전용 필드는 예외).
 	assertNoForbiddenStrings(t, "Events[tool_result]", res.Events[index])
 
 	// events 에는 길이만 남는다.
@@ -220,12 +236,83 @@ var forbiddenInEvents = []string{
 	"/Users/",
 }
 
+// assertNoForbiddenStrings 는 localOnlyFields 를 제외한 모든 문자열을 훑는다.
 func assertNoForbiddenStrings(t *testing.T, label string, v any) {
 	t.Helper()
-	for _, s := range allStrings(v) {
+	for _, s := range allStringsExcept(v, localOnlyFields) {
 		for _, forbidden := range forbiddenInEvents {
 			if strings.Contains(s, forbidden) {
 				t.Errorf("%s: 금지 문자열 %q 가 %q 안에 남았다", label, forbidden, s)
+			}
+		}
+	}
+}
+
+// TestLocalOnlyIdentityIsPresentLocallyAndAbsentUpstream 은 ADR 0010 의 인수조건이다.
+//
+// 같은 픽스처에서 원경로·이메일·계정 ID 가 (a) 로컬 저장으로 가는 디코드 결과에는 있고
+// (b) 상위 전달 페이로드에는 없음을 한 자리에서 단언한다. 둘 중 하나만 보면 "로컬에 없다"
+// 와 "상위로 샌다" 중 어느 쪽으로 무너져도 알아채지 못한다.
+func TestLocalOnlyIdentityIsPresentLocallyAndAbsentUpstream(t *testing.T) {
+	res := decodeBoth(t, PayloadLogs, "logs_session_walkthrough.json", testOptions())
+
+	// (a) 로컬 저장 결과에는 있다.
+	var attr event.Attributes
+	for _, e := range res.Events {
+		if e.Attr.WorkspacePath != "" {
+			attr = e.Attr
+			break
+		}
+	}
+	if attr.WorkspacePath != fixtureProjectPath {
+		t.Errorf("workspace_path = %q, want %q", attr.WorkspacePath, fixtureProjectPath)
+	}
+	if attr.UserEmail != fixtureUserEmail {
+		t.Errorf("user_email = %q, want %q", attr.UserEmail, fixtureUserEmail)
+	}
+	if attr.UserAccountID != fixtureAccountUUID {
+		t.Errorf("user_account_id = %q, want %q", attr.UserAccountID, fixtureAccountUUID)
+	}
+	// 해시 필드는 그대로다 — 원경로가 생겼다고 해시가 사라지면 상위 전달용 값이 없어진다.
+	if attr.ProjectHash != event.NormalizePath(fixtureProjectPath).Hash || attr.ProjectName != "telemetryctl" {
+		t.Errorf("해시 필드가 흔들렸다: hash=%q name=%q", attr.ProjectHash, attr.ProjectName)
+	}
+
+	var rawTarget string
+	for _, tg := range res.Targets {
+		if tg.RawPath != "" {
+			rawTarget = tg.RawPath
+		}
+	}
+	if rawTarget != fixtureFilePath {
+		t.Errorf("Target.RawPath = %q, want %q", rawTarget, fixtureFilePath)
+	}
+
+	// 정제를 통과하지 못하는 오류 메시지도 원문으로 남는다 (tool_calls.error_message).
+	var errMessage string
+	for _, e := range res.Events {
+		if strings.HasPrefix(e.Measure.ErrorMessage, "ENOENT") {
+			errMessage = e.Measure.ErrorMessage
+			// 같은 이벤트의 error_type 은 여전히 비어 있어야 한다 — 정제 규칙은 그대로다.
+			if e.Measure.ErrorType != "" {
+				t.Errorf("경로가 섞인 메시지가 error_type 에 들어갔다: %q", e.Measure.ErrorType)
+			}
+		}
+	}
+	if !strings.Contains(errMessage, fixtureProjectPath) {
+		t.Errorf("error_message 에 벤더 메시지 원문이 없다: %q", errMessage)
+	}
+
+	// (b) 상위 전달 페이로드에는 없다.
+	for _, enc := range []Encoding{EncodingJSON, EncodingProtobuf} {
+		raw := payloadIn(t, PayloadLogs, "logs_session_walkthrough.json", enc)
+		out, _, err := Scrub(PayloadLogs, raw, enc, PolicyFromPrivacy(defaultPrivacy()))
+		if err != nil {
+			t.Fatalf("Scrub(%s): %v", enc, err)
+		}
+		for _, forbidden := range []string{fixtureFilePath, fixtureUserEmail} {
+			if strings.Contains(string(out), forbidden) {
+				t.Errorf("%s 전달 바이트에 %q 가 남았다", enc, forbidden)
 			}
 		}
 	}

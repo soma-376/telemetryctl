@@ -50,13 +50,31 @@ func response(v int64) func(*Input) {
 	return func(i *Input) { i.Event.Measure.ResponseLength = event.Some(v) }
 }
 
+// project 는 해시 필드와 로컬 저장 전용 원경로를 함께 채운다 — 디코더가 하는 것과 같다.
 func project(p string) func(*Input) {
-	return func(i *Input) { i.Event.Attr = i.Event.Attr.WithProject(event.NormalizePath(p)) }
+	return func(i *Input) {
+		i.Event.Attr = i.Event.Attr.WithProject(event.NormalizePath(p))
+		i.Event.Attr.WorkspacePath = p
+	}
 }
 
+// target 도 마찬가지로 정규화 결과와 원경로를 함께 싣는다.
 func target(p string) func(*Input) {
-	return func(i *Input) { i.Target = event.NormalizePath(p) }
+	return func(i *Input) {
+		i.Target = event.NormalizePath(p)
+		i.TargetPath = p
+	}
 }
+
+func identity(email, accountID string) func(*Input) {
+	return func(i *Input) {
+		i.Event.Attr.UserEmail = email
+		i.Event.Attr.UserAccountID = accountID
+	}
+}
+
+func turnKey(k string) func(*Input) { return func(i *Input) { i.Event.TurnKey = k } }
+func callKey(k string) func(*Input) { return func(i *Input) { i.Event.CallKey = k } }
 
 func prompt(body string) func(*Input) {
 	return func(i *Input) {
@@ -164,5 +182,47 @@ func collectStrings(v reflect.Value, out *[]string) {
 func allStrings(v any) []string {
 	var out []string
 	collectStrings(reflect.ValueOf(v), &out)
+	return out
+}
+
+// collectStringsExcept 는 이름이 skip 에 있는 구조체 필드만 건너뛰고 나머지를 전부 모은다.
+// ADR 0010 이 **지정된 필드에 한해** 로컬 저장을 허용했으므로, 누수 검사를 통째로 푸는 대신
+// 예외 필드만 빼고 그대로 유지하기 위한 것이다.
+func collectStringsExcept(v reflect.Value, skip map[string]bool, out *[]string) {
+	switch v.Kind() {
+	case reflect.String:
+		*out = append(*out, v.String())
+	case reflect.Struct:
+		t := v.Type()
+		for i := range v.NumField() {
+			if skip[t.Field(i).Name] {
+				continue
+			}
+			collectStringsExcept(v.Field(i), skip, out)
+		}
+	case reflect.Slice, reflect.Array:
+		for i := range v.Len() {
+			collectStringsExcept(v.Index(i), skip, out)
+		}
+	case reflect.Pointer, reflect.Interface:
+		if !v.IsNil() {
+			collectStringsExcept(v.Elem(), skip, out)
+		}
+	case reflect.Map:
+		iter := v.MapRange()
+		for iter.Next() {
+			collectStringsExcept(iter.Key(), skip, out)
+			collectStringsExcept(iter.Value(), skip, out)
+		}
+	}
+}
+
+func allStringsExcept(v any, skip []string) []string {
+	set := make(map[string]bool, len(skip))
+	for _, f := range skip {
+		set[f] = true
+	}
+	var out []string
+	collectStringsExcept(reflect.ValueOf(v), set, &out)
 	return out
 }
