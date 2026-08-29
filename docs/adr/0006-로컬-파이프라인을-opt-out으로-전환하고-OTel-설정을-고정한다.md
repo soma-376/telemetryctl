@@ -110,6 +110,11 @@ ADR [0003](0003-원문과-tool-details를-로컬에만-보관.md) 이 정한 방
   이전의 “schema 5를 이 항목에 사용한다”는 계획은 ADR 0008로 대체되었다.
 - **grpc 상위 전달.** grpc 테넌트는 배선 대상에서 빠진다 (`forward.ErrGRPCUnsupported`). 지원이 생기면
   `Apply` 의 강등 분기를 걷어낸다.
+- **강등(회사 직결) 경로의 privacy 집행 공백.** 강등되면(grpc 테넌트·키링 실패) Decision 3 의 집행 지점
+  (`internal/forward`)이 경로 밖이 되고, 벤더 설정 계층의 manifest 연결은 Claude 5필드 ·
+  **Codex `log_user_prompt` 1필드뿐**이며 `collect_user_email` 은 양 벤더 미집행이다.
+  **벤더별 설정의 privacy 매핑을 6필드 전부로 확장한다** — Codex 에 대응 설정 표면이 실재하는지 확인이
+  선행이고, 매핑 불가 필드는 허브 계약에 명시한다 (허브 `contracts/telemetry-ingest.md` §5 M13).
 - **Codex `log_user_prompt` 와 `environment`.** 티켓 참고 자료는 각각 `false` 와 `"e2e"` 였으나 전자는 Claude 와의
   대칭을 위해 `true` 로, 후자는 `resource_attributes` 파생을 유지하기로 했다. Codex 프롬프트 수집이 실제로
   필요한지는 세션 조립 결과를 보고 다시 본다.

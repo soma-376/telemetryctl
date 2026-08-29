@@ -896,6 +896,7 @@ ls ~/.config/systemd/user 2>/dev/null | grep -i pulsemetry || echo "OK: 등록�
 | **launchd 로그는 우리가 회전시킨다** | launchd 는 로테이션하지 않는다. 데몬의 prune 틱(1시간)이 16 MiB 상한으로 copy-truncate 한다(`.1` 하나만 보관). 복사와 truncate 사이에 쓰인 몇 줄은 잃을 수 있고, 크래시 진단 로그에 대해 그것은 받아들일 만하다 |
 | **회사가 끈 시그널은 로컬에만 쌓인다** | 로컬은 시그널 셋을 전부 켜고 받지만 포워더가 상위 전달을 막는다(§4.2 축 1). 즉 회사 `signals.traces=false` 면 트레이스는 로컬 파이프라인을 통과하되 회사에는 가지 않는다 — 설계된 동작이고 `Stats.DroppedSignalDisabled` 로 보인다. 다만 `/v1/traces` 는 저장도 하지 않으므로(아래 행) 그 시그널은 실질적으로 버려진다 |
 | **`grpc` 테넌트는 배선되지 않는다** | 포워더가 grpc 상위 전달을 못 하므로 `Apply` 가 회사 직결로 강등하고 알린다. `local enable` 도 `ErrGRPCUnsupported` 로 거부한다. 기존 회사 Collector 직결은 그대로 동작한다 |
+| **강등(회사 직결) 상태에서는 manifest `privacy` 집행에 공백이 있다** | 강등되면(grpc 테넌트·키링 실패) 포워더 `Scrub` 이 경로 밖이라 집행이 벤더 설정 계층으로 되돌아간다. 그 계층의 manifest 연결은 Claude 6필드 중 5(`OTEL_LOG_*`), **Codex 는 `log_user_prompt` 1필드뿐**이고 `collect_user_email` 은 양 벤더 미집행이다. 수정 방향(벤더 매핑을 6필드 전부로 확장)은 허브 `contracts/telemetry-ingest.md` §5 M13 과 ADR 0006 Follow-up 이 소유한다 |
 | **기존 설치자는 자동 전환되지 않는다** | ADR 0006에서 로컬 재배선 마이그레이션을 넣지 않았다. state schema 5 마이그레이션은 보존 설정만 제거하므로, 바이너리만 교체한 사용자는 여전히 `local enable`을 명시적으로 실행해야 한다 |
 | **크래시 손실 창** | flush 주기(2초, 또는 512 이벤트)만큼의 미저장 이벤트를 잃는다. 세션 스냅샷은 30초 주기지만 세션 수치는 마감 전에는 어차피 확정값이 아니다 |
 | **조립기 TTL 이후 같은 `session.id` 재등장** | 마감된 세션은 2시간(`sessionMemoryTTL`) 뒤 조립기 메모리에서 지워진다. 그 뒤 같은 `session.id` 가 다시 등장하면 조립기가 **새 세션으로 시작**하고 `sessions` UPSERT 가 기존 행을 덮는다 — 앞 구간의 수치를 잃는다. TTL 이 유휴 임계값(10분)의 12배인 이유이자, 보존 기간(400일)이 아닌 몇 시간짜리 값을 쓰는 이유(`store.Prune` 이 지운 타임라인을 다음 스냅샷이 되살리지 못하게)다 |
