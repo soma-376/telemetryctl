@@ -66,4 +66,5 @@ go run ./cmd/telemetryctl enroll --invite <code> --server <url>
 - **로컬 수신기의 큐 포화 응답은 429가 아니라 200 + PartialSuccess다.** 벤더 exporter의 재시도 폭주를 막는 의도된 드롭 정책이다.
 - `TimeoutStopSec(20s) > 데몬 shutdown(15s)` 불변식을 깨지 않는다.
 - 알려진 미구현: **Windows 자동 시작**(PROJ-56), gRPC 상위 전송, `--force` 플래그 동작.
-- ADR을 추가하면 `0009`부터. 파일명은 **한국어 슬러그**. 이 레포에는 `docs/adr/README.md` 인덱스가 없다.
+- ADR을 추가하면 `0009`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
+  Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.

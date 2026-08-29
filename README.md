@@ -44,14 +44,20 @@ JSON Schema 이며, `internal/contract` 의 Go 타입이 이 스키마와 1:1 �
 
 ## 사용법
 
-한 줄 설치 (서버가 부트스트랩 스크립트를 내려줌 → 초대 코드 입력):
+한 줄 설치. **초대 코드를 URL 에 실어야 합니다** — 서버가 그 코드를 부트스트랩 스크립트에
+박아서 내려주고, 스크립트가 바이너리를 받아 `enroll` 까지 실행합니다. 코드가 없으면 서버가
+400 `invalid_request` 로 끊습니다.
 
 ```powershell
-irm <server>/windows | iex          # PowerShell
+irm "<server>/windows?code=<초대코드>" | iex          # PowerShell
 ```
 ```sh
-curl -fsSL <server>/unix | sh        # bash
+curl -fsSL "<server>/unix?code=<초대코드>" | sh        # bash
 ```
+
+설치된 바이너리 이름은 **`pulsemetry`** 입니다(`~/.pulsemetry/bin/pulsemetry`). 아래 예시는
+저장소 이름을 따라 `telemetryctl` 로 적지만, 한 줄 설치로 받은 환경에서는 `pulsemetry` 로 부릅니다.
+`go build ./cmd/telemetryctl` 로 직접 빌드하면 `telemetryctl` 이라는 이름이 나옵니다.
 
 또는 바이너리를 직접 실행:
 
@@ -74,8 +80,9 @@ Claude Code(`~/.claude/settings.json`)·Codex(`~/.codex/config.toml`)에 OTel �
 적용 내역을 `~/.pulsemetry/state.json` 에 기록합니다. 서버 URL 은 `--server` > `PULSEMETRY_SERVER` >
 빌드 기본값(릴리스 시 `-ldflags` 주입) 순으로 결정합니다.
 
-`installation_token`은 OS 키링에만 저장하고 Claude·Codex 설정에는 교체 가능한
-`telemetry_token`만 기록합니다. `reconnect`는 설치 토큰으로
+`installation_token`과 회사 `telemetry_token`은 OS 키링에만 저장합니다. 로컬 파이프라인이 배선된
+기본 상태에서 Claude·Codex 설정에 기록되는 것은 **로컬 ingest 토큰**뿐이고, 배선이 강등된
+(회사 직결 — grpc manifest·키링 불가) 설치에서만 `telemetry_token`이 설정에 실립니다. `reconnect`는 설치 토큰으로
 `POST /v1/installations/telemetry-token`을 호출해 새 telemetry token을 발급받습니다.
 
 ## 로컬 데이터 파이프라인 (opt-out, 기본 켜짐)
@@ -107,8 +114,10 @@ telemetryctl local disable            # 회사 Collector 직결로 복귀
 
 로컬 OTel 설정은 회사 manifest 와 무관하게 **고정**입니다 — 시그널 셋을 전부 켜고 원문·tool details
 수집도 켭니다(응답 원문 제외). 회사가 수집 범위를 좁혀도 로컬 화면이 비지 않게 하기 위해서입니다.
-그래도 **회사로 나가는 데이터는 배선 전후로 동일합니다** — 데몬이 회사 manifest 의 `signals` 로
-전달 여부를, `privacy` 로 제거 대상을 판단합니다. 프롬프트 원문을 포함한 모든 로컬 데이터는
+그래도 **로컬 파이프라인이 배선된 상태에서는 회사로 나가는 데이터가 배선 전후로 동일합니다** —
+데몬이 회사 manifest 의 `signals` 로 전달 여부를, `privacy` 로 제거 대상을 판단합니다.
+단, 회사 직결로 강등된 설치(grpc 테넌트·키링 실패)에는 데몬이 경로에 없어 벤더 설정 계층만 남습니다
+(허브 `contracts/telemetry-ingest.md` §5 M13). 프롬프트 원문을 포함한 모든 로컬 데이터는
 400일간 보관됩니다. 원문은 항목당 16KB로 제한되며 `--no-store-content`·`purge --content` 로
 끄거나 지울 수 있습니다([ADR 0008](docs/adr/0008-로컬-데이터를-400일간-보존한다.md)).
 
