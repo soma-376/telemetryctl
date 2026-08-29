@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/your-org/pulsemetry/internal/dashboard"
 	"github.com/your-org/pulsemetry/internal/store"
 )
 
@@ -22,20 +21,23 @@ func runPurgeCmd(t *testing.T, stdin string, canPrompt bool, args ...string) run
 	return runResult{code: code, stdout: out.String(), stderr: errBuf.String()}
 }
 
-// contentRows 는 event_content 에 남은 행 수다. "정말 지웠나/안 지웠나" 를 출력 문구가
-// 아니라 DB 로 확인해야 안전장치 테스트에 의미가 있다.
+// contentRows 는 DB 에 남은 원문 행 수다. "정말 지웠나/안 지웠나" 를 출력 문구가 아니라
+// DB 로 확인해야 안전장치 테스트에 의미가 있다.
+//
+// 세는 자리는 purge 가 지우는 자리와 같아야 한다 (store.ContentCounts). 조회 계층을 거치면
+// 이 테스트가 CLI 가 아니라 조회 계층의 상태를 확인하게 된다.
 func contentRows(t *testing.T, dataDir string) int64 {
 	t.Helper()
-	reader, err := dashboard.Open(store.PathIn(dataDir))
+	reader, err := store.OpenReadOnly(store.PathIn(dataDir))
 	if err != nil {
-		t.Fatalf("dashboard.Open: %v", err)
+		t.Fatalf("store.OpenReadOnly: %v", err)
 	}
 	defer reader.Close() //nolint:errcheck // 테스트 조회 핸들
-	st, err := reader.Status(context.Background())
+	counts, err := reader.ContentCounts(context.Background(), time.Time{})
 	if err != nil {
-		t.Fatalf("Status: %v", err)
+		t.Fatalf("ContentCounts: %v", err)
 	}
-	return st.Counts.EventContent
+	return counts.Total()
 }
 
 func TestPurgeRequiresContentFlag(t *testing.T) {

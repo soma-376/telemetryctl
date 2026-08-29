@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -107,6 +108,47 @@ func TestForeignKeyCheckIsEmptyAfterPrune(t *testing.T) {
 	assertNoOrphans(t, db)
 
 	// 최근 세션은 살아 있어야 한다.
+	if n := countRows(t, db, "sessions"); n != 1 {
+		t.Fatalf("sessions = %d행, want 1", n)
+	}
+}
+
+// 지울 세션이 IN 절 상한(idChunk)을 넘으면 삭제가 여러 문장으로 쪼개진다.
+// 조각 경계에서 자식 계층 하나만 빠져도 고아가 남는다.
+func TestForeignKeyCheckIsEmptyAfterChunkedPrune(t *testing.T) {
+	db := openTestDB(t)
+	old := baseTime.Add(-500 * 24 * time.Hour)
+
+	const stale = idChunk + 50
+	batch := Batch{}
+	for i := range stale {
+		id := fmt.Sprintf("sess-old-%d", i)
+		s := newSession(id, old)
+		s.EndedAt = someSec(s.StartedAt + 60)
+		batch.Sessions = append(batch.Sessions, s)
+		batch.Events = append(batch.Events,
+			evrec("claude_code.user_prompt", old, i, sess(id), inTurn("p")),
+			evrec("claude_code.tool_result", old, i, sess(id), inTurn("p"),
+				call(fmt.Sprintf("claude_code:c-%d", i)), toolName("Edit"), succeeded(true),
+				fileChange(session.OperationModify, "/Users/jy/dev/x.go")))
+	}
+	batch.Sessions = append(batch.Sessions, newSession("sess-new", baseTime))
+	batch.Events = append(batch.Events,
+		evrec("claude_code.user_prompt", baseTime, 0, sess("sess-new"), inTurn("p-new")))
+	mustWrite(t, db, batch)
+
+	res, err := db.Prune(context.Background(), baseTime)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if res.Sessions != stale {
+		t.Fatalf("지운 세션 = %d, want %d", res.Sessions, stale)
+	}
+	if res.Turns != stale || res.Events != 2*stale || res.ToolCalls != stale || res.FileChanges != stale {
+		t.Fatalf("자식 계층이 조각 경계에서 남았다: %+v", res)
+	}
+	assertNoOrphans(t, db)
+
 	if n := countRows(t, db, "sessions"); n != 1 {
 		t.Fatalf("sessions = %d행, want 1", n)
 	}

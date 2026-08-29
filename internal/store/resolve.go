@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/your-org/pulsemetry/internal/event"
@@ -112,7 +113,7 @@ func (w *writer) writeVendors(b Batch) error {
 
 // ── sessions ────────────────────────────────────────────────────────────────
 
-// upsertSessionSQL 은 (vendor_id, session_key) 로 대리 키를 얻는다.
+// sessionUpsertHead 는 두 세션 UPSERT 가 공유하는 부분이다.
 //
 // DO NOTHING 이 아니라 DO UPDATE 인 이유: DO NOTHING 은 충돌 시 행을 만들지 않으므로
 // RETURNING 이 **아무 행도 주지 않는다**. 그러면 이미 있는 세션의 id 를 못 받고, 그 자리에서
@@ -122,7 +123,9 @@ func (w *writer) writeVendors(b Batch) error {
 // 못 박았다 — 조립기의 제목은 휴리스틱이고 매 스냅샷마다 바뀔 수 있어, 덮어쓰면 화면의 제목이
 // 이유 없이 흔들린다. 나머지 식별 정보는 반대로 새 관측을 우선한다(처음엔 비어 있다가 나중에
 // 리소스 속성이 도착하는 것이 정상 경로다).
-const upsertSessionSQL = `INSERT INTO sessions (
+//
+// started_at 은 가장 이른 관측이다. 세션이 언제 시작했는지는 늦게 도착한 배치가 바꿀 수 없다.
+const sessionUpsertHead = `INSERT INTO sessions (
   vendor_id, session_key, title, workspace_path, user_email, user_account_id,
   terminal_type, started_at, ended_at, active_time_sec
 ) VALUES (?,?,?,?,?,?,?,?,?,?)
@@ -134,8 +137,29 @@ ON CONFLICT(vendor_id, session_key) DO UPDATE SET
   terminal_type   = COALESCE(excluded.terminal_type,   sessions.terminal_type),
   started_at      = MIN(COALESCE(excluded.started_at, sessions.started_at),
                         COALESCE(sessions.started_at, excluded.started_at)),
-  ended_at        = COALESCE(excluded.ended_at, sessions.ended_at),
-  active_time_sec = COALESCE(excluded.active_time_sec, sessions.active_time_sec)
+`
+
+// upsertSessionSQL 은 조립기 스냅샷용이다. **생명주기의 정본은 스냅샷 하나뿐이다.**
+//
+// ended_at 을 COALESCE 가 아니라 excluded 그대로 쓰는 것이 핵심이다. v3 에는 status 컬럼이
+// 없고 화면의 running/completed 는 `ended_at IS NULL` 로 계산된다 (ADR 0009). 마감된 세션에
+// 같은 session.id 로 이벤트가 다시 오면 조립기는 마감을 되돌리는데(state.observe), 저장 쪽이
+// COALESCE 로 옛 ended_at 을 붙들고 있으면 실제로는 돌고 있는 세션이 화면에서 영원히
+// completed 로 남는다. 스냅샷이 "진행 중"이라고 말하면 컬럼도 NULL 로 돌아가야 한다.
+//
+// active_time_sec 는 반대로 단조 증가다. 데몬이 재시작하면 조립기는 그 세션의 활동 시간을
+// 0 부터 다시 세므로, 새 값을 그대로 쓰면 이미 기록된 시간이 줄어든다. 활동 시간은 세션
+// 안에서 줄어들 수 없는 값이라 MAX 로 지킨다.
+const upsertSessionSQL = sessionUpsertHead + `  ended_at        = excluded.ended_at,
+  active_time_sec = MAX(COALESCE(excluded.active_time_sec, sessions.active_time_sec),
+                        COALESCE(sessions.active_time_sec, excluded.active_time_sec))
+RETURNING id`
+
+// seedSessionSQL 은 이벤트 씨앗용이다. 이벤트 하나는 세션이 끝났는지 얼마나 활동했는지를
+// 모르므로 두 컬럼을 **건드리지 않는다**. 스냅샷 규칙을 여기에도 쓰면, 스냅샷 없이 이벤트만
+// 저장되는 틱마다 마감된 세션의 ended_at 이 NULL 로 지워진다.
+const seedSessionSQL = sessionUpsertHead + `  ended_at        = sessions.ended_at,
+  active_time_sec = sessions.active_time_sec
 RETURNING id`
 
 // sessionSeed 는 sessions 한 행에 쓸 값이다. 이벤트에서 오는 최소 씨앗과 조립기 스냅샷의
@@ -152,6 +176,18 @@ type sessionSeed struct {
 	startedAt  any
 	endedAt    any
 	activeTime any
+
+	// lifecycle 은 이 씨앗이 세션 생명주기(ended_at · active_time_sec)의 정본인지다.
+	// 조립기 스냅샷만 true 다 — 이벤트 하나는 세션이 끝났는지 모른다.
+	lifecycle bool
+}
+
+// sql 은 이 씨앗이 탈 UPSERT 문이다.
+func (s sessionSeed) sql() string {
+	if s.lifecycle {
+		return upsertSessionSQL
+	}
+	return seedSessionSQL
 }
 
 func (s sessionSeed) args() []any {
@@ -175,9 +211,11 @@ func (w *writer) writeSessions(b Batch) error {
 		if s.Vendor == "" {
 			return fmt.Errorf("store: vendor 가 빈 세션 (%s)", s.SessionID)
 		}
+		// 활동 시간은 초 단위 정수 컬럼이다. 자르지 않고 반올림한다 — 자르면 매 스냅샷마다
+		// 소수부가 버려져 긴 세션의 활동 시간이 조금씩 뒤처진다.
 		var active any
 		if s.ActiveSeconds > 0 {
-			active = int64(s.ActiveSeconds)
+			active = int64(math.Round(s.ActiveSeconds))
 		}
 		seed := sessionSeed{
 			vendor: s.Vendor, key: s.SessionID,
@@ -189,6 +227,7 @@ func (w *writer) writeSessions(b Batch) error {
 			startedAt:     nullSec(s.StartedAt),
 			endedAt:       optSec(s.EndedAt),
 			activeTime:    active,
+			lifecycle:     true,
 		}
 		if _, err := w.sessionID(seed); err != nil {
 			return err
@@ -226,7 +265,7 @@ func (w *writer) sessionID(seed sessionSeed) (int64, error) {
 		return id, nil
 	}
 	var id int64
-	err := w.tx.QueryRowContext(w.ctx, upsertSessionSQL, seed.args()...).Scan(&id)
+	err := w.tx.QueryRowContext(w.ctx, seed.sql(), seed.args()...).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("store: sessions UPSERT (%s/%s): %w", seed.vendor, seed.key, err)
 	}
