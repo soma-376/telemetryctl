@@ -64,6 +64,10 @@ type applyStep struct {
 //	IngestToken 이 비어 있다  — 호출자가 키링에서 토큰을 얻지 못했다.
 //	회사 manifest 가 grpc 다 — forward 가 grpc 상위 전달을 못 한다. 배선하면 로컬에만
 //	                           쌓이고 회사에는 아무것도 가지 않는다.
+//
+// 강등 상태에서는 포워더 Scrub 이 경로 밖이라 manifest privacy 집행이 벤더 설정 계층만으로
+// 남는다 (Codex 는 log_user_prompt 만 manifest 에 연결된다) — 공백의 상세와 수정 방향은
+// 허브 contracts/telemetry-ingest.md §5 M13.
 func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 	manifest := &enrollment.Manifest
 	report := &Report{

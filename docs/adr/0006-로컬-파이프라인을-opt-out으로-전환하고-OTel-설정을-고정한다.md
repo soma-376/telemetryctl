@@ -1,9 +1,9 @@
 # 0006. 로컬 파이프라인을 opt-out 으로 전환하고 로컬 OTel 설정을 고정한다.
 
 ## Status
-Accepted
+Accepted — 부분 대체: [ADR 0008](0008-로컬-데이터를-400일간-보존한다.md) 이 Decision 5 의 "state schema 는 4 를 유지한다" 조항을 대체한다 (현재 5). 기존 설치자를 자동 전환하지 않는다는 결정과 opt-out 배선·고정 로컬 프로필·forward 집행은 그대로 유효하다.
 
-ADR [0001](0001-로컬-OTLP-수신기-인라인-프록시-토폴로지.md) 의 "재배선은 opt-in, 기본 OFF" 결정(40행)을 대체한다.
+ADR [0001](0001-로컬-OTLP-수신기-인라인-프록시-토폴로지.md) 의 "재배선은 opt-in, 기본 OFF" 결정을 대체한다.
 같은 ADR 의 나머지 — 인라인 프록시 토폴로지, `localhost` 표기 제약, §5.4 상한선 — 는 그대로 유효하다.
 
 ## Context
@@ -38,7 +38,12 @@ ADR [0003](0003-원문과-tool-details를-로컬에만-보관.md) 이 정한 방
    `state.Local.Enabled` 를 켠다. 사용자의 탈출구는 `telemetryctl local disable` 이다.
 2. **로컬 OTel 설정은 회사 manifest 와 무관하게 고정한다** (`installer.localProfile`). endpoint 는
    `http://localhost:<port>`, protocol 은 `http/protobuf`, compression 은 없음, signals 는 셋 다 켬,
-   privacy 는 `collect_assistant_responses` 만 끄고 나머지 전부 켬. 값은 PROJ-45 티켓의 참고 자료를 따른다.
+   privacy 는 벤더 설정에 나타나는 다섯 항목만 고정한다 — `collect_assistant_responses` 만 끄고
+   `collect_user_prompts`·`collect_tool_details`·`collect_tool_content`·`collect_raw_api_bodies` 를 켠다.
+   `collect_user_email` 은 어느 벤더 설정에도 나타나지 않으므로 회사 값을 그대로 둔다 — 로컬에서 켜 봤자
+   쓰이지 않고, [ADR 0003](0003-원문과-tool-details를-로컬에만-보관.md) 이 `user.email` 을 절대 저장 금지
+   목록에 넣었다(그 allowlist 스키마가 두 번째 방어선이다 — 회사가 이 값을 켜도 로컬 저장은 막힌다).
+   값은 PROJ-45 티켓의 참고 자료를 따른다.
    응답 원문만 끄는 이유는 로컬 파이프라인이 그것을 쓰지 않으면서 배치 크기만 키우기 때문이다.
 3. **회사 manifest 준수는 전적으로 `internal/forward` 가 집행한다.** 축이 둘이다.
    - `Signals` — 회사가 끈 시그널은 `Enqueue` 가 큐에 넣지 않는다 (신규).
@@ -82,8 +87,8 @@ ADR [0003](0003-원문과-tool-details를-로컬에만-보관.md) 이 정한 방
 ### Negative
 - **데몬이 떠 있지 않은 채 배선된 상태는 텔레메트리가 로컬에도 회사에도 남지 않는 상태다.** opt-in 시절에는
   `local enable` 을 친 사람만 그 상태를 지나갔지만, 이제 enroll 한 모든 사람이 지나간다.
-  - 완화: `enroll` 이 `warnDaemonNotRunning` 으로 크게 알리고 ~~`telemetryctl daemon` 실행을 안내한다.~~
-  - ~~**근본 해결은 데몬 자동 실행 등록이고, 그것이 이 결정의 진짜 선행 조건이다.** 아래 Follow-up 참고.~~
+  - 완화: `enroll` 이 `warnDaemonNotRunning` 으로 크게 알린다. **(대체됨 — PROJ-55)** "`telemetryctl daemon` 실행을 안내한다"
+  - **(대체됨 — PROJ-55 로 닫힘)** "근본 해결은 데몬 자동 실행 등록이고, 그것이 이 결정의 진짜 선행 조건이다." 아래 Follow-up 참고.
   - **PROJ-55 (ADR 0007) 가 그 선행 조건을 채웠다.** `enroll` 이 배선 직후 자동 실행을 best-effort 로
     등록하고(launchd LaunchAgent / systemd user unit), 등록 후 데몬 생존까지 확인한다. 이제 이 Negative 는
     "등록할 수 없는 환경(Windows·systemd 없는 리눅스)" 과 "재시작으로 낫지 않는 영구 실패" 로 좁혀졌고,
@@ -96,15 +101,21 @@ ADR [0003](0003-원문과-tool-details를-로컬에만-보관.md) 이 정한 방
   `TestEnroll배선과enable배선이같은설정을만든다` 가 바이트 단위로 지킨다.
 
 ## Follow-up
-- ~~**데몬 자동 실행 등록 (launchd·systemd·Task Scheduler).** 이 ADR 의 Negative 첫 항목을 없애는 유일한 방법이고,
-  `README.md` 와 `docs/local-pipeline.md` 가 이미 차단성 선행 조건으로 지목해 둔 항목이다. 지금은 경고가 최선이다.~~
-  → **닫힘. PROJ-55 가 macOS·리눅스를 구현했다** (`internal/autostart`, ADR 0007). Windows 작업 스케줄러는 PROJ-56 이다.
+- **완료** — **데몬 자동 실행 등록 (launchd·systemd·Task Scheduler).** 이 ADR 의 Negative 첫 항목을 없애는 유일한 방법이고,
+  `README.md` 와 `docs/local-pipeline.md` 가 이미 차단성 선행 조건으로 지목해 둔 항목이었다.
+  **PROJ-55 가 macOS·리눅스를 구현했다** (`internal/autostart`, ADR 0007). Windows 작업 스케줄러는 PROJ-56 이다.
 - **기존 설치자 전환 정책 — 아직 열려 있다.** state schema 5는 PROJ-71에서 사용자 지정
   `local.retention_days`를 제거하는 데 사용됐으며, 기존 설치자의 `Local.Enabled`는 바꾸지 않는다(ADR 0008).
   따라서 이 follow-up은 여전히 열려 있고, 일괄 전환을 결정한다면 새 스키마 버전과 별도 결정이 필요하다.
   이전의 “schema 5를 이 항목에 사용한다”는 계획은 ADR 0008로 대체되었다.
 - **grpc 상위 전달.** grpc 테넌트는 배선 대상에서 빠진다 (`forward.ErrGRPCUnsupported`). 지원이 생기면
   `Apply` 의 강등 분기를 걷어낸다.
+- **강등(회사 직결) 경로의 privacy 집행 공백.** 강등되면(grpc 테넌트·키링 실패) Decision 3 의 집행 지점
+  (`internal/forward`)이 경로 밖이 되고, 벤더 설정 계층의 manifest 연결은 Claude 5필드 ·
+  **Codex `log_user_prompt` 1필드뿐**이며 `collect_user_email` 은 양 벤더 미집행이다.
+  **벤더별 설정의 privacy 매핑을 6필드 전부로 확장한다** — Codex 에 대응 설정 표면이 실재하는지 확인이
+  선행이고, 매핑 불가 필드는 허브 계약에 명시한다 (허브 `contracts/telemetry-ingest.md` §5 M13).
 - **Codex `log_user_prompt` 와 `environment`.** 티켓 참고 자료는 각각 `false` 와 `"e2e"` 였으나 전자는 Claude 와의
   대칭을 위해 `true` 로, 후자는 `resource_attributes` 파생을 유지하기로 했다. Codex 프롬프트 수집이 실제로
   필요한지는 세션 조립 결과를 보고 다시 본다.
+- 회사 telemetry token(`ptt_`)이 실리는 상위 전송 인증 모델은 [허브 ADR 0001](../../../docs/adr/0001-otlp-authentication-model.md) 이 소유한다.
