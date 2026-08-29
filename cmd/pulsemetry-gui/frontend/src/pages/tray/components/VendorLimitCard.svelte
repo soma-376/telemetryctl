@@ -74,21 +74,25 @@
       {#each rest as window (window.label)}
         <LimitWindowRow {window} accent={style.fg} />
       {/each}
-      <div class="flex items-baseline" style="gap:8px;padding-top:2px">
-        <span
-          class="truncate"
-          style="font-size:10.5px;color:#b3aba0;min-width:0"
-        >
-          {vendor.credential}
-        </span>
-        <span style="flex:1"></span>
-        <span
-          class="text-text-muted flex-none whitespace-nowrap"
-          style="font-size:10.5px"
-        >
-          {vendor.spend} · {vendor.tokens}
-        </span>
-      </div>
+      <!-- 자격증명·지출·토큰은 한도 조회에 들어 있지 않다(각각 토큰 유출 방지, 그리고
+           Breakdown 소관). 값이 없으면 줄을 통째로 접는다 — 빈 "·" 만 남기지 않는다. -->
+      {#if vendor.credential || vendor.spend || vendor.tokens}
+        <div class="flex items-baseline" style="gap:8px;padding-top:2px">
+          <span
+            class="truncate"
+            style="font-size:10.5px;color:#b3aba0;min-width:0"
+          >
+            {vendor.credential}
+          </span>
+          <span style="flex:1"></span>
+          <span
+            class="text-text-muted flex-none whitespace-nowrap"
+            style="font-size:10.5px"
+          >
+            {[vendor.spend, vendor.tokens].filter(Boolean).join(" · ")}
+          </span>
+        </div>
+      {/if}
     </div>
   {/if}
 </button>

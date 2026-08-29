@@ -23,6 +23,7 @@ func main() {
 		Description: "AI 도구 사용 현황 데스크톱 대시보드",
 		Services: []application.Service{
 			application.NewService(svc),
+			application.NewService(NewDashboard()),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),

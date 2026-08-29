@@ -5,17 +5,45 @@
   import XIcon from "$lib/icons/XIcon.svelte";
   import Dot from "$lib/components/ui/Dot.svelte";
 
-  let { syncedText }: { syncedText: string } = $props();
-  let pulling = $state(false);
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  import { TrayState } from "$lib/ipc/dashboard";
 
-  function pull() {
+  // 프롭 이름을 state 로 두면 안 된다. Svelte 는 선언된 변수 앞의 $ 를 스토어 구독으로
+  // 읽으므로, 이 파일의 $state(...) 룬이 전부 "state 스토어" 로 해석돼 컴파일이 깨진다.
+  let {
+    syncedText,
+    trayState,
+    onRefresh,
+  }: {
+    syncedText: string;
+    trayState?: TrayState;
+    onRefresh?: () => Promise<void> | void;
+  } = $props();
+
+  let pulling = $state(false);
+
+  async function pull() {
     if (pulling) return;
     pulling = true;
-    timer = setTimeout(() => (pulling = false), 1800);
+    // 로컬 SQLite 조회는 대개 한 프레임 안에 끝난다. 최소 표시 시간을 함께 기다리지
+    // 않으면 스피너가 번쩍이기만 해서 눌린 것인지 알 수 없다.
+    await Promise.all([onRefresh?.(), new Promise((r) => setTimeout(r, 450))]);
+    pulling = false;
   }
 
-  $effect(() => () => clearTimeout(timer));
+  // 상태 줄. 아직 첫 조회가 끝나지 않았으면(undefined) 초록 점을 켜지 않는다 —
+  // 확인하지 않은 것을 "모니터링 중" 이라고 말하면 안 된다.
+  const status = $derived.by(() => {
+    switch (trayState) {
+      case TrayState.TrayStateMonitoring:
+        return { text: "모니터링 중", color: "var(--color-success)" };
+      case TrayState.TrayStatePaused:
+        return { text: "수집 중지됨", color: "var(--color-inactive)" };
+      case TrayState.TrayStateNotInstalled:
+        return { text: "설치되지 않음", color: "var(--color-inactive)" };
+      default:
+        return { text: "연결 중", color: "var(--color-inactive)" };
+    }
+  });
 </script>
 
 <header
@@ -31,8 +59,8 @@
     class="text-text-secondary flex items-center"
     style="gap:5px;font-size:11px;flex:1;min-width:0"
   >
-    <Dot size={6} color="var(--color-success)" />
-    <span class="truncate">모니터링 중</span>
+    <Dot size={6} color={status.color} />
+    <span class="truncate">{status.text}</span>
   </span>
   <span class="flex-none whitespace-nowrap" style="font-size:12px;color:#b3aba0"
     >{pulling ? "조회 중" : syncedText}</span
