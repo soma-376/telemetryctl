@@ -11,10 +11,13 @@ import (
 	"github.com/your-org/pulsemetry/internal/event"
 )
 
-// 속성 allowlist 는 이 파일의 네 테이블이 전부다. 새 속성을 받으려면 여기에 한 줄을 넣고
-// event.Attributes/Measures 와 events 스키마에 컬럼을 같이 늘린다. 테이블에 없는 키는
-// 조용히 버려진다 — user.email·user.id·user.account_uuid·organization.id 가 여기 없는 것이
-// 곧 그 값들이 저장될 수 없다는 보장이다 (ADR 0003).
+// 속성 allowlist 는 이 파일의 테이블들이 전부다. 새 속성을 받으려면 여기에 한 줄을 넣고
+// event.Attributes/Measures 와 v3 스키마에 자리를 같이 만든다. 테이블에 없는 키는 조용히
+// 버려진다 — organization.id 가 여기 없는 것이 곧 그 값이 저장될 수 없다는 보장이다 (ADR 0003).
+//
+// user.email·user.id·user.account_uuid 와 작업 경로 원문은 v3 의 sessions 컬럼이 요구하므로
+// **로컬 저장 전용**으로 받는다 (ADR 0010). allowlist 를 넓히는 것은 로컬 저장에만 영향을
+// 준다 — 상위 전달은 Scrub 이 원본 바이트에 대해 따로 수행한다.
 //
 // 벤더가 두 종류라 같은 의미의 키가 여러 표기로 온다(Claude Code 는 snake_case 속성,
 // OTel 시맨틱 컨벤션은 점 표기). 별칭을 한 필드로 모으고, 한 데이터포인트에 별칭이 둘 이상
@@ -26,6 +29,9 @@ var stringAttrs = map[string]func(*event.Attributes, string){
 	"gen_ai.request.model": func(a *event.Attributes, v string) { a.Model = v },
 
 	"type": func(a *event.Attributes, v string) { a.Type = v },
+	// Codex 는 스트리밍 이벤트의 종류를 kind 로 보낸다 (response.completed 등).
+	// llm_calls 승격 규칙이 이 값을 보므로 같은 컬럼으로 모은다.
+	"kind": func(a *event.Attributes, v string) { a.Type = v },
 
 	"tool_name": func(a *event.Attributes, v string) { a.ToolName = v },
 	"tool.name": func(a *event.Attributes, v string) { a.ToolName = v },
@@ -72,9 +78,11 @@ var stringAttrs = map[string]func(*event.Attributes, string){
 	"deployment.environment.name": func(a *event.Attributes, v string) { a.Environment = v },
 }
 
-// pathAttrs 는 작업 디렉터리 경로를 담고 오는 속성이다. 값은 event.NormalizePath 를 거쳐
-// project_hash + project_name 으로만 들어가고 원본 문자열은 어디에도 남지 않는다.
-// 벤더가 이 중 무엇을 쓰는지 확정되지 않아 후보를 넓게 잡는다 — 잘못 잡아도 해시일 뿐이다.
+// pathAttrs 는 작업 디렉터리 경로를 담고 오는 속성이다. 값은 두 갈래로 들어간다 —
+// event.NormalizePath 를 거친 project_hash + project_name 과, 정규화하지 않은 원경로를 담는
+// Attributes.WorkspacePath 다 (ADR 0010). 앞쪽은 상위 전달과 관련된 코드가, 뒤쪽은
+// sessions.workspace_path 저장만이 쓴다.
+// 벤더가 이 중 무엇을 쓰는지 확정되지 않아 후보를 넓게 잡는다.
 var pathAttrs = map[string]struct{}{
 	"cwd":            {},
 	"workspace.path": {},
@@ -86,9 +94,11 @@ var pathAttrs = map[string]struct{}{
 // intMeasures 는 정수 수치 컬럼이다. 값이 double·string 으로 와도 정수로 맞춰 받는다 —
 // OTLP/JSON 왕복에서 int64 가 문자열이 되는 것이 정상이고, 벤더가 실수로 double 을 넣기도 한다.
 var intMeasures = map[string]func(*event.Measures, int64){
-	"input_tokens":          func(m *event.Measures, v int64) { m.InputTokens = event.Some(v) },
-	"output_tokens":         func(m *event.Measures, v int64) { m.OutputTokens = event.Some(v) },
-	"cache_read_tokens":     func(m *event.Measures, v int64) { m.CacheReadTokens = event.Some(v) },
+	"input_tokens":      func(m *event.Measures, v int64) { m.InputTokens = event.Some(v) },
+	"output_tokens":     func(m *event.Measures, v int64) { m.OutputTokens = event.Some(v) },
+	"cache_read_tokens": func(m *event.Measures, v int64) { m.CacheReadTokens = event.Some(v) },
+	// Codex 표기. 같은 의미의 다른 이름이라 같은 컬럼으로 모은다 — 없으면 조용히 버려진다.
+	"cached_input_tokens":   func(m *event.Measures, v int64) { m.CacheReadTokens = event.Some(v) },
 	"cache_creation_tokens": func(m *event.Measures, v int64) { m.CacheCreationTokens = event.Some(v) },
 
 	"duration_ms":               func(m *event.Measures, v int64) { m.DurationMS = event.Some(v) },
@@ -111,11 +121,23 @@ var boolMeasures = map[string]func(*event.Measures, bool){
 	"success": func(m *event.Measures, v bool) { m.Success = event.Some(v) },
 }
 
-// errorTypeAttrs 는 events.error_type 으로 가는 속성이다. 값은 sanitizeErrorType 을 통과해야 한다.
+// errorTypeAttrs 는 오류 문자열을 담고 오는 속성이다. 값은 **두 갈래**로 들어간다.
+//
+//   - error_type: sanitizeErrorType 을 통과한 값만. 정제 규칙은 그대로다.
+//   - error_message: 정제하지 않은 원문 (tool_calls.error_message, 로컬 저장 전용, ADR 0010).
+//
+// 두 경로를 분리해 둔 이유는 error_type 이 "타입처럼 생긴 값" 컬럼이기 때문이다. 정제를
+// 풀면 그 컬럼의 의미가 사라지고, 정제만 하면 오류 메시지 전문을 담을 자리가 없어진다.
 var errorTypeAttrs = map[string]struct{}{
 	"error":      {},
 	"error.type": {},
 	"error_type": {},
+}
+
+// errorMessageAttrs 는 오류 메시지 전용 속성이다. error_type 후보로는 보지 않는다.
+var errorMessageAttrs = map[string]struct{}{
+	"error.message": {},
+	"error_message": {},
 }
 
 // maxErrorTypeLen 은 error_type 으로 받아들일 최대 길이다. 이보다 길면 타입이 아니라 문장이다.
@@ -161,6 +183,8 @@ type carrier struct {
 	measure event.Measures
 
 	sessionID   string
+	turnKey     string
+	callKey     string
 	eventID     string
 	eventName   string
 	serviceName string
@@ -168,10 +192,12 @@ type carrier struct {
 
 	content [contentKindCount]rawContent
 
-	// target 은 tool_input 에서 뽑아 정규화한 대상 파일이다. 원본 경로 문자열은 여기 남지
-	// 않는다 — carrier 는 여러 데이터포인트에 복사되므로 전체 경로가 여기 실리면 그 복사본
-	// 전부가 경로를 들고 다니게 된다.
+	// target 은 tool_input 에서 뽑아 정규화한 대상 파일이다.
 	target event.Path
+	// targetRaw 는 같은 파일의 정규화하지 않은 원경로다. file_changes.file_path 가
+	// NOT NULL 이라 basename 만으로는 행을 만들 수 없어 따로 싣는다 (ADR 0010).
+	// **로컬 저장 전용**이다 — 상위 전달과 관련된 코드는 target 만 본다.
+	targetRaw string
 }
 
 type rawContent struct {
@@ -197,6 +223,28 @@ func (c *carrier) apply(key string, v *commonpb.AnyValue) {
 	case "session.id", "session_id", "conversation.id", "conversation_id":
 		if s := anyString(v); s != "" {
 			c.sessionID = s
+		}
+		return
+	case "prompt.id", "prompt_id", "turn.id", "turn_id":
+		if s := anyString(v); s != "" {
+			c.turnKey = s
+		}
+		return
+	case "tool_use_id", "tool.use.id", "call_id", "call.id":
+		if s := anyString(v); s != "" {
+			c.callKey = s
+		}
+		return
+	case "user.email", "user_email":
+		// 로컬 저장 전용 (ADR 0010). sessions.user_email 로만 간다.
+		if s := anyString(v); s != "" {
+			c.attr.UserEmail = s
+		}
+		return
+	case "user.id", "user_id", "user.account_uuid", "user_account_uuid", "account_uuid":
+		// 로컬 저장 전용 (ADR 0010). sessions.user_account_id 로만 간다.
+		if s := anyString(v); s != "" {
+			c.attr.UserAccountID = s
 		}
 		return
 	case "event.id", "event_id":
@@ -230,12 +278,25 @@ func (c *carrier) apply(key string, v *commonpb.AnyValue) {
 	if _, ok := pathAttrs[key]; ok {
 		if s := anyString(v); s != "" {
 			c.attr = c.attr.WithProject(event.NormalizePath(s))
+			c.attr.WorkspacePath = s
 		}
 		return
 	}
 	if _, ok := errorTypeAttrs[key]; ok {
-		if s := sanitizeErrorType(anyString(v)); s != "" {
+		raw := anyString(v)
+		if raw == "" {
+			return
+		}
+		// 원문은 언제나 보관하고, 정제를 통과한 것만 error_type 이 된다.
+		c.measure.ErrorMessage = raw
+		if s := sanitizeErrorType(raw); s != "" {
 			c.measure.ErrorType = s
+		}
+		return
+	}
+	if _, ok := errorMessageAttrs[key]; ok {
+		if s := anyString(v); s != "" {
+			c.measure.ErrorMessage = s
 		}
 		return
 	}
@@ -264,8 +325,8 @@ func (c *carrier) apply(key string, v *commonpb.AnyValue) {
 		// tool_input 은 원문이자 파일 경로의 유일한 출처다. 원문은 event_content 로,
 		// 경로는 정규화해 Target 으로 간다 — 같은 값이 두 규칙을 따로 통과한다 (ADR 0003).
 		if kind == event.ContentToolInput {
-			if p := toolInputTarget(v); p.Hash != "" {
-				c.target = p
+			if p, raw := toolInputTarget(v); p.Hash != "" {
+				c.target, c.targetRaw = p, raw
 			}
 		}
 	}

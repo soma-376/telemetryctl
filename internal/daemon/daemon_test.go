@@ -30,111 +30,157 @@ import (
 // TestEndToEndWalkthroughProducesScreenRows 는 이 단계의 핵심 회귀 방어선이다.
 //
 // 계획서 「검증」의 엔드투엔드 절차를 그대로 코드로 옮겼다. 픽스처를 수신기에 POST 하면
-// Activity 화면이 읽는 네 테이블(sessions·session_files·tool_events·vendors)과
-// Today 카드가 읽는 rollup_hourly 에 실제 행이 생겨야 한다.
+// v3 의 일곱 테이블(vendors·sessions·turns·events·llm_calls·tool_calls·file_changes)에
+// 실제 행이 생겨야 한다. 조회 시점 GROUP BY 가 읽을 원본이 이것들이다 (ADR 0009).
 func TestEndToEndWalkthroughProducesScreenRows(t *testing.T) {
 	h := start(t, harnessOptions{})
 
-	if resp := h.postFixture("logs_session_walkthrough.json"); resp.StatusCode != http.StatusOK {
-		t.Fatalf("수신기 응답 = %d, want 200", resp.StatusCode)
-	}
+	// **메트릭을 먼저 넣는다.** 이 픽스처의 lines_of_code 포인트는 세션의 첫 프롬프트보다
+	// 앞선 이벤트이고, 그런 이벤트는 가상 턴으로 가야 한다 (session/turn.go). 순서를
+	// 뒤집으면 열린 턴에 붙어 가상 턴이 생기지 않는다.
+	//
+	// 두 POST 사이에 waitDecoded 를 두는 이유는 수신기가 디코드 워커를 2개 돌리기
+	// 때문이다 (receiver.DefaultWorkers). POST 응답이 돌아왔다고 그 배치가 파이프라인에
+	// 먼저 들어갔다는 보장이 없어서, 없으면 이 테스트가 도착 순서에 따라 흔들린다.
 	if resp := h.postFixture("metrics_lines_of_code.json"); resp.StatusCode != http.StatusOK {
 		t.Fatalf("메트릭 응답 = %d, want 200", resp.StatusCode)
 	}
+	h.waitDecoded(1)
+	if resp := h.postFixture("logs_session_walkthrough.json"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("수신기 응답 = %d, want 200", resp.StatusCode)
+	}
+	h.waitDecoded(2)
 	h.stop()
 
 	db := h.openDB()
 
 	var (
-		id          string
-		vendor      string
-		title       string
-		titleSource string
-		status      string
-		toolCalls   int64
-		toolErrors  int64
-		apiErrors   int64
-		apiRequests int64
-		prompts     int64
-		projectName sql.NullString
+		sessionID                        int64
+		vendor, key                      string
+		title, workspace, email, account sql.NullString
+		terminal                         sql.NullString
+		startedAt, endedAt               sql.NullInt64
 	)
-	err := db.QueryRow(`SELECT session_id, vendor, COALESCE(title,''), COALESCE(title_source,''),
-	         status, tool_calls, tool_errors, api_errors, api_requests, prompts, project_name
-	    FROM sessions`).Scan(&id, &vendor, &title, &titleSource, &status,
-		&toolCalls, &toolErrors, &apiErrors, &apiRequests, &prompts, &projectName)
+	err := db.QueryRow(`SELECT id, vendor_id, session_key, title, workspace_path,
+	         user_email, user_account_id, terminal_type, started_at, ended_at
+	    FROM sessions`).Scan(&sessionID, &vendor, &key, &title, &workspace,
+		&email, &account, &terminal, &startedAt, &endedAt)
 	if err != nil {
 		t.Fatalf("sessions 조회: %v\n%s", err, h.logs.String())
 	}
 
-	if id != fixtureSession {
-		t.Errorf("session_id = %q, want %q", id, fixtureSession)
+	if key != fixtureSession {
+		t.Errorf("session_key = %q, want %q", key, fixtureSession)
 	}
 	if vendor != "claude_code" {
-		t.Errorf("vendor = %q, want claude_code", vendor)
+		t.Errorf("vendor_id = %q, want claude_code", vendor)
 	}
-	if titleSource != "prompt_head" {
-		t.Errorf("title_source = %q, want prompt_head (원문에서 제목이 나와야 한다)", titleSource)
+	if !strings.Contains(title.String, "temporality") {
+		t.Errorf("title = %q, want 첫 프롬프트에서 파생된 제목", title.String)
 	}
-	if !strings.Contains(title, "temporality") {
-		t.Errorf("title = %q, want 첫 프롬프트에서 파생된 제목", title)
+	// ADR 0010 이 로컬 저장을 허용한 식별 정보다. 이것이 비면 작업 폴더 열기가 성립하지 않는다.
+	if workspace.String != fixturePath {
+		t.Errorf("workspace_path = %q, want %q", workspace.String, fixturePath)
 	}
-	// 픽스처의 툴 이벤트는 Edit(성공)·Bash(실패)·Read(실패) 세 건이다.
-	if toolCalls != 3 {
-		t.Errorf("tool_calls = %d, want 3", toolCalls)
+	if email.String != fixtureEmail {
+		t.Errorf("user_email = %q, want %q", email.String, fixtureEmail)
 	}
-	if toolErrors != 2 {
-		t.Errorf("tool_errors = %d, want 2", toolErrors)
+	if account.String == "" {
+		t.Error("user_account_id 가 비었다")
 	}
-	if apiErrors != 1 {
-		t.Errorf("api_errors = %d, want 1", apiErrors)
+	if terminal.String != "iTerm.app" {
+		t.Errorf("terminal_type = %q", terminal.String)
 	}
-	if prompts != 1 {
-		t.Errorf("prompts = %d, want 1", prompts)
+	// 유휴 임계값(10분) 안쪽 시각을 주입했으므로 아직 진행 중이다 — 상태는 저장하지 않고
+	// ended_at IS NULL 로 계산한다 (ADR 0009).
+	if endedAt.Valid {
+		t.Errorf("ended_at = %d, want NULL (running)", endedAt.Int64)
 	}
-	// 총량(비용·토큰)은 메트릭에서만 세고 건수는 로그에서만 센다 — 같은 사실을 양쪽에서
-	// 세면 비용이 두 배가 되기 때문이다 (session/state.go apply). 이 픽스처에는 cost
-	// 메트릭이 없으므로 cost_usd 는 0 이고 api_requests 가 1 이어야 한다.
-	if apiRequests != 1 {
-		t.Errorf("api_requests = %d, want 1", apiRequests)
-	}
-	// 유휴 임계값(10분) 안쪽 시각을 주입했으므로 아직 진행 중이어야 한다.
-	if status != "running" {
-		t.Errorf("status = %q, want running", status)
-	}
-	// project_name 은 basename 만 — 전체 경로가 아니다 (ADR 0003).
-	if !projectName.Valid || projectName.String != "telemetryctl" {
-		t.Errorf("project_name = %v, want telemetryctl (basename 만)", projectName)
+	if !startedAt.Valid {
+		t.Error("started_at 이 NULL 이다")
 	}
 
-	if n := countRows(t, db, `SELECT COUNT(*) FROM tool_events WHERE session_id = ?`, id); n != 3 {
-		t.Errorf("tool_events = %d행, want 3", n)
+	// 턴: 첫 프롬프트가 연 실제 턴 하나 + 그 앞·밖의 이벤트를 담는 가상 턴 하나.
+	if n := countRows(t, db, `SELECT COUNT(*) FROM turns WHERE session_id = ?`, sessionID); n != 2 {
+		t.Errorf("turns = %d행, want 2 (실제 1 + 가상 1)", n)
 	}
-	if n := countRows(t, db, `SELECT COUNT(*) FROM session_files WHERE session_id = ?`, id); n == 0 {
-		t.Error("session_files 가 비었다 — tool_input 에서 파일이 나와야 한다")
+	if n := countRows(t, db, `SELECT COUNT(*) FROM turns WHERE turn_index IS NULL`); n != 1 {
+		t.Errorf("가상 턴 = %d행, want 1", n)
 	}
+	var promptText sql.NullString
+	if err := db.QueryRow(`SELECT prompt_text FROM turns WHERE turn_index IS NOT NULL`).Scan(&promptText); err != nil {
+		t.Fatalf("turns.prompt_text 조회: %v", err)
+	}
+	if !strings.Contains(promptText.String, fixturePrompt) {
+		t.Errorf("prompt_text = %q, want 프롬프트 원문 (원문 보관 기본 ON)", promptText.String)
+	}
+
+	// 이벤트: 로그 6건 + lines_of_code 메트릭 2포인트.
+	if n := countRows(t, db, `SELECT COUNT(*) FROM events`); n != 8 {
+		t.Errorf("events = %d행, want 8", n)
+	}
+	// seq 는 턴 안에서 1 부터 빈틈없이 오른다.
+	if n := countRows(t, db, `SELECT COUNT(*) FROM events WHERE seq < 1`); n != 0 {
+		t.Error("seq 가 1 미만인 행이 있다")
+	}
+
+	// 승격: api_request 로그 하나가 llm_calls 한 행이다. 메트릭은 승격하지 않는다.
+	if n := countRows(t, db, `SELECT COUNT(*) FROM llm_calls`); n != 1 {
+		t.Errorf("llm_calls = %d행, want 1", n)
+	}
+	var costUSD float64
+	if err := db.QueryRow(`SELECT cost_usd FROM llm_calls`).Scan(&costUSD); err != nil {
+		t.Fatalf("llm_calls.cost_usd 조회: %v", err)
+	}
+	if costUSD != 0.0342 {
+		t.Errorf("cost_usd = %v, want 0.0342 (두 배면 메트릭까지 승격한 것이다)", costUSD)
+	}
+
+	// 픽스처의 툴 이벤트는 Edit(성공)·Bash(실패)·Read(실패) 세 건이다.
+	if n := countRows(t, db, `SELECT COUNT(*) FROM tool_calls`); n != 3 {
+		t.Errorf("tool_calls = %d행, want 3", n)
+	}
+	if n := countRows(t, db, `SELECT COUNT(*) FROM tool_calls WHERE success = 0`); n != 2 {
+		t.Errorf("실패한 tool_calls = %d행, want 2", n)
+	}
+	// 경로가 섞인 오류 메시지는 error_type 이 아니라 error_message 로 간다 (ADR 0010).
+	if n := countRows(t, db,
+		`SELECT COUNT(*) FROM tool_calls WHERE error_message LIKE 'ENOENT%'`); n != 1 {
+		t.Error("error_message 에 벤더 오류 원문이 없다")
+	}
+
+	// Edit 의 tool_input 에서 파일 변경이 나온다. file_path 는 원경로다.
+	if n := countRows(t, db, `SELECT COUNT(*) FROM file_changes`); n != 1 {
+		t.Errorf("file_changes = %d행, want 1 — tool_input 에서 파일이 나와야 한다", n)
+	}
+	var filePath, operation string
+	if err := db.QueryRow(`SELECT file_path, operation FROM file_changes`).Scan(&filePath, &operation); err != nil {
+		t.Fatalf("file_changes 조회: %v", err)
+	}
+	if filePath != fixtureFilePath {
+		t.Errorf("file_path = %q, want %q", filePath, fixtureFilePath)
+	}
+	if operation != "modify" {
+		t.Errorf("operation = %q, want modify", operation)
+	}
+
 	if n := countRows(t, db, `SELECT COUNT(*) FROM vendors WHERE vendor = 'claude_code'`); n != 1 {
 		t.Errorf("vendors 행 = %d, want 1", n)
 	}
-	if n := countRows(t, db, `SELECT COUNT(*) FROM events`); n == 0 {
-		t.Error("events 가 비었다")
+	// status 는 사용자 설정이라 첫 삽입에서 enabled 로 시작한다.
+	var vendorStatus string
+	if err := db.QueryRow(`SELECT status FROM vendors`).Scan(&vendorStatus); err != nil {
+		t.Fatal(err)
 	}
-	if n := countRows(t, db, `SELECT COUNT(*) FROM event_content WHERE kind = 'prompt'`); n != 1 {
-		t.Errorf("event_content(prompt) = %d행, want 1 (원문 보관 기본 ON)", n)
-	}
-	// 한 이벤트에 tool_input 과 tool_result 가 함께 실려 온다. 조립기에는 한 건만
-	// 넘기지만 저장은 둘 다 되어야 한다.
-	if n := countRows(t, db, `SELECT COUNT(*) FROM event_content WHERE kind = 'tool_input'`); n == 0 {
-		t.Error("event_content(tool_input) 이 비었다 — 이벤트당 여러 원문이 전부 저장되어야 한다")
-	}
-	if n := countRows(t, db, `SELECT COUNT(*) FROM rollup_hourly WHERE dim = 'total'`); n == 0 {
-		t.Error("rollup_hourly(total) 이 비었다 — Today 카드의 출처다")
-	}
-	if n := countRows(t, db, `SELECT COUNT(*) FROM rollup_hourly WHERE dim = 'vendor'`); n == 0 {
-		t.Error("rollup_hourly(vendor) 가 비었다 — Agent 사용 비율의 출처다")
+	if vendorStatus != "enabled" {
+		t.Errorf("vendors.status = %q, want enabled", vendorStatus)
 	}
 
-	var lastRollup string
-	if err := db.QueryRow(`SELECT value FROM meta WHERE key = ?`, store.MetaLastRollupAt).Scan(&lastRollup); err != nil {
+	assertNoOrphans(t, db)
+
+	// meta.last_rollup_at 은 키를 유지하고 의미만 '마지막 성공 flush' 로 바뀌었다 (ADR 0009).
+	var lastFlush string
+	if err := db.QueryRow(`SELECT value FROM meta WHERE key = ?`, store.MetaLastRollupAt).Scan(&lastFlush); err != nil {
 		t.Errorf("meta.last_rollup_at 이 없다: %v", err)
 	}
 	var installID string
@@ -143,19 +189,19 @@ func TestEndToEndWalkthroughProducesScreenRows(t *testing.T) {
 	}
 }
 
-// TestNoFullPathsOutsideEventContent 는 ADR 0003 의 로컬 저장 규칙을 고정한다.
+// TestIdentityStaysInDesignatedColumns 는 ADR 0010 의 로컬 저장 규칙을 고정한다.
 //
-// 전체 경로가 허용된 자리는 event_content.body(tool_input 원문) 딱 하나다. 그 밖의
-// 테이블에는 해시와 basename 만 있어야 하고, user.email·organization.id 는 어디에도
-// 있으면 안 된다 — 그 둘은 allowlist 에 없으므로 담길 자리 자체가 없어야 한다.
-func TestNoFullPathsOutsideEventContent(t *testing.T) {
+// 식별 정보가 허용된 자리는 sessions(workspace_path·user_email·user_account_id) ·
+// tool_calls(target·error_message) · file_changes(file_path) 뿐이다. 그 밖의 테이블에는
+// 없어야 하고, organization.id 는 어디에도 있으면 안 된다 — allowlist 에 자리가 없다.
+func TestIdentityStaysInDesignatedColumns(t *testing.T) {
 	h := start(t, harnessOptions{})
 	h.postFixture("logs_session_walkthrough.json")
 	h.stop()
 
 	db := h.openDB()
 
-	for _, table := range []string{"sessions", "session_files", "tool_events", "events", "vendors", "rollup_hourly"} {
+	for _, table := range []string{"events", "turns", "vendors", "llm_calls"} {
 		dump := dumpText(t, db, table)
 		if strings.Contains(dump, fixturePath) {
 			t.Errorf("%s 에 전체 경로가 들어갔다 (%s)", table, fixturePath)
@@ -163,23 +209,30 @@ func TestNoFullPathsOutsideEventContent(t *testing.T) {
 		if strings.Contains(dump, fixtureEmail) {
 			t.Errorf("%s 에 user.email 이 들어갔다", table)
 		}
-		if strings.Contains(dump, fixtureOrgID) {
+	}
+	// organization.id 는 v3 에 대응 컬럼이 없다. 어느 테이블에도 있으면 안 된다.
+	for _, table := range []string{
+		"vendors", "sessions", "turns", "events", "llm_calls", "tool_calls", "file_changes",
+	} {
+		if strings.Contains(dumpText(t, db, table), fixtureOrgID) {
 			t.Errorf("%s 에 organization.id 가 들어갔다", table)
 		}
 	}
 
-	// 원문 쪽은 반대다 — 여기에는 있어야 정상이고, 없으면 파일별 변경을 만들 수 없다.
-	content := dumpText(t, db, "event_content")
-	if !strings.Contains(content, fixturePath) {
-		t.Error("event_content 에 tool_input 원문이 없다 — 파일 변경 목록의 원천이다")
+	// 허용된 자리에는 있어야 한다. 없으면 작업 폴더 열기와 파일 경로 검색이 성립하지 않는다.
+	if !strings.Contains(dumpText(t, db, "sessions"), fixturePath) {
+		t.Error("sessions.workspace_path 가 비었다")
 	}
-	if strings.Contains(content, fixtureEmail) {
-		t.Error("event_content 에 user.email 이 들어갔다")
+	if !strings.Contains(dumpText(t, db, "sessions"), fixtureEmail) {
+		t.Error("sessions.user_email 이 비었다")
+	}
+	if !strings.Contains(dumpText(t, db, "file_changes"), fixtureFilePath) {
+		t.Error("file_changes.file_path 가 원경로가 아니다")
 	}
 }
 
 // TestNoStoreContentDropsBodies 는 --no-store-content 가 저장소 단계에서 집행되는지 본다.
-// 그때는 전체 경로가 DB 어디에도 남지 않는다.
+// v3 에서 원문이 남는 자리는 turns.prompt_text 하나뿐이다.
 func TestNoStoreContentDropsBodies(t *testing.T) {
 	h := start(t, harnessOptions{
 		daemon: func(o *Options) { o.NoStoreContent = true },
@@ -188,16 +241,19 @@ func TestNoStoreContentDropsBodies(t *testing.T) {
 	h.stop()
 
 	db := h.openDB()
-	if n := countRows(t, db, `SELECT COUNT(*) FROM event_content`); n != 0 {
-		t.Errorf("event_content = %d행, want 0 (--no-store-content)", n)
+	if n := countRows(t, db, `SELECT COUNT(*) FROM turns WHERE prompt_text IS NOT NULL`); n != 0 {
+		t.Errorf("prompt_text 가 %d행 남았다 (--no-store-content)", n)
 	}
 	if n := countRows(t, db, `SELECT COUNT(*) FROM events`); n == 0 {
 		t.Error("이벤트까지 사라졌다 — 원문만 버려야 한다")
 	}
-	for _, table := range []string{"sessions", "session_files", "tool_events", "events", "event_content"} {
-		if dump := dumpText(t, db, table); strings.Contains(dump, fixturePath) {
-			t.Errorf("--no-store-content 인데 %s 에 전체 경로가 남았다", table)
-		}
+	// 프롬프트 원문은 사라지지만 파일 경로는 남는다. 둘은 다른 규칙이다 —
+	// file_changes.file_path 는 NOT NULL 이고 원문이 아니라 관측된 사실이다.
+	if !strings.Contains(dumpText(t, db, "file_changes"), fixtureFilePath) {
+		t.Error("--no-store-content 가 파일 변경까지 지웠다")
+	}
+	if strings.Contains(dumpText(t, db, "turns"), fixturePrompt) {
+		t.Error("--no-store-content 인데 프롬프트 원문이 남았다")
 	}
 }
 
@@ -354,9 +410,10 @@ func TestConcurrentPostsAreSerialized(t *testing.T) {
 	if n := countRows(t, db, `SELECT COUNT(*) FROM sessions`); n != 1 {
 		t.Errorf("sessions = %d행, want 1 (같은 session.id 는 하나로 접혀야 한다)", n)
 	}
-	if n := countRows(t, db, `SELECT COUNT(*) FROM tool_events`); n != 3 {
-		t.Errorf("tool_events = %d행, want 3 (타임라인이 중복 삽입되면 안 된다)", n)
+	if n := countRows(t, db, `SELECT COUNT(*) FROM tool_calls`); n != 3 {
+		t.Errorf("tool_calls = %d행, want 3 (같은 호출이 중복 삽입되면 안 된다)", n)
 	}
+	assertNoOrphans(t, db)
 }
 
 // TestGracefulShutdownFlushesPendingWork 는 종료가 제한 시간 안에 끝나면서
@@ -391,8 +448,11 @@ func TestGracefulShutdownFlushesPendingWork(t *testing.T) {
 	if n := countRows(t, db, `SELECT COUNT(*) FROM events`); n == 0 {
 		t.Errorf("종료 flush 후 events 가 비었다\n%s", h.logs.String())
 	}
-	if n := countRows(t, db, `SELECT COUNT(*) FROM rollup_hourly`); n == 0 {
-		t.Errorf("종료 flush 후 rollup_hourly 가 비었다\n%s", h.logs.String())
+	if n := countRows(t, db, `SELECT COUNT(*) FROM llm_calls`); n == 0 {
+		t.Errorf("종료 flush 후 llm_calls 가 비었다\n%s", h.logs.String())
+	}
+	if n := countRows(t, db, `SELECT COUNT(*) FROM tool_calls`); n == 0 {
+		t.Errorf("종료 flush 후 tool_calls 가 비었다\n%s", h.logs.String())
 	}
 }
 
@@ -593,7 +653,7 @@ func TestStateSchemaMigrationV3ToV5(t *testing.T) {
 	}
 	// 4. 그 기본값이 실제 동작에 반영됐다.
 	db := h.openDB()
-	if n := countRows(t, db, `SELECT COUNT(*) FROM event_content`); n == 0 {
+	if n := countRows(t, db, `SELECT COUNT(*) FROM turns WHERE prompt_text IS NOT NULL`); n == 0 {
 		t.Error("마이그레이션 후 원문이 저장되지 않았다")
 	}
 	var retention string

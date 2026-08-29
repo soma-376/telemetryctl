@@ -22,7 +22,7 @@ cmd/telemetryctl/            진입점
 internal/
   enrollment/ contract/      서버와의 enroll 계약
   receiver/ otlpdecode/      로컬 OTLP 수신기(127.0.0.1:4318) · 디코드 · 스크럽
-  store/ session/ rollup/    SQLite 로컬 집계
+  store/ session/           SQLite 로컬 저장 (v3: vendors→sessions→turns→events + 승격 테이블)
   forward/                   회사 엔드포인트로 상위 전송
   config/                    ~/.claude/settings.json · ~/.codex/config.toml 배선
   credential/ autostart/     OS 키링 · launchd/systemd 등록

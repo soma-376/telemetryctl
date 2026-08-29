@@ -19,6 +19,7 @@ const (
 	kindAPIRequest
 	kindAPIError
 	kindMCPConnection
+	kindSessionCount
 )
 
 var kindBySuffix = map[string]kind{
@@ -33,6 +34,7 @@ var kindBySuffix = map[string]kind{
 	"api_error":           kindAPIError,
 	"mcp.connection":      kindMCPConnection,
 	"mcp_connection":      kindMCPConnection,
+	"session.count":       kindSessionCount,
 }
 
 func classify(name string) kind {

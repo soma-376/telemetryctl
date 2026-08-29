@@ -3,27 +3,36 @@ package dashboard
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/your-org/pulsemetry/internal/store"
 )
 
-// Dim 은 rollup_hourly.dim 값이다. rollup.Dim 과 같은 어휘지만 타입을 여기 다시 두는 이유는
-// GUI 표면이 집계기 내부 타입에 묶이지 않게 하려는 것이다 — 이 값은 TS 로 그대로 나간다.
+// Dim 은 집계 축이다. 이 값은 TS 바인딩으로 그대로 나가므로 문자열이 곧 계약이다.
 type Dim string
 
 const (
-	DimTotal   Dim = "total"
-	DimVendor  Dim = "vendor"
-	DimModel   Dim = "model"
-	DimTool    Dim = "tool"
+	DimTotal  Dim = "total"
+	DimVendor Dim = "vendor"
+	DimModel  Dim = "model"
+	DimTool   Dim = "tool"
+	// DimProject 는 sessions.workspace_path 축이다. v1 의 project_hash 는 v3 에 없고,
+	// 대신 ADR 0010 이 워크스페이스 원경로를 로컬에 저장하기로 했다. Key 는 그 경로이고
+	// Label 은 basename 이다 — 경로를 그대로 표에 넣으면 한 줄이 화면을 넘긴다.
 	DimProject Dim = "project"
-	DimType    Dim = "type"
 )
 
+// validDims 는 받아들이는 축이다.
+//
+// v1 의 `type` 축(events.type)은 여기 없다. v3 events 에는 벤더 속성을 담는 컬럼이
+// 아예 없어 그 축을 만들 입력 자체가 사라졌다 (ADR 0009). 조용히 빈 결과를 주는 대신
+// 알 수 없는 축으로 거절한다 — 항상 비어 있는 축을 받아 주면 화면이 "데이터 없음" 으로
+// 오해한다.
 var validDims = map[Dim]bool{
 	DimTotal: true, DimVendor: true, DimModel: true,
-	DimTool: true, DimProject: true, DimType: true,
+	DimTool: true, DimProject: true,
 }
 
 // BucketBy 는 Breakdown 이 무엇을 축으로 묶을지 정한다.
@@ -41,14 +50,14 @@ const (
 
 const (
 	defaultBreakdownDays = 7
-	// maxBreakdownDays 는 고정 보존 기간과 같다. 그보다 오래된 롤업은 없다.
+	// maxBreakdownDays 는 고정 보존 기간과 같다. 그보다 오래된 데이터는 없다.
 	maxBreakdownDays      = store.DefaultRetentionDays
 	defaultBreakdownLimit = 50
 	maxBreakdownLimit     = 500
 	hoursPerDay           = 24
 )
 
-// BreakdownQuery 는 롤업 집계 조회 조건이다.
+// BreakdownQuery 는 집계 조회 조건이다.
 //
 // 구간은 두 방식 중 하나로 준다.
 //   - From·To 를 직접 준다 (UTC unix 초, To 배타). To 가 0 이면 지금까지.
@@ -73,15 +82,15 @@ type BreakdownQuery struct {
 type Row struct {
 	// Key 는 dim 의 key(BucketKey), "00"~"23"(BucketHourOfDay), "2026-08-10"(BucketDay) 다.
 	Key string `json:"key"`
-	// Label 은 표시용 문자열이다. dim=project 면 project_name 을 채운다 — key 는 해시라
-	// 그대로 보여 줄 수 없다. 이름을 못 찾으면 Key 와 같다.
+	// Label 은 표시용 문자열이다. dim=project 면 워크스페이스 경로의 basename 을 채운다 —
+	// 전체 경로는 표 한 줄을 넘긴다. 다른 축에서는 Key 와 같다.
 	Label string `json:"label"`
 	// StartAt 은 BucketDay 에서 그 날의 시작(UTC unix 초)이다. 다른 모드에서는 0.
 	StartAt int64 `json:"start_at"`
 	Totals
 }
 
-// Breakdown 은 rollup_hourly 집계다 — 「Agent 사용 비율」과 「시간대별 집중도」가 여기서 나온다.
+// Breakdown 은 조회 시점 집계다 — 「Agent 사용 비율」과 「시간대별 집중도」가 여기서 나온다.
 func (r *Reader) Breakdown(ctx context.Context, q BreakdownQuery) ([]Row, error) {
 	dim := q.Dim
 	if dim == "" {
@@ -90,6 +99,11 @@ func (r *Reader) Breakdown(ctx context.Context, q BreakdownQuery) ([]Row, error)
 	if !validDims[dim] {
 		// 조용히 빈 결과를 주면 화면이 오타를 "데이터 없음" 으로 오해한다.
 		return nil, fmt.Errorf("dashboard: 알 수 없는 집계 축 %q", string(q.Dim))
+	}
+	switch q.Bucket {
+	case BucketKey, BucketHourOfDay, BucketDay:
+	default:
+		return nil, fmt.Errorf("dashboard: 알 수 없는 묶음 단위 %q", string(q.Bucket))
 	}
 	loc, err := loadLocation(q.TZ)
 	if err != nil {
@@ -103,14 +117,20 @@ func (r *Reader) Breakdown(ctx context.Context, q BreakdownQuery) ([]Row, error)
 		return emptySkeleton(q.Bucket, tr, loc), nil
 	}
 
-	switch q.Bucket {
-	case BucketKey:
-		return breakdownByKey(ctx, db, dim, tr, clampLimit(q.Limit, defaultBreakdownLimit, maxBreakdownLimit))
-	case BucketHourOfDay, BucketDay:
-		return breakdownByTime(ctx, db, dim, q.Key, tr, loc, q.Bucket)
-	default:
-		return nil, fmt.Errorf("dashboard: 알 수 없는 묶음 단위 %q", string(q.Bucket))
+	key := q.Key
+	if dim == DimTotal || q.Bucket == BucketKey {
+		// 키별 집계는 모든 키를 돌려주는 것이 목적이고, total 에는 키가 하나뿐이다.
+		key = ""
 	}
+	rows, err := aggregate(ctx, db, dim, key, tr)
+	if err != nil {
+		return nil, err
+	}
+
+	if q.Bucket == BucketKey {
+		return byKey(dim, rows, clampLimit(q.Limit, defaultBreakdownLimit, maxBreakdownLimit)), nil
+	}
+	return byTime(rows, tr, loc, q.Bucket), nil
 }
 
 // resolveRange 는 From·To 또는 Days 에서 실제 구간을 만든다.
@@ -136,95 +156,65 @@ func (q BreakdownQuery) resolveRange(now time.Time, loc *time.Location) timeRang
 	return lastDays(now, loc, days)
 }
 
-// dim='total' 의 key 는 항상 빈 문자열이라 GROUP BY 해도 한 행이다. 그대로 두면 화면이
-// "전체" 한 줄을 받는다 — 특수 취급하지 않는 편이 분기를 줄인다.
-const breakdownByKeySQL = `SELECT "key", ` + rollupSumColumns + `
-FROM rollup_hourly
-WHERE dim = ? AND hour >= ? AND hour < ?
-GROUP BY "key"
-ORDER BY SUM(cost_usd) DESC, SUM(prompts) DESC, "key" ASC
-LIMIT ?`
-
-func breakdownByKey(ctx context.Context, db sqlQuerier, dim Dim, tr timeRange, limit int) (out []Row, err error) {
-	const op = "집계 조회"
-	rows, err := db.QueryContext(ctx, breakdownByKeySQL, string(dim), tr.StartSec(), tr.EndSec(), limit)
-	if err != nil {
-		return nil, queryErr(op, err)
-	}
-	defer closeRows(rows, op, &err)
-
-	out = []Row{}
-	for rows.Next() {
-		var row Row
-		dest := append([]any{&row.Key}, totalsDest(&row.Totals)...)
-		if serr := rows.Scan(dest...); serr != nil {
-			return nil, queryErr(op, serr)
+// byKey 는 시간 버킷을 접어 키별 합계를 만든다.
+//
+// dim='total' 의 키는 항상 빈 문자열이라 한 행이 된다. 그대로 두면 화면이 "전체" 한 줄을
+// 받는다 — 특수 취급하지 않는 편이 분기를 줄인다.
+func byKey(dim Dim, rows []aggRow, limit int) []Row {
+	out := []Row{}
+	index := map[string]int{}
+	for _, r := range rows {
+		i, ok := index[r.Key]
+		if !ok {
+			i = len(out)
+			index[r.Key] = i
+			out = append(out, Row{Key: r.Key, Label: labelFor(dim, r.Key)})
 		}
-		row.Label = row.Key
-		out = append(out, row)
+		out[i].Totals.add(r.Totals)
 	}
-	if dim == DimProject {
-		if err := labelProjects(ctx, db, out); err != nil {
-			return nil, err
+	// 비용 내림차순이 화면의 기본 순서다. 비용이 없는 축(도구·프롬프트만 있는 구간)에서도
+	// 순서가 흔들리지 않도록 프롬프트 수와 키를 차례로 얹는다.
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].CostUSD != out[j].CostUSD {
+			return out[i].CostUSD > out[j].CostUSD
 		}
+		if out[i].Prompts != out[j].Prompts {
+			return out[i].Prompts > out[j].Prompts
+		}
+		return out[i].Key < out[j].Key
+	})
+	if len(out) > limit {
+		out = out[:limit]
 	}
-	return out, nil
+	return out
 }
 
-// breakdownByTime 은 시간·날짜 축 집계다.
-//
-// SQL 로 묶지 않고 행을 받아 Go 에서 묶는다. rollup_hourly.hour 는 UTC 이고 축은 현지
-// 시각이라, SQL 로 하려면 고정 오프셋을 박아야 하는데 그러면 DST 가 있는 시간대에서 전환일
-// 전후가 한 시간씩 밀린다. time.Location 위에서 계산하면 그 문제가 없다.
-// 구간이 최대 400일이라 행 수는 유계다.
-const breakdownRawSQL = `SELECT hour, ` + rollupRawColumns + `
-FROM rollup_hourly
-WHERE dim = ? AND hour >= ? AND hour < ?`
-
-func breakdownByTime(ctx context.Context, db sqlQuerier, dim Dim, key string, tr timeRange, loc *time.Location, bucket BucketBy) (out []Row, err error) {
-	const op = "시간대별 집계 조회"
-
-	query := breakdownRawSQL
-	args := []any{string(dim), tr.StartSec(), tr.EndSec()}
-	if dim == DimTotal {
-		// dim='total' 의 key 는 '' 하나뿐이라 조건이 필요 없다.
-		key = ""
+// labelFor 는 화면에 보일 문자열이다.
+func labelFor(dim Dim, key string) string {
+	if dim != DimProject || key == "" {
+		return key
 	}
-	if key != "" {
-		query += ` AND "key" = ?`
-		args = append(args, key)
-	}
+	// 워크스페이스 경로의 basename 이 사람이 부르는 프로젝트 이름이다. 전체 경로는 JSON 의
+	// Key 에 그대로 남아 「작업 폴더 열기」 가 쓸 수 있다.
+	return filepath.Base(filepath.Clean(key))
+}
 
+// byTime 은 시간·날짜 축 집계다. UTC 시간 버킷을 현지 시각으로 귀속시킨다 (timezone.go).
+func byTime(rows []aggRow, tr timeRange, loc *time.Location, bucket BucketBy) []Row {
 	skeleton := emptySkeleton(bucket, tr, loc)
 	index := make(map[string]int, len(skeleton))
 	for i, row := range skeleton {
 		index[row.Key] = i
 	}
-
-	rows, err := db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, queryErr(op, err)
-	}
-	defer closeRows(rows, op, &err)
-
-	for rows.Next() {
-		var (
-			hour int64
-			t    Totals
-		)
-		dest := append([]any{&hour}, totalsDest(&t)...)
-		if serr := rows.Scan(dest...); serr != nil {
-			return nil, queryErr(op, serr)
-		}
-		k := bucketKeyOf(bucket, hour, loc)
-		i, ok := index[k]
+	for _, r := range rows {
+		i, ok := index[bucketKeyOf(bucket, r.Hour, loc)]
 		if !ok {
 			// 골격 밖의 버킷이다. From·To 를 직접 준 구간에서 경계가 정시가 아닐 때 생긴다.
 			continue
 		}
-		skeleton[i].Totals.add(t)
+		skeleton[i].Totals.add(r.Totals)
 	}
-	return skeleton, nil
+	return skeleton
 }
 
 func bucketKeyOf(bucket BucketBy, hour int64, loc *time.Location) string {
@@ -260,50 +250,4 @@ func emptySkeleton(bucket BucketBy, tr timeRange, loc *time.Location) []Row {
 	default:
 		return []Row{}
 	}
-}
-
-// labelProjects 는 project_hash 행에 사람이 읽을 이름을 붙인다.
-//
-// rollup_hourly 의 dim='project' key 는 해시다 (basename 은 서로 다른 프로젝트끼리 충돌해
-// 집계가 합쳐지므로 집계기가 해시를 쓴다). 화면에는 이름이 필요하니 sessions 에서 가져온다.
-func labelProjects(ctx context.Context, db sqlQuerier, rows []Row) (err error) {
-	const op = "프로젝트 이름 조회"
-	hashes := make([]any, 0, len(rows))
-	for _, r := range rows {
-		if r.Key != "" {
-			hashes = append(hashes, r.Key)
-		}
-	}
-	if len(hashes) == 0 {
-		return nil
-	}
-	// 가장 최근 세션의 이름을 고른다. 프로젝트 디렉터리 이름이 바뀌면 같은 해시에 여러 이름이
-	// 붙는데, 고르는 규칙이 없으면 새로고침마다 화면의 이름이 바뀐다.
-	// MAX() 와 함께 쓴 벌거벗은 컬럼이 그 최댓값 행에서 온다는 것은 SQLite 가 문서화한 동작이다.
-	query := `SELECT project_hash, project_name, MAX(started_at) FROM sessions
-WHERE project_hash IN (` + placeholders(len(hashes)) + `) AND project_name IS NOT NULL
-GROUP BY project_hash`
-	sqlRows, err := db.QueryContext(ctx, query, hashes...)
-	if err != nil {
-		return queryErr(op, err)
-	}
-	defer closeRows(sqlRows, op, &err)
-
-	names := make(map[string]string, len(hashes))
-	for sqlRows.Next() {
-		var (
-			hash, name string
-			latest     int64
-		)
-		if serr := sqlRows.Scan(&hash, &name, &latest); serr != nil {
-			return queryErr(op, serr)
-		}
-		names[hash] = name
-	}
-	for i := range rows {
-		if name, ok := names[rows[i].Key]; ok && name != "" {
-			rows[i].Label = name
-		}
-	}
-	return nil
 }

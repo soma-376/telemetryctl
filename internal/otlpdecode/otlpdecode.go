@@ -4,16 +4,22 @@
 //  2. 제거 재인코딩 — 상위 Collector 로 전달할 페이로드에서 manifest Privacy 가 금지한
 //     원문·tool details 를 지우고 받은 인코딩 그대로 다시 만든다 (ADR 0003).
 //
-// 이 패키지는 파이프라인에서 protobuf 의존성을 격리하는 층이다. receiver·session·rollup·store·
+// 이 패키지는 파이프라인에서 protobuf 의존성을 격리하는 층이다. receiver·session·store·
 // forward 중 어느 것도 proto 타입을 보지 않는다 — 전부 event.Event 와 Content 만 주고받는다.
 // 그래서 여기서 새 의존성을 늘리면 격리가 깨진다.
 //
 // 프라이버시 규칙이 두 벌이라는 점을 계속 의식해야 한다 (ADR 0003 Negative).
 //   - 로컬 저장 규칙: Attributes 는 allowlist 다. 여기 필드가 없는 속성은 버린다.
-//     user.email·user.id·user.account_uuid·organization.id 는 allowlist 에 없으므로
-//     Event 에 담길 자리 자체가 없고, 경로는 event.NormalizePath 의 해시+basename 으로만 들어간다.
+//     v3 스키마가 요구하는 값 — 작업 경로 원문 · user.email · user.id/account_uuid — 은
+//     **로컬 저장 전용 필드로** allowlist 에 있다 (ADR 0010). 경로는 해시+basename 과
+//     원경로를 나란히 산출하고, 상위 전달과 관련된 코드는 해시 쪽만 쓴다.
+//     organization.id 는 여전히 자리가 없다 — 그것을 요구하는 v3 컬럼이 없다.
 //   - 상위 전달 규칙: Scrub 은 denylist 다. 회사 Privacy 가 금지한 것만 지우고 나머지는 보존한다.
 //     상위 Collector 는 우리가 모르는 필드도 받을 수 있어야 하므로 여기서 allowlist 를 쓰면 안 된다.
+//
+// **allowlist 를 넓히는 것은 상위 전달을 넓히지 않는다.** 두 경로는 코드상 분리돼 있고
+// (`daemon/pipeline.go` 의 Consume 이 원본 바이트를 디코드 전에 포워더로 넘긴다),
+// privacy_test.go 가 같은 픽스처로 "로컬에는 있고 상위에는 없음" 을 양방향 단언한다.
 package otlpdecode
 
 import (

@@ -4,9 +4,13 @@
 // 표준 라이브러리만 import 하고 IO 를 하지 않는다. 여기 붙는 의존성은 뒤의 네 단계로 전부 번진다.
 //
 // 속성은 allowlist 다. catch-all map 을 두지 않으므로 여기 필드가 없는 속성은 디코더가 버린다.
-// 전체 작업 경로·user.email·user.id·user.account_uuid·organization.id·모든 토큰은
-// 이 패키지의 어떤 타입에도 담을 자리가 없다 (ADR 0003). 경로는 NormalizePath 가 만든
-// 해시 + basename 쌍으로만 들어온다.
+// organization.id 와 모든 토큰은 이 패키지의 어떤 타입에도 담을 자리가 없다 (ADR 0003).
+//
+// 작업 경로·user.email·user.id·user.account_uuid 는 v3 스키마가 요구하는 컬럼이 있어
+// **로컬 저장 전용 필드**로 받는다 (ADR 0010). 해시 필드(ProjectHash·ProjectName)와
+// 원경로 필드(WorkspacePath)가 나란히 존재하며 용도가 다르다 — 각 필드의 주석을 따른다.
+// 상위 전달 스크럽은 internal/forward 가 원본 바이트에 대해 따로 수행하므로 이 allowlist 를
+// 넓혀도 전달 규칙은 달라지지 않는다.
 package event
 
 import "fmt"
@@ -56,9 +60,18 @@ type Event struct {
 	TS             UnixNano //
 
 	SessionID string // OTel session.id. 리소스·로그 속성에 없을 수 있다
-	EventID   string // 로그 레코드의 event.id. 메트릭에는 보통 없다
-	TraceID   string
-	SpanID    string
+
+	// TurnKey 는 벤더가 직접 준 턴 식별자다 (Claude Code prompt.id, Codex turn.id).
+	// turns.turn_key 의 원천이고, 비어 있으면 session 패키지가 턴 경계를 추론한다.
+	TurnKey string
+	// CallKey 는 벤더가 직접 준 도구 호출 식별자다 (Claude Code tool_use_id, Codex call_id).
+	// 결정 이벤트와 결과 이벤트를 tool_calls 한 행으로 합치는 근거다. 비어 있으면
+	// session 패키지가 턴 안의 순번으로 합성한다 — store 는 절대 추측하지 않는다.
+	CallKey string
+
+	EventID string // 로그 레코드의 event.id. 메트릭에는 보통 없다
+	TraceID string
+	SpanID  string
 
 	// Sequence 는 한 페이로드 안에서 (Name, TS, Attr) 까지 같은 데이터포인트를 구분하는 순번이다.
 	// events 에 컬럼이 없고 DedupKey 입력으로만 쓴다 (§5.5 의 sequence).
@@ -106,9 +119,23 @@ type Attributes struct {
 	Entrypoint     string
 	Environment    string
 
-	// 경로가 이 타입에 들어오는 유일한 형태다 (ADR 0003). NormalizePath 의 결과만 넣는다.
+	// ProjectHash·ProjectName 은 NormalizePath 의 결과다. **상위 전달과 관련된 코드는
+	// 이 두 필드만 쓴다** — 전체 경로를 되돌릴 수 없는 형태이기 때문이다 (ADR 0003).
 	ProjectHash string
 	ProjectName string // basename 만
+
+	// ── 로컬 저장 전용 (ADR 0010) ───────────────────────────────────────────
+	// 아래 세 필드는 v3 스키마의 sessions.workspace_path · user_email · user_account_id
+	// 를 채우기 위한 값이다. **로컬 SQLite 에만 저장하고 상위로 전달하지 않는다.**
+	// 상위 전달 페이로드의 스크럽은 internal/forward 가 원본 바이트에 대해 따로 수행하므로
+	// 이 필드를 늘려도 전달 규칙은 달라지지 않는다 (ADR 0010 "근거" 절).
+
+	// WorkspacePath 는 정규화하지 않은 작업공간 원경로다. 해시가 필요하면 ProjectHash 를 쓴다.
+	WorkspacePath string
+	// UserEmail 은 관측된 사용자 이메일이다 (user.email).
+	UserEmail string
+	// UserAccountID 는 벤더 사용자 계정 ID 다 (user.id · user.account_uuid).
+	UserAccountID string
 }
 
 // WithProject 는 정규화된 경로를 project_hash·project_name 에 채운 사본을 돌려준다.
@@ -129,6 +156,7 @@ func (a Attributes) dedupFields() []string {
 		a.MCPServer, a.MCPTool,
 		a.StartType, a.TerminalType, a.AppVersion, a.Entrypoint, a.Environment,
 		a.ProjectHash, a.ProjectName,
+		a.WorkspacePath, a.UserEmail, a.UserAccountID,
 	}
 }
 
@@ -155,6 +183,10 @@ type Measures struct {
 	Attempt    Opt[int64]
 	Success    Opt[bool]
 	ErrorType  string
+	// ErrorMessage 는 벤더가 준 오류 문자열 원문이다. ErrorType 과 달리 정제하지 않으므로
+	// 경로·명령이 섞여 들어올 수 있다 — tool_calls.error_message 로만 가는 **로컬 저장 전용**
+	// 값이다 (ADR 0010). ErrorType 의 정제 규칙(sanitizeErrorType)은 이 필드와 무관하다.
+	ErrorMessage string
 
 	// 길이·바이트 수만 담는다. 본문은 event_content 로 따로 가고 이 타입을 지나가지 않는다.
 	PromptLength    Opt[int64]

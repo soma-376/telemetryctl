@@ -59,16 +59,70 @@ func OpenReadOnly(path string, opts ...Option) (*ReadOnly, error) {
 	return &ReadOnly{db: db, path: abs}, nil
 }
 
-// OpenReadOnlyIfPresent 는 DB 가 없으면 (nil, nil) 을 돌려준다.
+// OpenReadOnlyIfPresent 는 DB 가 **아직 읽을 수 없으면** (nil, nil) 을 돌려준다.
 //
 // GUI 의 ServiceStartup 이 부를 자리다. nil 은 "아직 데이터가 없다" 이고 호출자는 모든
 // 조회에 빈 결과를 돌려주면 된다 — 미설치를 error 로 만들면 앱이 뜨지 않는다.
+//
+// # 파일이 있다고 읽을 수 있는 것은 아니다
+//
+// 파일 부재만 보면 **데몬이 DB 를 만드는 중** 인 순간을 놓친다. Open 은 연결을 열어
+// 파일을 만든 뒤 마이그레이션을 실행하므로, 그 사이에는 파일이 존재하는데 테이블은 없다.
+// 그 순간에 붙은 조회 핸들은 모든 질의가 `no such table` 로 실패하고, 더 나쁘게는
+// dashboard.Reader 가 그 핸들을 붙잡은 것으로 보고 다시 붙지 않는다 — GUI 는 앱을 껐다
+// 켤 때까지 영구히 빈 화면과 에러 토스트를 반복한다.
+//
+// GUI 를 먼저 켜고 나중에 `local enable` 로 데몬을 붙이는 것이 정상 시나리오이므로
+// (ADR 0004), 이 창은 실제로 밟힌다. 그래서 여기서 스키마 준비 여부까지 보고, 아직이면
+// 파일이 없을 때와 **같은 답** 을 준다. 호출자의 재시도(Reopen)가 그대로 답이 된다.
 func OpenReadOnlyIfPresent(path string, opts ...Option) (*ReadOnly, error) {
 	r, err := OpenReadOnly(path, opts...)
 	if errors.Is(err, ErrNoDatabase) {
 		return nil, nil
 	}
-	return r, err
+	if err != nil {
+		return nil, err
+	}
+
+	ready, rerr := r.schemaReadable(context.Background())
+	if rerr != nil {
+		r.Close() //nolint:errcheck // 이미 실패한 핸들이라 닫기 실패에 할 일이 없다
+		return nil, rerr
+	}
+	if !ready {
+		r.Close() //nolint:errcheck // 위와 같다
+		return nil, nil
+	}
+	return r, nil
+}
+
+// minReadableSchemaVersion 은 조회가 성립하는 최소 스키마 버전이다.
+//
+// 마이그레이션 v3 가 도메인 테이블을 전부 지우고 다시 만들었다 (ADR 0009). 그보다 낮은
+// DB 에는 지금의 조회가 읽을 테이블이 아예 없으므로, 절반만 마이그레이션된 상태
+// (마이그레이션 도중 크래시)도 "아직 읽을 수 없음" 으로 본다.
+const minReadableSchemaVersion = 3
+
+// schemaReadable 은 마이그레이션이 조회 가능한 지점까지 진행됐는지 본다.
+//
+// meta 테이블 존재 여부를 sqlite_master 로 먼저 확인하는 이유는, 없는 테이블을 SELECT
+// 하면 드라이버 메시지를 문자열로 판별해야 하기 때문이다. 그 판별은 드라이버가 바뀌면
+// 조용히 무너진다.
+func (r *ReadOnly) schemaReadable(ctx context.Context) (bool, error) {
+	var tables int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'meta'`).Scan(&tables)
+	if err != nil {
+		return false, fmt.Errorf("store: 스키마 준비 확인 (%s): %w", r.path, err)
+	}
+	if tables == 0 {
+		return false, nil
+	}
+	v, err := readSchemaVersion(ctx, r.db)
+	if err != nil {
+		return false, err
+	}
+	return v >= minReadableSchemaVersion, nil
 }
 
 func (r *ReadOnly) Close() error { return r.db.Close() }

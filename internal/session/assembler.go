@@ -29,6 +29,12 @@ type Assembler struct {
 	handoff  time.Duration
 	sessions map[string]*state
 
+	// turns 는 턴 경계 추적기다. Add 와 분리해 둔 이유는 Add 의 시그니처를 바꾸지 않기
+	// 위해서다 — 턴 경계는 v3 스키마가 새로 요구한 것이고, 세션 조립의 기존 계약(이벤트
+	// 하나를 넣고 성공 여부를 받는다)에는 자리가 없다. 두 호출이 같은 이벤트를 각자 보는
+	// 약간의 중복을 감수하고 기존 호출자를 그대로 둔다.
+	turns *TurnTracker
+
 	// watchFrom 은 이 조립기가 처음 이벤트를 받은 시각이다. cumulative 첫 관측을 값 전체로
 	// 셀지 기준선으로만 잡을지를 가른다 (event.CumulativePoint.WatchFrom).
 	//
@@ -63,6 +69,7 @@ func New(opts ...Option) *Assembler {
 		idle:     DefaultIdleThreshold,
 		handoff:  DefaultHandoffWindow,
 		sessions: make(map[string]*state),
+		turns:    NewTurnTracker(),
 	}
 	for _, o := range opts {
 		o(a)
@@ -98,6 +105,12 @@ func (a *Assembler) Add(in Input) bool {
 	s.apply(in)
 	return true
 }
+
+// TurnOf 는 이벤트 하나가 귀속될 턴과 도구 호출 식별자를 돌려준다 (turn.go).
+//
+// Add 와 짝으로 부른다. 순서는 상관없지만 **같은 이벤트를 두 번 넣으면 안 된다** —
+// 도구 호출 순번이 그만큼 밀린다. 배선 단계의 중복 제거 창이 그 앞에 있다.
+func (a *Assembler) TurnOf(in Input) Turn { return a.turns.Assign(in) }
 
 // Advance 는 now 기준으로 유휴 임계값을 넘긴 세션을 마감하고 마감된 세션을 돌려준다.
 //
@@ -145,6 +158,7 @@ func (a *Assembler) Prune(before event.UnixSec) int {
 	for id, s := range a.sessions {
 		if v, ok := s.ended.Get(); ok && v < before {
 			delete(a.sessions, id)
+			a.turns.Forget(id)
 			n++
 		}
 	}

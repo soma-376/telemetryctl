@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/your-org/pulsemetry/internal/dashboard"
 	"github.com/your-org/pulsemetry/internal/store"
 )
 
@@ -22,20 +22,23 @@ func runPurgeCmd(t *testing.T, stdin string, canPrompt bool, args ...string) run
 	return runResult{code: code, stdout: out.String(), stderr: errBuf.String()}
 }
 
-// contentRows 는 event_content 에 남은 행 수다. "정말 지웠나/안 지웠나" 를 출력 문구가
-// 아니라 DB 로 확인해야 안전장치 테스트에 의미가 있다.
+// contentRows 는 DB 에 남은 원문 행 수다. "정말 지웠나/안 지웠나" 를 출력 문구가 아니라
+// DB 로 확인해야 안전장치 테스트에 의미가 있다.
+//
+// 세는 자리는 purge 가 지우는 자리와 같아야 한다 (store.ContentCounts). 조회 계층을 거치면
+// 이 테스트가 CLI 가 아니라 조회 계층의 상태를 확인하게 된다.
 func contentRows(t *testing.T, dataDir string) int64 {
 	t.Helper()
-	reader, err := dashboard.Open(store.PathIn(dataDir))
+	reader, err := store.OpenReadOnly(store.PathIn(dataDir))
 	if err != nil {
-		t.Fatalf("dashboard.Open: %v", err)
+		t.Fatalf("store.OpenReadOnly: %v", err)
 	}
 	defer reader.Close() //nolint:errcheck // 테스트 조회 핸들
-	st, err := reader.Status(context.Background())
+	counts, err := reader.ContentCounts(context.Background(), time.Time{})
 	if err != nil {
-		t.Fatalf("Status: %v", err)
+		t.Fatalf("ContentCounts: %v", err)
 	}
-	return st.Counts.EventContent
+	return counts.Total()
 }
 
 func TestPurgeRequiresContentFlag(t *testing.T) {
@@ -74,10 +77,10 @@ func TestPurgeFullRequiresConfirmation(t *testing.T) {
 		wantCode  int
 		wantRows  int64
 	}{
-		{name: "확인 프롬프트에 yes 아닌 답", stdin: "no\n", canPrompt: true, wantCode: 1, wantRows: 1},
-		{name: "빈 입력", stdin: "\n", canPrompt: true, wantCode: 1, wantRows: 1},
-		{name: "y 만으로는 안 된다", stdin: "y\n", canPrompt: true, wantCode: 1, wantRows: 1},
-		{name: "비대화 실행에서 --yes 없음", stdin: "", canPrompt: false, wantCode: 2, wantRows: 1},
+		{name: "확인 프롬프트에 yes 아닌 답", stdin: "no\n", canPrompt: true, wantCode: 1, wantRows: seedPromptRows},
+		{name: "빈 입력", stdin: "\n", canPrompt: true, wantCode: 1, wantRows: seedPromptRows},
+		{name: "y 만으로는 안 된다", stdin: "y\n", canPrompt: true, wantCode: 1, wantRows: seedPromptRows},
+		{name: "비대화 실행에서 --yes 없음", stdin: "", canPrompt: false, wantCode: 2, wantRows: seedPromptRows},
 		{name: "yes 입력", stdin: "yes\n", canPrompt: true, wantCode: 0, wantRows: 0},
 		{name: "--yes 로 비대화 진행", stdin: "", canPrompt: false, extra: []string{"--yes"}, wantCode: 0, wantRows: 0},
 	}
@@ -85,8 +88,8 @@ func TestPurgeFullRequiresConfirmation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir, args := tempTarget(t)
 			seed(t, dir, time.Now().Add(-30*time.Minute))
-			if got := contentRows(t, dir); got != 1 {
-				t.Fatalf("준비 상태의 원문 = %d행, want 1", got)
+			if got := contentRows(t, dir); got != seedPromptRows {
+				t.Fatalf("준비 상태의 원문 = %d행, want %d", got, seedPromptRows)
 			}
 
 			res := runPurgeCmd(t, tt.stdin, tt.canPrompt, append(append(args, "--content"), tt.extra...)...)
@@ -115,8 +118,8 @@ func TestPurgeBefore(t *testing.T) {
 		if res.code != 0 {
 			t.Fatalf("code = %d (stderr: %s)", res.code, res.stderr)
 		}
-		if got := contentRows(t, dir); got != 1 {
-			t.Errorf("남은 원문 = %d행, want 1", got)
+		if got := contentRows(t, dir); got != seedPromptRows {
+			t.Errorf("남은 원문 = %d행, want %d", got, seedPromptRows)
 		}
 	})
 
@@ -131,7 +134,7 @@ func TestPurgeBefore(t *testing.T) {
 		if got := contentRows(t, dir); got != 0 {
 			t.Errorf("남은 원문 = %d행, want 0", got)
 		}
-		res.mustContain(t, "원문 1행을 지웠습니다")
+		res.mustContain(t, fmt.Sprintf("원문 %d행을 지웠습니다", seedPromptRows))
 	})
 
 	t.Run("해석할 수 없는 --before 는 거부", func(t *testing.T) {

@@ -71,8 +71,8 @@ type Result struct {
 	// Contents 는 원문이다. Events 와 분리돼 있고 event_content 로만 간다 —
 	// 상위 Collector 로는 절대 나가지 않는다 (ADR 0003).
 	Contents []Content
-	// Targets 는 이벤트가 건드린 파일이다. session_files 와 tool_events.target_* 의 원천이고
-	// 값은 정규화된 해시+basename 뿐이다.
+	// Targets 는 이벤트가 건드린 파일이다. file_changes 와 tool_calls.target 의 원천이고
+	// 정규화된 해시+basename 과 로컬 저장 전용 원경로를 함께 싣는다 (ADR 0010).
 	Targets  []Target
 	Rejected Rejected
 }
@@ -207,6 +207,8 @@ func (d *decoder) metric(base carrier, m *metricspb.Metric) {
 			Name:        m.GetName(),
 			TS:          metricTimestamp(dp, &c),
 			SessionID:   c.sessionID,
+			TurnKey:     c.turnKey,
+			CallKey:     c.callKey,
 			EventID:     c.eventID,
 			Temporality: temporality,
 			StartTS:     startTimestamp(dp),
@@ -247,6 +249,8 @@ func (d *decoder) logRecord(base carrier, rec *logspb.LogRecord) {
 		Name:      name,
 		TS:        logTimestamp(rec, &c),
 		SessionID: c.sessionID,
+		TurnKey:   c.turnKey,
+		CallKey:   c.callKey,
 		EventID:   c.eventID,
 		TraceID:   idHex(rec.GetTraceId()),
 		SpanID:    idHex(rec.GetSpanId()),
@@ -304,7 +308,9 @@ func (d *decoder) appendTarget(index int, dedupKey string, c *carrier) {
 	if c.target.Hash == "" {
 		return
 	}
-	d.targets = append(d.targets, Target{EventIndex: index, DedupKey: dedupKey, Path: c.target})
+	d.targets = append(d.targets, Target{
+		EventIndex: index, DedupKey: dedupKey, Path: c.target, RawPath: c.targetRaw,
+	})
 }
 
 // temporalityOf 는 proto 의 aggregation_temporality 를 실제로 읽어 옮긴다.

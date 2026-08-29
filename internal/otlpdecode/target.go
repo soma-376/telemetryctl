@@ -19,16 +19,21 @@ import (
 // 쓸 자리가 없는 필드를 들고 다니게 되므로, 원문(Content)과 같은 방식으로 이벤트 옆에
 // 따로 실어 보낸다.
 //
-// # 왜 event.Path 인가
+// # 왜 두 필드인가
 //
-// session 패키지는 "이미 정규화된 값만 받는다" 를 계약으로 갖는다. 여기서 event.NormalizePath
-// 를 거쳐 해시+basename+확장자로 줄이므로 전체 경로 문자열은 이 구조체를 통해 세션·저장소로
-// 흘러갈 수 없다 (ADR 0003). 전체 경로는 tool_input **원문**(event_content.body)에만 남는다 —
-// 그쪽은 16KB 캡·400일 보존·상위 미전달 조건으로 허용된 자리다(ADR 0003·0008).
+// Path 는 event.NormalizePath 를 거친 해시+basename+확장자다. 상위 전달과 관련된 코드는
+// 이쪽만 본다 (ADR 0003).
+//
+// RawPath 는 정규화하지 않은 원경로다. v3 의 file_changes.file_path 가 NOT NULL 이고
+// 문서가 그 컬럼을 "파일 경로" 로 정의하므로 basename 을 넣으면 같은 이름의 다른 디렉터리
+// 파일이 한 행으로 뭉개진다. 그래서 **로컬 저장 전용**으로 원경로를 나란히 싣는다 (ADR 0010).
 type Target struct {
 	EventIndex int
 	DedupKey   string
-	Path       event.Path
+	// Path 는 해시+basename 이다. 상위 전달과 관련된 코드는 이 필드만 쓴다.
+	Path event.Path
+	// RawPath 는 정규화하지 않은 원경로다. 로컬 저장(file_changes.file_path)만 쓴다.
+	RawPath string
 }
 
 // filePathKeys 는 tool_input 안에서 대상 파일 경로를 담고 오는 키다.
@@ -45,14 +50,14 @@ var filePathKeys = []string{"file_path", "filePath", "notebook_path", "notebookP
 // 문자열 쪽은 최상위 객체만 얕게 훑는다 — 중첩 구조를 재귀로 뒤지면 tool_result 본문에
 // 우연히 들어 있는 경로까지 대상으로 잡힌다.
 //
-// 경로를 못 찾으면 제로값 Path 다. 명령만 있는 tool_input({"command":"go test ..."})이
+// 두 값을 함께 돌려준다 — 정규화 결과와 원경로다. 경로를 못 찾으면 둘 다 제로값이다. 명령만 있는 tool_input({"command":"go test ..."})이
 // 그 경우다 — tool_events.target_name 의 "명령 첫 토큰" 은 아직 채우지 않는다.
-func toolInputTarget(v *commonpb.AnyValue) event.Path {
+func toolInputTarget(v *commonpb.AnyValue) (event.Path, string) {
 	raw := rawToolInputPath(v)
 	if raw == "" {
-		return event.Path{}
+		return event.Path{}, ""
 	}
-	return event.NormalizePath(raw)
+	return event.NormalizePath(raw), raw
 }
 
 func rawToolInputPath(v *commonpb.AnyValue) string {

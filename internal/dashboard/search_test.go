@@ -6,37 +6,39 @@ import (
 	"testing"
 	"time"
 
-	"github.com/your-org/pulsemetry/internal/event"
 	"github.com/your-org/pulsemetry/internal/session"
 	"github.com/your-org/pulsemetry/internal/store"
 )
 
 // seedSearch 는 세 출처가 각각 다른 세션에서만 걸리도록 데이터를 놓는다.
 // 하나라도 빠뜨린 구현은 그 세션을 못 찾는다.
+//
+// v3 의 출처는 sessions.title · file_changes.file_path · turns.prompt_text 다 (ADR 0009).
 func seedSearch(f *fixture) {
-	sec := event.SecFromTime(testNow.Add(-time.Hour))
-	sessions := []session.Session{
-		// 제목에만 있다
-		newSession("s-title", testNow.Add(-3*time.Hour), func(s *session.Session) {
-			s.Title = "Collector 전달 프록시 구현"
-		}),
-		// 파일명에만 있다
-		newSession("s-file", testNow.Add(-2*time.Hour), func(s *session.Session) {
-			s.Title = "관련 없는 제목"
-			s.Files = []session.File{
-				{PathHash: "h1", Name: "proxy_handler.go", Ext: "go", Edits: 1, LastTS: sec},
-			}
-		}),
-		// 원문에만 있다
-		newSession("s-content", testNow.Add(-time.Hour), func(s *session.Session) {
-			s.Title = "다른 작업"
-		}),
-	}
+	at := testNow.Add(-time.Hour)
 	f.write(store.Batch{
-		Sessions: sessions,
+		Sessions: []session.Session{
+			// 제목에만 있다
+			newSession("s-title", testNow.Add(-3*time.Hour), func(s *session.Session) {
+				s.Title = "Collector 전달 프록시 구현"
+			}),
+			// 파일 경로에만 있다
+			newSession("s-file", testNow.Add(-2*time.Hour), func(s *session.Session) {
+				s.Title = "관련 없는 제목"
+			}),
+			// 원문에만 있다
+			newSession("s-content", at, func(s *session.Session) {
+				s.Title = "다른 작업"
+			}),
+		},
 		Events: []store.EventRecord{
-			prompt("s-content", testNow.Add(-time.Hour), 1, "인증 토큰 검증 및 프록시 경유 전달을 구현해줘"),
-			prompt("s-title", testNow.Add(-3*time.Hour), 2, "전혀 무관한 본문"),
+			toolRecord("s-file", "t-file", "call-file", testNow.Add(-2*time.Hour), 1, toolSpec{
+				ToolName: "Edit",
+				Target:   workspaceA + "/proxy_handler.go",
+				File:     fileChange(workspaceA+"/proxy_handler.go", 3, 1),
+			}),
+			promptRecord("s-content", "t-content", at, 2, "인증 토큰 검증 및 프록시 경유 전달을 구현해줘"),
+			promptRecord("s-title", "t-title", testNow.Add(-3*time.Hour), 3, "전혀 무관한 본문"),
 		},
 	})
 }
@@ -47,14 +49,14 @@ func TestSearchCoversThreeSources(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name        string
-		text        string
-		wantSession string
-		wantSource  string
+		name       string
+		text       string
+		wantKey    string
+		wantSource string
 	}{
-		{name: "제목", text: "Collector", wantSession: "s-title", wantSource: SourceTitle},
-		{name: "파일명", text: "proxy_handler", wantSession: "s-file", wantSource: SourceFile},
-		{name: "원문 (한글)", text: "인증", wantSession: "s-content", wantSource: SourceContent},
+		{name: "제목", text: "Collector", wantKey: "s-title", wantSource: SourceTitle},
+		{name: "파일 경로", text: "proxy_handler", wantKey: "s-file", wantSource: SourceFile},
+		{name: "원문 (한글)", text: "인증", wantKey: "s-content", wantSource: SourceContent},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -64,18 +66,21 @@ func TestSearchCoversThreeSources(t *testing.T) {
 			}
 			var found *Hit
 			for i := range hits {
-				if hits[i].SessionID == tc.wantSession {
+				if hits[i].SessionKey == tc.wantKey {
 					found = &hits[i]
 				}
 			}
 			if found == nil {
-				t.Fatalf("Search(%q) 가 %s 를 못 찾았다 (결과 %d건)", tc.text, tc.wantSession, len(hits))
+				t.Fatalf("Search(%q) 가 %s 를 못 찾았다 (결과 %d건)", tc.text, tc.wantKey, len(hits))
 			}
 			if !containsString(found.Sources, tc.wantSource) {
 				t.Errorf("Sources = %v, want %q 포함", found.Sources, tc.wantSource)
 			}
 			if found.Title == "" {
 				t.Error("Title 이 비었다 — 세션 메타데이터가 붙지 않았다")
+			}
+			if found.ID <= 0 {
+				t.Error("ID 가 비었다 — Session() 에 그대로 넘길 수 있어야 한다")
 			}
 		})
 	}
@@ -85,16 +90,18 @@ func TestSearchCoversThreeSources(t *testing.T) {
 // 클릭 대상도 같아 사용자에게 아무 정보가 없다.
 func TestSearchMergesSourcesPerSession(t *testing.T) {
 	f := newFixture(t)
-	sec := event.SecFromTime(testNow.Add(-time.Hour))
+	at := testNow.Add(-time.Hour)
 	f.write(store.Batch{
 		Sessions: []session.Session{
-			newSession("s-all", testNow.Add(-time.Hour), func(s *session.Session) {
-				s.Title = "프록시 구현"
-				s.Files = []session.File{{PathHash: "h", Name: "프록시.go", Edits: 1, LastTS: sec}}
-			}),
+			newSession("s-all", at, func(s *session.Session) { s.Title = "프록시 구현" }),
 		},
 		Events: []store.EventRecord{
-			prompt("s-all", testNow.Add(-time.Hour), 1, "프록시 코드를 고쳐줘"),
+			promptRecord("s-all", "t-all", at, 1, "프록시 코드를 고쳐줘"),
+			toolRecord("s-all", "t-all", "call-all", at.Add(time.Second), 2, toolSpec{
+				ToolName: "Edit",
+				Target:   workspaceA + "/프록시.go",
+				File:     fileChange(workspaceA+"/프록시.go", 2, 0),
+			}),
 		},
 	})
 
@@ -116,33 +123,46 @@ func TestSearchMergesSourcesPerSession(t *testing.T) {
 	}
 }
 
-// FTS5 의 MATCH 오른쪽은 질의 언어다. 사용자 입력을 그대로 넣으면 문법 오류나 연산자 해석이
-// 일어나고, 그 에러가 Promise reject 로 화면에 그대로 뜬다.
-func TestSearchSurvivesFTSMetacharacters(t *testing.T) {
+// 작업 폴더 경로도 검색 출처다 (PROJ-90). 제목·원문 어디에도 없는 낱말이라도 그 세션이
+// 어느 폴더에서 돌았는지로 되찾을 수 있어야 한다.
+func TestSearchCoversWorkspacePath(t *testing.T) {
+	f := newFixture(t)
+	f.write(store.Batch{Sessions: []session.Session{
+		newSession("s-ws-a", testNow.Add(-2*time.Hour), func(s *session.Session) {
+			s.Title = "제목에는 없는 낱말"
+			s.WorkspacePath = workspaceB
+		}),
+		newSession("s-ws-b", testNow.Add(-time.Hour), func(s *session.Session) {
+			s.Title = "제목에는 없는 낱말"
+			s.WorkspacePath = workspaceA
+		}),
+	}})
+
+	hits, err := f.reader.Search(context.Background(), SearchQuery{Text: "pulsemetry-backend"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(hits) != 1 || hits[0].SessionKey != "s-ws-a" {
+		t.Fatalf("결과 = %+v, want s-ws-a 하나", hits)
+	}
+	if !containsString(hits[0].Sources, SourceWorkspace) {
+		t.Errorf("Sources = %v, want %q 포함", hits[0].Sources, SourceWorkspace)
+	}
+}
+
+// LIKE 의 오른쪽은 질의 언어가 아니라 그냥 문자열이라 FTS5 시절의 문법 오류는 사라졌다.
+// 그래도 와일드카드와 SQL 주입 입력은 여전히 값 바인딩과 escape 로 막아야 한다.
+func TestSearchSurvivesHostileInput(t *testing.T) {
 	f := newFixture(t)
 	seedSearch(f)
 	ctx := context.Background()
 
 	inputs := []string{
-		`"`,
-		`""`,
-		`*`,
-		`AND`,
-		`OR`,
-		`NOT`,
-		`NEAR(`,
-		`NEAR("a" b)`,
-		`인증 AND 토큰`,
-		`토큰 OR`,
-		`^prefix`,
-		`(unbalanced`,
-		`a-b`,
-		`"인증 토큰"`,
-		`{}`,
-		`:`,
-		`%_\`,
-		`인증*`,
+		`"`, `""`, `*`, `AND`, `OR`, `NOT`, `NEAR(`, `NEAR("a" b)`,
+		`인증 AND 토큰`, `토큰 OR`, `^prefix`, `(unbalanced`, `a-b`,
+		`"인증 토큰"`, `{}`, `:`, `%_\`, `인증*`,
 		`'; DROP TABLE sessions;--`,
+		`%`, `_`, `\`,
 		strings.Repeat("가", 500),
 		strings.Repeat("a b ", 200),
 	}
@@ -164,14 +184,16 @@ func TestSearchSurvivesFTSMetacharacters(t *testing.T) {
 	}
 }
 
-// 연산자처럼 보이는 낱말은 낱말로 취급돼야 한다.
+// 연산자처럼 보이는 낱말은 낱말로 취급돼야 한다. LIKE 는 애초에 연산자를 해석하지 않으므로
+// 부분 문자열이 그대로 맞아야 한다.
 func TestSearchTreatsOperatorsAsWords(t *testing.T) {
 	f := newFixture(t)
+	at := testNow.Add(-time.Hour)
 	f.write(store.Batch{
-		Sessions: []session.Session{newSession("s-op", testNow.Add(-time.Hour))},
+		Sessions: []session.Session{newSession("s-op", at)},
 		Events: []store.EventRecord{
-			prompt("s-op", testNow.Add(-time.Hour), 1, "AND 게이트 회로를 설명해줘"),
-			prompt("s-op", testNow.Add(-time.Hour), 2, "관련 없는 본문"),
+			promptRecord("s-op", "t-op-1", at, 1, "AND 게이트 회로를 설명해줘"),
+			promptRecord("s-op", "t-op-2", at.Add(time.Second), 2, "관련 없는 본문"),
 		},
 	})
 
@@ -184,13 +206,15 @@ func TestSearchTreatsOperatorsAsWords(t *testing.T) {
 	}
 }
 
-// 접두 검색 — 검색창은 타이핑 중에도 결과를 보여야 한다.
-func TestSearchMatchesPrefix(t *testing.T) {
+// 부분 일치 — 검색창은 타이핑 중에도 결과를 보여야 한다.
+// FTS5 의 접두 검색(`*`)이 사라진 자리를 LIKE '%...%' 가 대신한다.
+func TestSearchMatchesSubstring(t *testing.T) {
 	f := newFixture(t)
+	at := testNow.Add(-time.Hour)
 	f.write(store.Batch{
-		Sessions: []session.Session{newSession("s-prefix", testNow.Add(-time.Hour))},
+		Sessions: []session.Session{newSession("s-prefix", at)},
 		Events: []store.EventRecord{
-			prompt("s-prefix", testNow.Add(-time.Hour), 1, "Collector 전달 프록시 구현"),
+			promptRecord("s-prefix", "t-prefix", at, 1, "Collector 전달 프록시 구현"),
 		},
 	})
 
@@ -199,7 +223,7 @@ func TestSearchMatchesPrefix(t *testing.T) {
 		t.Fatalf("Search: %v", err)
 	}
 	if len(hits) != 1 || !containsString(hits[0].Sources, SourceContent) {
-		t.Fatalf("접두 검색 결과 = %+v, want s-prefix 의 원문 히트", hits)
+		t.Fatalf("부분 일치 결과 = %+v, want s-prefix 의 원문 히트", hits)
 	}
 }
 
@@ -215,7 +239,7 @@ func TestSearchEscapesLikeWildcards(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(hits) != 1 || hits[0].SessionID != "s-a" {
+	if len(hits) != 1 || hits[0].SessionKey != "s-a" {
 		t.Fatalf("결과 = %+v, want s-a 만 (a_b 의 _ 가 와일드카드로 새면 axb 도 걸린다)", hits)
 	}
 }
@@ -275,42 +299,6 @@ func TestSearchLimitAndTimeFilter(t *testing.T) {
 	}
 }
 
-func TestFTSQuerySanitization(t *testing.T) {
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{name: "단일 낱말은 접두 질의", in: "토큰", want: `"토큰"*`},
-		{name: "여러 낱말은 암묵적 AND", in: "인증 토큰", want: `"인증" "토큰"*`},
-		{name: "연산자는 낱말로 인용", in: "a AND b", want: `"a" "AND" "b"*`},
-		{name: "따옴표는 사라진다", in: `"인증 토큰"`, want: `"인증" "토큰"*`},
-		{name: "NEAR 문법은 낱말로 분해", in: `NEAR("a" b)`, want: `"NEAR" "a" "b"*`},
-		{name: "별표는 구분자", in: "인증*", want: `"인증"*`},
-		{name: "밑줄은 구분자 (unicode61 과 같다)", in: "a_b", want: `"a" "b"*`},
-		{name: "문장부호만이면 빈 질의", in: `*"()^:`, want: ""},
-		{name: "빈 입력", in: "", want: ""},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := ftsQuery(tc.in); got != tc.want {
-				t.Fatalf("ftsQuery(%q) = %q, want %q", tc.in, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestFTSQueryBoundsInput(t *testing.T) {
-	long := ftsQuery(strings.Repeat("가나다 ", 100))
-	if strings.Count(long, `"`) > 2*maxFTSTokens {
-		t.Fatalf("토큰 수가 상한 %d 를 넘었다: %q", maxFTSTokens, long)
-	}
-	huge := ftsQuery(strings.Repeat("가", 500))
-	if len([]rune(huge)) > maxFTSTokenRunes+3 {
-		t.Fatalf("토큰 길이가 상한 %d 를 넘었다 (%d)", maxFTSTokenRunes, len([]rune(huge)))
-	}
-}
-
 func TestLikePatternEscapes(t *testing.T) {
 	tests := []struct {
 		in, want string
@@ -327,20 +315,79 @@ func TestLikePatternEscapes(t *testing.T) {
 	}
 }
 
-func containsString(list []string, want string) bool {
-	for _, s := range list {
-		if s == want {
-			return true
-		}
+// snippet() 이 v3 와 함께 사라져서 Go 가 발췌를 만든다. 룬 경계를 지키지 못하면 한글
+// 한 글자 중간에서 끊겨 화면에 U+FFFD 가 뜬다.
+func TestSnippetOf(t *testing.T) {
+	long := strings.Repeat("가", 100) + "인증토큰" + strings.Repeat("나", 100)
+
+	tests := []struct {
+		name       string
+		body       string
+		needle     string
+		want       string
+		wantPrefix string
+		wantSuffix string
+	}{
+		{
+			name: "짧은 본문은 통째로", body: "인증 토큰 검증", needle: "토큰",
+			want: "인증 토큰 검증",
+		},
+		{
+			name: "대소문자 무시", body: "Collector 전달", needle: "collector",
+			want: "Collector 전달",
+		},
+		{
+			name: "빈 본문", body: "", needle: "토큰", want: "",
+		},
+		{
+			name: "양쪽이 잘리면 말줄임표", body: long, needle: "인증토큰",
+			wantPrefix: "…", wantSuffix: "…",
+		},
 	}
-	return false
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := snippetOf(tc.body, tc.needle)
+			if tc.want != "" && got != tc.want {
+				t.Fatalf("snippetOf = %q, want %q", got, tc.want)
+			}
+			if tc.wantPrefix != "" && !strings.HasPrefix(got, tc.wantPrefix) {
+				t.Errorf("발췌가 %q 로 시작하지 않는다: %q", tc.wantPrefix, got)
+			}
+			if tc.wantSuffix != "" && !strings.HasSuffix(got, tc.wantSuffix) {
+				t.Errorf("발췌가 %q 로 끝나지 않는다: %q", tc.wantSuffix, got)
+			}
+			if strings.ContainsRune(got, '\uFFFD') {
+				t.Errorf("발췌에 깨진 룬이 있다: %q", got)
+			}
+			if tc.name == "양쪽이 잘리면 말줄임표" {
+				if !strings.Contains(got, "인증토큰") {
+					t.Errorf("발췌에 일치 지점이 없다: %q", got)
+				}
+				if n := len([]rune(got)); n > 2*snippetContextRunes+len([]rune(tc.needle))+2 {
+					t.Errorf("발췌 길이 = %d룬, 상한을 넘었다", n)
+				}
+			}
+		})
+	}
+}
+
+func TestCapRunes(t *testing.T) {
+	if got := capRunes("가나다라", 2); got != "가나" {
+		t.Errorf("capRunes = %q, want 가나", got)
+	}
+	if got := capRunes("abc", 10); got != "abc" {
+		t.Errorf("capRunes = %q, want abc", got)
+	}
+	if got := capRunes(strings.Repeat("가", 500), maxSearchRunes); len([]rune(got)) != maxSearchRunes {
+		t.Errorf("capRunes 길이 = %d, want %d", len([]rune(got)), maxSearchRunes)
+	}
 }
 
 // shortName 은 t.Run 의 부분 테스트 이름을 짧게 만든다.
 func shortName(s string) string {
 	s = strings.ReplaceAll(s, " ", "_")
-	if len(s) > 24 {
-		return s[:24]
+	if r := []rune(s); len(r) > 12 {
+		return string(r[:12])
 	}
 	if s == "" {
 		return "빈입력"

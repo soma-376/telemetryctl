@@ -3,6 +3,7 @@ package receiver
 import (
 	"bytes"
 	"context"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -60,6 +61,13 @@ func ingest(t *testing.T, base string) int {
 		t.Fatalf("%s 로 요청 실패: %v", base, err)
 	}
 	defer resp.Body.Close()
+	// **본문을 반드시 비운다.** 읽지 않은 채 Close 하면 클라이언트가 그 연결을 재사용
+	// 대상에서 빼고 늦게 닫는데, 그동안 서버 쪽 연결은 idle 로 넘어가지 않는다.
+	// http.Server.Shutdown 은 idle 연결만 즉시 닫고 나머지는 기다리므로, 그 상태에서
+	// 종료를 부르면 컨텍스트 마감까지 통째로 기다리다 실패한다 (TestShutdownDrainsQueue
+	// 가 -race 아래에서 그렇게 깨졌다). 실제 exporter 는 PartialSuccess 를 읽어야 하므로
+	// 본문을 비우는 쪽이 운영 동작에도 가깝다.
+	_, _ = io.Copy(io.Discard, resp.Body)
 	return resp.StatusCode
 }
 
@@ -129,7 +137,9 @@ func TestBothLoopbackStacksAcceptRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("localhost 로 healthz 실패: %v", err)
 	}
-	resp.Body.Close()
+	// ingest 와 같은 이유로 본문을 비우고 닫는다 (위 주석).
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close() //nolint:errcheck // 테스트 정리
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("healthz status = %d", resp.StatusCode)
 	}

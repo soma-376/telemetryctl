@@ -4,8 +4,9 @@
 `internal/store/schema.go`의 `schemaV3`이며, 각 문서의 DDL은 검토용 사본이다.
 
 > **전환 상태:** v3는 기존 v1/v2 도메인 테이블과 데이터를 트랜잭션 안에서 모두 삭제하고 새
-> 모델을 만든다. `meta`와 DB 파일은 유지한다. 현재 쓰기·조회·보존 런타임은 아직 v3로 전환되지
-> 않았으므로 데몬과 CLI 기능 및 전체 테스트는 후속 작업 전까지 실패한다.
+> 모델을 만든다. `meta`와 DB 파일은 유지한다. **쓰기 런타임은 PROJ-85가, 세션 생명주기·보존·
+> 원문 삭제는 PROJ-86이, 조회 계층(`internal/dashboard`)과 CLI 출력은 PROJ-87이 v3로 옮겼다.**
+> PROJ-87은 읽기 인덱스 세 개를 마이그레이션 v4로 덧붙였다.
 
 ## 관계
 
@@ -45,10 +46,18 @@ vendors
 | `ix_events_name` | `events(event_name)` | 이벤트 종류 조회 |
 | `ix_llm_turn` | `llm_calls(turn_id)` | 턴별 LLM 호출 조회 |
 | `ix_fc_tool` | `file_changes(tool_call_id)` | 도구 호출별 파일 변경 조회 |
+| `ix_tool_calls_turn` | `tool_calls(turn_id)` | 턴별 도구 호출 조회 (v4) |
+| `ix_turns_session` | `turns(session_id)` | 세션별 턴 조회 (v4) |
+| `ix_sessions_started` | `sessions(started_at)` | 세션 목록 정렬·구간 필터 (v4) |
+
+`ix_tool_calls_turn`·`ix_turns_session`·`ix_sessions_started`는 **마이그레이션 v4**가 더한
+읽기 인덱스다(ADR 0009). 조회 계층은 세션 → 턴 → 도구 호출 방향으로 탐색하는데 v3 DDL에는
+그 방향의 인덱스가 없었다. `events(turn_id)`는 `UNIQUE (turn_id, seq)`가 선두 컬럼으로
+받쳐 주므로 따로 만들지 않는다.
 
 DDL에 없는 인덱스, `ON DELETE CASCADE`, 기본값, 추가 `CHECK` 제약은 만들지 않는다.
-읽기 인덱스가 필요하면 **마이그레이션 v4 이후로 덧붙이고**, 이미 배포된 `schemaV3`의 문장은
-고치지 않는다.
+읽기 인덱스가 필요하면 **마이그레이션 v5 이후로 덧붙이고**, 이미 배포된 `schemaV3`·`schemaV4`의
+문장은 고치지 않는다.
 
 ## 계약 규칙
 
@@ -62,6 +71,12 @@ DDL에 없는 인덱스, `ON DELETE CASCADE`, 기본값, 추가 `CHECK` 제약�
 - **삭제는 자식에서 부모 순서**로 한다. 모든 외래 키가 `NO ACTION`이라 순서를 어기면 실패한다.
   `file_changes → tool_calls → llm_calls → events → turns → sessions → vendors`.
   `vendors` 삭제는 `AND vendor NOT IN (SELECT vendor_id FROM sessions)`로 보호한다.
+- **보존(400일) 판정 기준은 세션의 마지막으로 알려진 활동**이다. `ended_at`·`started_at`·소속
+  이벤트 시각 중 가장 늦은 값을 쓰고, 셋 다 없으면 대상에서 빠진다. prune과 purge는 각각
+  **하나의 트랜잭션**이다.
+- **원문 삭제는 행이 아니라 컬럼을 비운다.** `purge --content`는 `turns.prompt_text`·
+  `events.payload`·`tool_calls.error_message`를 `NULL`로 만든다. 행을 지우면 집계가 함께
+  사라진다. 원문이 아닌 필드(`tool_calls.error_type`·`tool_name` 등)와 `meta`는 남는다.
 - **세션 상태는 저장하지 않고 조회 시점에 계산한다.** `ended_at IS NULL`이면 `running`,
   아니면 `completed`. `abandoned`·`handoff`는 산출하지 않는다.
 - **`sessions.workspace_path`·`user_email`·`user_account_id`, `file_changes.file_path`,

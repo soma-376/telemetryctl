@@ -7,16 +7,28 @@ import (
 	"github.com/your-org/pulsemetry/internal/event"
 )
 
-// 이 패키지의 계약: 전체 경로 문자열이 조립기를 지나가지 않는다 (ADR 0003).
+// 이 패키지의 계약: 식별 정보가 **지정된 필드 밖으로는** 조립기를 지나가지 않는다.
 //
-// 계약을 지키는 것은 규율이 아니라 타입이다 — Input.Target 이 event.Path 라서 담을 자리가
-// 해시·basename·확장자뿐이다. 그래도 테스트로 고정하는 이유는, 조립 결과가 sessions ·
-// session_files · tool_events 세 테이블로 그대로 나가기 때문이다. 여기서 한 번 새면
-// SQLite 에 영구히 남고 GUI 화면까지 그대로 흐른다.
+// ADR 0010 이 v3 스키마가 요구하는 값(작업 경로 원문·이메일·계정 ID)에 한해 로컬 저장을
+// 열었다. 그래서 검사를 통째로 푸는 대신 그 필드들만 예외로 두고 나머지는 그대로 유지한다 —
+// 조립 결과는 sessions · turns · file_changes 로 그대로 나가고, 예외 목록 밖에서 한 번 새면
+// SQLite 에 영구히 남아 GUI 화면까지 흐른다.
 const (
 	fixtureRepoFile = "/Users/jy/dev/projects/soma-376/telemetryctl/internal/session/state.go"
 	fixtureRepoRoot = "/Users/jy/dev/projects/soma-376/telemetryctl"
+	fixtureEmail    = "kjy02927@gmail.com"
+	fixtureAccount  = "9f2c1d55-3a7e-4c18-9b02-6d41ee0a7788"
 )
+
+// localOnlyFields 는 ADR 0010 이 로컬 저장을 허용한 Session 필드다.
+//
+// 이 목록은 예외이지 면제가 아니다. 스캐너는 이 필드들만 건너뛰고 나머지를 전부 훑는다.
+// 목록을 늘리는 것은 ADR 개정을 요구하는 결정이다.
+var localOnlyFields = []string{
+	"WorkspacePath", // sessions.workspace_path
+	"UserEmail",     // sessions.user_email
+	"UserAccountID", // sessions.user_account_id
+}
 
 var forbiddenInSession = []string{fixtureRepoFile, fixtureRepoRoot, "/Users/", "dev/projects"}
 
@@ -31,7 +43,7 @@ func TestNoFullPathsInAssembledSession(t *testing.T) {
 	a := New()
 	a.Add(logEv("s1", "claude_code.user_prompt", start,
 		prompt("세션 조립기의 라인 배분을 고쳐줘. 파일별 수치가 합계를 넘지 않아야 한다."),
-		project(fixtureRepoRoot)))
+		project(fixtureRepoRoot), identity(fixtureEmail, fixtureAccount)))
 	a.Add(logEv("s1", "claude_code.tool_result", start+1,
 		tool("Edit"), target(fixtureRepoFile), success(true)))
 	a.Add(logEv("s1", "claude_code.tool_result", start+2,
@@ -54,8 +66,17 @@ func TestNoFullPathsInAssembledSession(t *testing.T) {
 		t.Fatalf("project 정규화가 안 됐다: hash=%q name=%q", s.ProjectHash, s.ProjectName)
 	}
 
-	for _, str := range allStrings(s) {
-		for _, forbidden := range forbiddenInSession {
+	// 예외 필드에는 실제로 값이 있어야 한다. 비어 있으면 아래 루프가 "새지 않는다" 를
+	// 증명하는 게 아니라 "채워지지 않았다" 를 통과시키는 것이 된다.
+	if s.WorkspacePath != fixtureRepoRoot {
+		t.Fatalf("workspace_path = %q, want %q", s.WorkspacePath, fixtureRepoRoot)
+	}
+	if s.UserEmail != fixtureEmail || s.UserAccountID != fixtureAccount {
+		t.Fatalf("식별 정보가 안 실렸다: %q / %q", s.UserEmail, s.UserAccountID)
+	}
+
+	for _, str := range allStringsExcept(s, localOnlyFields) {
+		for _, forbidden := range append(forbiddenInSession, fixtureEmail, fixtureAccount) {
 			if strings.Contains(str, forbidden) {
 				t.Errorf("조립 결과에 금지 문자열 %q 가 남았다: %q", forbidden, str)
 			}
@@ -64,7 +85,7 @@ func TestNoFullPathsInAssembledSession(t *testing.T) {
 
 	// 스캐너가 실제로 훑고 있는지 — 이 단언이 없으면 위 루프가 조용히 무의미해질 수 있다.
 	found := map[string]bool{}
-	for _, str := range allStrings(s) {
+	for _, str := range allStringsExcept(s, localOnlyFields) {
 		found[str] = true
 	}
 	for _, want := range []string{"state.go", "lines.go", "telemetryctl", "Edit", "Write"} {
