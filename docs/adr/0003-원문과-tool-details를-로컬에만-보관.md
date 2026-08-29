@@ -1,10 +1,17 @@
 # 0003. 원문과 tool details 를 로컬에만 보관하고 상위 전달에서 제거한다.
 
 ## Status
-Accepted
+Accepted — 부분 대체: [ADR 0006](0006-로컬-파이프라인을-opt-out으로-전환하고-OTel-설정을-고정한다.md) 이 "local enable 이 두 게이트를 1 로 강제한다" 는 배선 방식을 고정 로컬 프로필로 대체하고, [ADR 0008](0008-로컬-데이터를-400일간-보존한다.md) 이 원문 30일 보존 조항을 대체한다. 로컬 보관 기본 ON·상위 전달 제거 결정과 절대 저장 금지 목록은 그대로 유효하다.
 
 > 원문을 30일 보존한다는 조항과 완화책은 [ADR 0008](0008-로컬-데이터를-400일간-보존한다.md)로
 > 대체되었다. 로컬 저장과 상위 전달 제거 결정은 계속 유효하다.
+>
+> **「절대 저장하지 않는 것」 목록 중 전체 작업 경로와 `user.email` · `user.id` ·
+> `user.account_uuid` 조항은 로컬 저장에 한해**
+> [ADR 0010](0010-v3가-요구하는-식별-정보를-로컬에만-저장한다.md)**으로 대체되었다.**
+> v3 스키마가 이 값들을 요구하는 컬럼을 갖기 때문이다.
+> **상위 전달에서 원문·tool details 를 제거하는 결정과 토큰을 어디에도 저장하지 않는 결정은
+> 그대로 유효하며 조금도 완화되지 않았다.**
 
 ## Context
 `docs/installation-architecture.md` §4.6 「민감 정보 수집 위험」은 MVP 기본값을 이렇게 고정해 두었다.
@@ -22,7 +29,8 @@ tool input/output         OFF
 "클라이언트 설정만 믿으면 사용자가 설정을 변경했을 때 민감 데이터가 들어올 수 있으므로 서버 측 제거가 반드시 필요하다."
 
 이 정책은 `internal/contract/manifest.go` 의 `Privacy` 구조체(기본 전부 false)로 표현되고,
-`internal/config/claude.go:36-38` 이 그것을 그대로 벤더 환경변수로 옮긴다.
+이 정책은 `internal/contract/manifest.go` 의 `Privacy` 구조체(기본 전부 false)로 표현되고,
+`internal/config/claude.go` 의 `MergeClaude` 가 그것을 그대로 벤더 환경변수로 옮긴다.
 
 ```go
 "OTEL_LOG_USER_PROMPTS":        boolEnv(m.Privacy.CollectUserPrompts),
@@ -47,8 +55,9 @@ tool input/output         OFF
 - 그 결과 **원본 바이트 패스스루를 포기한다.** 포워더는 받은 페이로드를 디코드하고,
   **회사 manifest 의 `Privacy` 기준으로 원문·tool details 를 제거한 뒤 재인코딩**해 상위 Collector 로 보낸다.
   어차피 로컬 집계를 위해 디코드하므로 추가 비용은 거의 없다.
-- 이로써 **로컬 agent 가 프라이버시 집행 지점**이 된다. §4.6 의 "클라이언트 설정에서 비활성화" 계층이
-  벤더 설정에서 포워더로 옮겨 온 것이며, Collector redaction 과 Adapter allowlist 계층은 그대로 유지된다.
+- 이로써 **로컬 agent 가 프라이버시 1차 집행 지점**이 된다(ADR 0006 Decision 3 — 회사 manifest 준수는
+  전적으로 `internal/forward` 가 집행한다). §4.6 의 "클라이언트 설정에서 비활성화" 계층이
+  벤더 설정에서 포워더로 옮겨 온 것이며, 상위 계층(Collector redaction · Adapter allowlist)은 그대로 유지된다.
 - 로컬 원문 보관은 **기본 ON, opt-out** 이다(`--no-store-content`). Settings 화면의 「프라이버시 모드」와 대응한다.
   원문은 `event_content` 에 항목당 16KB 캡으로 저장하고 기본 30일 뒤 삭제한다. `purge --content` 로 즉시 지울 수 있다.
 - 로컬 저장에도 무제한 허용은 없다. **절대 저장하지 않는 것**을 스키마로 고정한다.

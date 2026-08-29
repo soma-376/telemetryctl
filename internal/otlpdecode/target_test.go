@@ -82,12 +82,16 @@ func TestToolInputTargetExtraction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := toolInputTarget(tt.value)
+			got, raw := toolInputTarget(tt.value)
 			if tt.wantName == "" {
-				if got != (event.Path{}) {
-					t.Fatalf("대상이 없어야 하는데 %+v 가 나왔다", got)
+				if got != (event.Path{}) || raw != "" {
+					t.Fatalf("대상이 없어야 하는데 %+v (raw=%q) 가 나왔다", got, raw)
 				}
 				return
+			}
+			// 원경로는 정규화하지 않은 그대로여야 한다 — file_changes.file_path 의 원천이다.
+			if raw == "" {
+				t.Fatal("원경로가 비었다 — file_changes.file_path 가 NOT NULL 이라 행을 만들 수 없다")
 			}
 			if got.Name != tt.wantName || got.Ext != tt.wantExt {
 				t.Fatalf("Path = %+v, want name=%q ext=%q", got, tt.wantName, tt.wantExt)

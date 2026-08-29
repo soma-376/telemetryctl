@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -32,6 +33,9 @@ const (
 	fixtureEmail   = "kjy02927@gmail.com"
 	fixtureOrgID   = "org_01HXYZQ7K3M9V2"
 	fixturePath    = "/Users/jy/dev/projects/soma-376/telemetryctl"
+	// fixtureFilePath 는 Edit 툴의 tool_input 에 담긴 대상 파일이다.
+	// file_changes.file_path 가 이 값 그대로여야 한다 (ADR 0010).
+	fixtureFilePath = fixturePath + "/internal/otlpdecode/decode.go"
 
 	// fixtureNow 는 픽스처의 마지막 이벤트보다 뒤이면서 유휴 임계값(10분) 안쪽인 시각이다.
 	// 시계를 주입해야 세션 마감과 보존 정책이 벽시계에 의존하지 않는다.
@@ -269,6 +273,51 @@ func (h *harness) postFixture(name string) *http.Response {
 	return h.post(kind, fixture(h.t, name))
 }
 
+// waitDecoded 는 수신기가 배치 n 건을 디코드할 때까지 기다린다.
+//
+// **두 픽스처를 순서대로 넣어야 할 때 필요하다.** 수신기는 디코드 워커를 2개 돌리므로
+// (receiver.DefaultWorkers) POST 응답이 돌아왔다고 해서 그 배치가 파이프라인에 먼저
+// 들어갔다는 보장이 없다. 순서가 뒤집히면 턴 경계 판정이 달라진다 — 세션의 첫 프롬프트를
+// 아직 못 본 상태에서 도착한 이벤트는 가상 턴으로 가기 때문이다 (session/turn.go).
+//
+// 그 순서 의존은 테스트가 만든 것이 아니라 조립기의 계약이다. 그래서 계약을 바꾸는 대신
+// 테스트가 배치를 한 건씩 밀어 넣는다.
+func (h *harness) waitDecoded(n int64) {
+	h.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		st := h.health()
+		if st.Stats.Decoded >= n && st.QueueDepth == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			h.t.Fatalf("수신기가 배치 %d건을 디코드하지 못했다 (decoded=%d, queue=%d)\n%s",
+				n, st.Stats.Decoded, st.QueueDepth, h.logs.String())
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// healthSnapshot 은 /healthz 응답 중 테스트가 보는 부분이다.
+type healthSnapshot struct {
+	QueueDepth int            `json:"queue_depth"`
+	Stats      receiver.Stats `json:"stats"`
+}
+
+func (h *harness) health() healthSnapshot {
+	h.t.Helper()
+	resp, err := http.Get(h.info.Endpoint + receiver.HealthPath)
+	if err != nil {
+		h.t.Fatalf("healthz 요청: %v", err)
+	}
+	defer resp.Body.Close()
+	var out healthSnapshot
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		h.t.Fatalf("healthz 응답 해석: %v", err)
+	}
+	return out
+}
+
 // openDB 는 종료된 데몬이 남긴 DB 를 연다.
 func (h *harness) openDB() *sql.DB {
 	h.t.Helper()
@@ -329,7 +378,33 @@ func countRows(t *testing.T, db *sql.DB, query string, args ...any) int {
 	return n
 }
 
-// dumpText 는 테이블 하나를 문자열로 이어 붙인다. 전체 경로·이메일 부재 단언에 쓴다.
+// assertNoOrphans 는 v3 의 외래 키가 전부 지켜졌는지 본다.
+// NO ACTION 이라 CASCADE 가 정리해 주지 않으므로 순서를 한 번만 틀려도 고아가 남는다.
+func assertNoOrphans(t *testing.T, db *sql.DB) {
+	t.Helper()
+	rows, err := db.Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		t.Fatalf("PRAGMA foreign_key_check: %v", err)
+	}
+	defer rows.Close()
+
+	var found []string
+	for rows.Next() {
+		var table, rowid, parent, fkid any
+		if err := rows.Scan(&table, &rowid, &parent, &fkid); err != nil {
+			t.Fatalf("foreign_key_check 읽기: %v", err)
+		}
+		found = append(found, fmt.Sprintf("%v(rowid=%v) → %v", table, rowid, parent))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("foreign_key_check: %v", err)
+	}
+	if len(found) > 0 {
+		t.Fatalf("외래 키 위반 %d건: %v", len(found), found)
+	}
+}
+
+// dumpText 는 테이블 하나를 문자열로 이어 붙인다. 식별 정보 부재·존재 단언에 쓴다.
 func dumpText(t *testing.T, db *sql.DB, table string) string {
 	t.Helper()
 	rows, err := db.Query("SELECT * FROM " + table)

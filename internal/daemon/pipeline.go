@@ -11,8 +11,8 @@ import (
 
 	"github.com/your-org/pulsemetry/internal/event"
 	"github.com/your-org/pulsemetry/internal/forward"
+	"github.com/your-org/pulsemetry/internal/otlpdecode"
 	"github.com/your-org/pulsemetry/internal/receiver"
-	"github.com/your-org/pulsemetry/internal/rollup"
 	"github.com/your-org/pulsemetry/internal/session"
 	"github.com/your-org/pulsemetry/internal/store"
 )
@@ -21,15 +21,14 @@ import (
 //
 // # 왜 소유자 고루틴 하나인가
 //
-// session.Assembler 와 rollup.Aggregator 는 둘 다 동시 사용에 안전하지 않다고 각
-// 패키지가 명시했고, 수신기 워커는 2개다. 게다가 두 집계기는 같은 이벤트를 **같은
-// 순서로** 봐야 총량이 일치한다 — 한쪽만 재시작하거나 한쪽에만 필터를 걸면 cumulative
-// 기준점이 어긋나 sessions 합계와 rollup_hourly 합계가 갈린다
-// (internal/session/agreement_test.go 가 그 회귀를 지킨다).
+// session.Assembler 는 동시 사용에 안전하지 않다고 그 패키지가 명시했고, 수신기 워커는
+// 2개다. 게다가 조립기와 턴 추적기는 같은 이벤트를 **같은 순서로** 봐야 한다 — 도구 호출
+// 순번이 도착 순서에서 나오므로 한쪽만 거르면 결정 이벤트와 결과 이벤트가 서로 다른
+// call_key 를 얻는다.
 //
 // 뮤텍스로도 같은 결과를 낼 수 있지만 소유자를 고루틴 하나로 못박으면 "락을 안 잡고
-// 집계기를 만지는 코드" 가 나중에 끼어들 자리 자체가 없어진다. 두 집계기와 미저장
-// 배치는 전부 run 고루틴만 만지고, 바깥에서 들어오는 것은 cmds 채널뿐이다.
+// 조립기를 만지는 코드" 가 나중에 끼어들 자리 자체가 없어진다. 조립기와 미저장 배치는
+// 전부 run 고루틴만 만지고, 바깥에서 들어오는 것은 cmds 채널뿐이다.
 //
 // # 상위 전달은 이 지점 밖이다
 //
@@ -57,14 +56,12 @@ type pipeline struct {
 	once sync.Once
 
 	// 아래는 전부 run 고루틴 전용이다. 바깥에서 읽지 않는다.
-	asm          *session.Assembler
-	agg          *rollup.Aggregator
-	dedup        *dedupWindow
-	pending      []store.EventRecord
-	carryRollups []rollup.Row
-	dirty        bool
-	// lastRollupMeta 는 meta.last_rollup_at 에 마지막으로 쓴 값이다.
-	lastRollupMeta event.UnixSec
+	asm     *session.Assembler
+	dedup   *dedupWindow
+	pending []store.EventRecord
+	dirty   bool
+	// lastFlushMeta 는 meta.last_rollup_at 에 마지막으로 쓴 값이다.
+	lastFlushMeta event.UnixSec
 
 	counters counters
 }
@@ -101,7 +98,10 @@ type counters struct {
 	contentsDropped    atomic.Int64
 	sessionsWritten    atomic.Int64
 	sessionsClosed     atomic.Int64
-	rollupRows         atomic.Int64
+	turnsWritten       atomic.Int64
+	llmCalls           atomic.Int64
+	toolCalls          atomic.Int64
+	fileChanges        atomic.Int64
 	writeErrors        atomic.Int64
 	pruneErrors        atomic.Int64
 	forwardDropped     atomic.Int64
@@ -121,35 +121,36 @@ type Stats struct {
 	ContentsDropped int64
 	SessionsWritten int64
 	SessionsClosed  int64
-	RollupRows      int64
-	WriteErrors     int64
-	PruneErrors     int64
+	// TurnsWritten·LLMCalls·ToolCalls·FileChanges 는 v3 승격 결과다.
+	TurnsWritten int64
+	LLMCalls     int64
+	ToolCalls    int64
+	FileChanges  int64
+	WriteErrors  int64
+	PruneErrors  int64
 	// ForwardDropped 는 포워더 큐가 가득 차 버린 페이로드 수다.
 	ForwardDropped int64
 
 	// DroppedTemporality 는 aggregation_temporality 가 UNSPECIFIED 라 폐기한
 	// 데이터포인트 수다 (계획서 「반드시 알아야 할 제약」 4).
 	//
-	// # 왜 세 후보 중 이것인가
+	// # 왜 두 후보 중 이것인가
 	//
-	// 같은 사실을 세는 카운터가 셋 있다.
+	// 같은 사실을 세는 카운터가 둘 남았다.
 	//
 	//	otlpdecode.Rejected.UnspecifiedTemporality — 페이로드 한 건 단위
 	//	session.Diag.DiscardedPoints              — 세션 한 건 단위
-	//	rollup.Stats.DroppedTemporality           — 집계기 수명 전체 누계
 	//
-	// 첫째는 이미 갈 곳이 정해져 있다. 수신기가 OTLP PartialSuccess 응답에 그대로
-	// 실어 벤더에게 돌려주므로, 여기서 또 누적하면 receiver.Stats.Rejected 와
-	// 이중으로 세는 셈이 된다.
+	// 예전에는 셋이었고 rollup.Stats.DroppedTemporality 를 썼다 — 모든 이벤트를 보고
+	// 프로세스 수명 내내 누적되는 유일한 값이었기 때문이다. ADR 0009 가 rollup 패키지를
+	// 없애면서 그 출처가 사라졌다.
 	//
-	// 둘째는 session.id 를 가진 이벤트만 조립기에 도달하므로 구조적으로 과소 계수다.
-	// session.id 없는 메트릭의 UNSPECIFIED 폐기는 여기에 절대 잡히지 않는다.
+	// 남은 둘 중 session 쪽은 구조적으로 과소 계수다. session.id 를 가진 이벤트만 조립기에
+	// 도달하므로 session.id 없는 메트릭의 UNSPECIFIED 폐기는 여기에 절대 잡히지 않는다.
 	//
-	// 셋째만이 (a) 모든 이벤트를 보고 (b) Flush 로 초기화되지 않는 프로세스 수명
-	// 누계이며 (c) rollup 패키지가 "status 명령과 로그가 얼마나 버렸는지 보려면
-	// 버킷보다 오래 살아야 한다"고 그 용도를 명시해 두었다. 게다가 agreement_test 가
-	// session 쪽 수와 일치함을 이미 고정하고 있어, 이것을 노출하면 둘째가 세는 것을
-	// 잃지 않으면서 더 넓은 범위를 덮는다.
+	// 그래서 첫째를 파이프라인 카운터로 승격한다. 수신기가 같은 값을 OTLP PartialSuccess
+	// 응답에도 실으므로 receiver.Stats.Rejected 와 **이중 계수**되지만, 조용히 과소
+	// 보고하는 것보다 낫다 (ADR 0009 Negative).
 	DroppedTemporality int64
 }
 
@@ -164,7 +165,10 @@ func (p *pipeline) Stats() Stats {
 		ContentsDropped:    p.counters.contentsDropped.Load(),
 		SessionsWritten:    p.counters.sessionsWritten.Load(),
 		SessionsClosed:     p.counters.sessionsClosed.Load(),
-		RollupRows:         p.counters.rollupRows.Load(),
+		TurnsWritten:       p.counters.turnsWritten.Load(),
+		LLMCalls:           p.counters.llmCalls.Load(),
+		ToolCalls:          p.counters.toolCalls.Load(),
+		FileChanges:        p.counters.fileChanges.Load(),
 		WriteErrors:        p.counters.writeErrors.Load(),
 		PruneErrors:        p.counters.pruneErrors.Load(),
 		ForwardDropped:     p.counters.forwardDropped.Load(),
@@ -185,7 +189,6 @@ func newPipeline(cfg pipelineConfig) *pipeline {
 		cmds:         make(chan command, cfg.QueueSize),
 		done:         make(chan struct{}),
 		asm:          session.New(),
-		agg:          rollup.New(),
 		dedup:        newDedupWindow(cfg.DedupCapacity),
 	}
 	go p.run()
@@ -297,6 +300,9 @@ func (p *pipeline) run() {
 // ingest 는 배치 하나를 두 집계기와 미저장 이벤트 목록에 반영한다.
 func (p *pipeline) ingest(b receiver.Batch) {
 	res := b.Result
+	// 폐기 계수를 먼저 올린다. 이벤트가 하나도 남지 않은 배치(전부 UNSPECIFIED 인 경우)가
+	// 정확히 이 카운터가 잡아야 할 상황이다 — 아래 조기 반환 뒤에 두면 그때만 안 세게 된다.
+	p.counters.droppedTemporality.Add(int64(res.Rejected.UnspecifiedTemporality))
 	if len(res.Events) == 0 {
 		return
 	}
@@ -312,38 +318,50 @@ func (p *pipeline) ingest(b receiver.Batch) {
 		}
 		contents[c.EventIndex] = append(contents[c.EventIndex], c.Content)
 	}
-	targets := make(map[int]event.Path, len(res.Targets))
+	targets := make(map[int]otlpdecode.Target, len(res.Targets))
 	for _, t := range res.Targets {
 		if t.EventIndex < 0 || t.EventIndex >= len(res.Events) {
 			continue
 		}
-		targets[t.EventIndex] = t.Path
+		targets[t.EventIndex] = t
 	}
 
 	for i := range res.Events {
 		e := res.Events[i]
 		cs := contents[i]
 
-		// 중복 제거는 세 소비자에게 들어가기 **전에** 한 번만 한다 (dedup.go).
-		// 여기서 거르지 않으면 재전송 한 번에 session 은 두 번 세고 rollup 은
-		// 자체 창으로 무시해, 두 합계가 갈린다.
+		// 중복 제거는 소비자들에게 들어가기 **전에** 한 번만 한다 (dedup.go).
+		// 여기서 거르지 않으면 재전송 한 번에 조립기가 두 번 세고, 더 나쁘게는 도구 호출
+		// 순번이 밀려 결정 이벤트와 결과 이벤트가 서로 다른 call_key 를 얻는다.
 		if !p.dedup.add(e.DedupKey()) {
 			p.counters.duplicates.Add(1)
 			continue
 		}
 
-		// 두 집계기는 같은 스트림을 같은 순서로 본다. 한쪽만 걸러내면 cumulative
-		// 기준점이 어긋나 sessions 합계와 rollup_hourly 합계가 갈린다.
-		// Add 의 반환값으로 분기해서도 안 된다 — session.id 가 없어 조립기가 무시한
-		// 이벤트도 롤업과 events 테이블에는 그대로 들어가야 한다.
-		p.asm.Add(session.Input{Event: e, Content: pickContent(cs), Target: targets[i]})
-		p.agg.Add(e)
+		in := session.Input{
+			Event:      e,
+			Content:    pickContent(cs),
+			Target:     targets[i].Path,
+			TargetPath: targets[i].RawPath,
+		}
+		// Add 의 반환값으로 분기하지 않는다 — session.id 가 없어 조립기가 무시한 이벤트도
+		// 같은 스트림의 일부이고, 턴 추적기는 그 사실을 알아야 한다.
+		p.asm.Add(in)
+		turn := p.asm.TurnOf(in)
 
-		p.pending = append(p.pending, store.EventRecord{Event: e, Contents: cs})
+		rec := store.EventRecord{
+			Event:      e,
+			Contents:   cs,
+			TurnKey:    turn.Key,
+			CallKey:    turn.CallKey,
+			TargetPath: targets[i].RawPath,
+		}
+		if fc, ok := session.FileChangeOf(in); ok {
+			rec.File = fc
+		}
+		p.pending = append(p.pending, rec)
 		p.dirty = true
 	}
-	// agg 는 이 고루틴 전용이라 여기서 읽는 것이 안전하다. 바깥은 원자 카운터만 본다.
-	p.counters.droppedTemporality.Store(p.agg.Stats().DroppedTemporality)
 
 	// 크기 기준 flush. 시간 기준(cmdFlush)과 두 축으로 거는 이유는 §5.4 의 뒤집힌
 	// 요구 때문이다 — 이벤트마다 트랜잭션을 열면 느려서 수신기 큐가 차고, 반대로
@@ -424,56 +442,56 @@ func (p *pipeline) closeSessions() {
 //
 // 세 종류를 한 트랜잭션에 묶는 것은 store 의 계약이다 — 부분 적용이 곧 화면의 모순이다.
 func (p *pipeline) flush(sessions []session.Session) {
-	rows := append(p.carryRollups, p.agg.Flush()...)
-	p.carryRollups = nil
-	if len(p.pending) == 0 && len(rows) == 0 && len(sessions) == 0 {
+	if len(p.pending) == 0 && len(sessions) == 0 {
 		p.dirty = false
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), p.writeTimeout)
 	defer cancel()
-	res, err := p.db.Write(ctx, store.Batch{Events: p.pending, Sessions: sessions, Rollups: rows})
+	res, err := p.db.Write(ctx, store.Batch{Events: p.pending, Sessions: sessions})
 	if err != nil {
 		p.counters.writeErrors.Add(1)
-		p.log.Printf("경고: 저장 실패 (이벤트 %d · 세션 %d · 롤업 %d, 다음 틱에 재시도): %v",
-			len(p.pending), len(sessions), len(rows), err)
-		// 실패한 배치는 다음 틱으로 넘긴다. 롤업 버킷은 Flush 가 이미 비웠으므로
-		// 여기서 들고 있지 않으면 그대로 사라지고, rollup_hourly 는 UPSERT 누적이라
-		// 같은 (hour,dim,key) 가 여러 번 들어와도 결과가 맞는다.
+		p.log.Printf("경고: 저장 실패 (이벤트 %d · 세션 %d, 다음 틱에 재시도): %v",
+			len(p.pending), len(sessions), err)
+		// 실패한 배치는 다음 틱으로 넘긴다. Write 는 트랜잭션 하나라 부분 적용이 남지 않고,
+		// record_hash 가 UNIQUE 라 같은 이벤트를 다시 넣어도 중복으로 접힌다.
 		//
 		// 다만 무한히 들고 있으면 디스크 장애 하나가 메모리 누수가 된다. 상한을 넘으면
 		// 오래된 것부터 버리고 로그를 남긴다 — 텔레메트리 손실은 허용, 데몬 정지는 불허.
 		//
 		// 세션 스냅샷은 되들고 있지 않는다. 조립기가 여전히 정본을 쥐고 있어 다음
 		// 세션 틱이 더 최신인 전체 스냅샷을 다시 만들어 주기 때문이다.
-		p.carryRollups = capTail(rows, maxCarryRollups, "롤업", p.log)
 		p.pending = capTail(p.pending, maxCarryEvents, "이벤트", p.log)
-		p.dirty = len(p.pending) > 0 || len(p.carryRollups) > 0
+		p.dirty = len(p.pending) > 0
 		return
 	}
 
 	p.counters.eventsStored.Add(int64(res.EventsInserted))
 	p.counters.eventsDuplicate.Add(int64(res.EventsDuplicate))
-	p.counters.contentsStored.Add(int64(res.ContentsInserted))
+	p.counters.contentsStored.Add(int64(res.PromptsStored))
 	p.counters.contentsDropped.Add(int64(res.ContentsDropped))
 	p.counters.sessionsWritten.Add(int64(res.SessionsUpserted))
-	p.counters.rollupRows.Add(int64(res.RollupRows))
+	p.counters.turnsWritten.Add(int64(res.TurnsUpserted))
+	p.counters.llmCalls.Add(int64(res.LLMCallsInserted))
+	p.counters.toolCalls.Add(int64(res.ToolCallsUpserted))
+	p.counters.fileChanges.Add(int64(res.FileChangesInserted))
 	p.pending = nil
 	p.dirty = false
-	if res.RollupRows > 0 {
-		p.recordRollupTime()
-	}
+	p.recordFlushTime()
 }
 
-// recordRollupTime 은 meta.last_rollup_at 을 갱신한다.
+// recordFlushTime 은 meta.last_rollup_at 을 갱신한다.
 //
-// 배치 트랜잭션 밖이라 별도 쓰기가 되므로 같은 초에 두 번 쓰지 않는다. 이 값은
-// "마지막으로 롤업이 반영된 시각" 이라 초 단위면 충분하고, GUI 가 데이터 신선도를
-// 표시하는 데만 쓴다.
-func (p *pipeline) recordRollupTime() {
+// 키 이름은 그대로 두고 의미만 바꿨다. v3 에는 롤업이 없으므로 이제 이 값은 **마지막으로
+// 저장이 성공한 시각**이다 (ADR 0009). 키를 새로 만들지 않는 이유는 기존 설치의 GUI 와
+// status 출력이 이 키를 읽고 있고, 두 값이 뜻하는 바(데이터가 얼마나 신선한가)가 같기
+// 때문이다.
+//
+// 배치 트랜잭션 밖이라 별도 쓰기가 되므로 같은 초에 두 번 쓰지 않는다.
+func (p *pipeline) recordFlushTime() {
 	now := event.SecFromTime(p.now())
-	if now == p.lastRollupMeta {
+	if now == p.lastFlushMeta {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), p.writeTimeout)
@@ -482,7 +500,7 @@ func (p *pipeline) recordRollupTime() {
 		p.log.Printf("경고: last_rollup_at 기록 실패: %v", err)
 		return
 	}
-	p.lastRollupMeta = now
+	p.lastFlushMeta = now
 }
 
 // prune 은 보존 정책을 적용한다.
@@ -499,9 +517,9 @@ func (p *pipeline) prune() {
 		return
 	}
 	if res.Total() > 0 {
-		p.log.Printf("보존 정책 적용: 이벤트=%d 원문=%d 툴=%d 세션=%d 파일=%d MCP=%d 롤업=%d 벤더=%d",
-			res.Events, res.EventContent, res.ToolEvents,
-			res.Sessions, res.SessionFiles, res.MCPUsage, res.RollupHourly, res.Vendors)
+		p.log.Printf("보존 정책 적용: 파일변경=%d 툴호출=%d LLM호출=%d 이벤트=%d 턴=%d 세션=%d 벤더=%d",
+			res.FileChanges, res.ToolCalls, res.LLMCalls,
+			res.Events, res.Turns, res.Sessions, res.Vendors)
 	}
 }
 
@@ -517,11 +535,8 @@ func (p *pipeline) finalFlush() {
 	p.flush(p.asm.Snapshot())
 }
 
-const (
-	// maxCarryEvents·maxCarryRollups 는 저장 실패가 이어질 때 붙들 상한이다.
-	maxCarryEvents  = 20_000
-	maxCarryRollups = 5_000
-)
+// maxCarryEvents 는 저장 실패가 이어질 때 붙들 미저장 이벤트의 상한이다.
+const maxCarryEvents = 20_000
 
 // capTail 은 상한을 넘는 앞부분(오래된 쪽)을 버린다.
 func capTail[T any](s []T, max int, what string, logger *log.Logger) []T {

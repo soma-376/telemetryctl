@@ -22,7 +22,7 @@ cmd/telemetryctl/            진입점
 internal/
   enrollment/ contract/      서버와의 enroll 계약
   receiver/ otlpdecode/      로컬 OTLP 수신기(127.0.0.1:4318) · 디코드 · 스크럽
-  store/ session/ rollup/    SQLite 로컬 집계
+  store/ session/           SQLite 로컬 저장 (v3: vendors→sessions→turns→events + 승격 테이블)
   forward/                   회사 엔드포인트로 상위 전송
   config/                    ~/.claude/settings.json · ~/.codex/config.toml 배선
   credential/ autostart/     OS 키링 · launchd/systemd 등록
@@ -66,4 +66,5 @@ go run ./cmd/telemetryctl enroll --invite <code> --server <url>
 - **로컬 수신기의 큐 포화 응답은 429가 아니라 200 + PartialSuccess다.** 벤더 exporter의 재시도 폭주를 막는 의도된 드롭 정책이다.
 - `TimeoutStopSec(20s) > 데몬 shutdown(15s)` 불변식을 깨지 않는다.
 - 알려진 미구현: **Windows 자동 시작**(PROJ-56), gRPC 상위 전송, `--force` 플래그 동작.
-- ADR을 추가하면 `0009`부터. 파일명은 **한국어 슬러그**. 이 레포에는 `docs/adr/README.md` 인덱스가 없다.
+- ADR을 추가하면 `0009`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
+  Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.

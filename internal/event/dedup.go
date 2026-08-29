@@ -11,7 +11,11 @@ import (
 // dedupKeyVersion 은 키 구성 규칙의 버전이다. 구성 요소를 바꾸면 올린다 —
 // 그래야 규칙이 바뀐 뒤에 들어온 이벤트가 이전 규칙으로 저장된 행과 충돌하지 않고,
 // dedup_key 만 보고도 어느 규칙으로 만들어졌는지 재현할 수 있다.
-const dedupKeyVersion = "pmdk1"
+//
+// pmdk1 → pmdk2: turn_key 와 call_key 를 키에 넣었다. 두 값이 빠져 있으면 같은 초에 같은
+// 속성으로 일어난 서로 다른 도구 호출(같은 툴을 연달아 두 번 부르는 흔한 경우)이 같은
+// record_hash 로 접혀 한 건이 조용히 사라진다.
+const dedupKeyVersion = "pmdk2"
 
 // DedupKey 는 events.dedup_key 값이다 (§5.5).
 //
@@ -44,6 +48,10 @@ func (e Event) DedupKey() string {
 	writeField(h, e.TraceID)
 	writeField(h, e.SpanID)
 	writeField(h, e.SessionID)
+	// 턴·호출 식별자는 §5.5 목록에 없지만 변별력이 크다. 벤더가 이 값을 주면 같은 초에
+	// 일어난 서로 다른 도구 호출이 확실히 갈린다.
+	writeField(h, e.TurnKey)
+	writeField(h, e.CallKey)
 	writeField(h, strconv.FormatInt(int64(e.TS), 10))
 	writeField(h, strconv.Itoa(e.Sequence))
 	for _, v := range e.Attr.dedupFields() {

@@ -574,11 +574,13 @@ func (d *daemon) shutdown() {
 func (d *daemon) logSummary() {
 	if d.pipe != nil {
 		s := d.pipe.Stats()
-		d.log.Printf("파이프라인 요약: 배치=%d 이벤트=%d 저장=%d 창중복=%d DB중복=%d 원문=%d(버림 %d) "+
-			"세션=%d(마감 %d) 롤업행=%d 저장실패=%d prune실패=%d 전달버림=%d UNSPECIFIED폐기=%d",
+		d.log.Printf("파이프라인 요약: 배치=%d 이벤트=%d 저장=%d 창중복=%d DB중복=%d 프롬프트=%d(버림 %d) "+
+			"세션=%d(마감 %d) 턴=%d LLM=%d 툴=%d 파일=%d "+
+			"저장실패=%d prune실패=%d 전달버림=%d UNSPECIFIED폐기=%d",
 			s.Batches, s.Events, s.EventsStored, s.Duplicates, s.EventsDuplicate,
 			s.ContentsStored, s.ContentsDropped,
-			s.SessionsWritten, s.SessionsClosed, s.RollupRows,
+			s.SessionsWritten, s.SessionsClosed,
+			s.TurnsWritten, s.LLMCalls, s.ToolCalls, s.FileChanges,
 			s.WriteErrors, s.PruneErrors, s.ForwardDropped, s.DroppedTemporality)
 	}
 	if d.srv != nil {

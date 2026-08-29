@@ -806,13 +806,21 @@ func TestShutdownDrainsQueue(t *testing.T) {
 }
 
 // 상위가 응답하지 않아도 종료는 제한 시간 안에 끝난다. 데몬 종료가 늘어지면 안 된다.
+// shutdownQueueSize 는 아래 테스트의 큐 크기다. 워커가 동시에 집어갈 수 있는 수보다
+// 충분히 커야 종료 시점에 큐에 남은 항목이 보장된다.
+const shutdownQueueSize = 32
+
 func TestShutdownBoundedWhenUpstreamHangs(t *testing.T) {
 	t.Parallel()
-	h := newHarness(t, harnessOpts{privacy: blockAll(), queueSize: 32, maxAttempts: 1, start: true})
+	h := newHarness(t, harnessOpts{privacy: blockAll(), queueSize: shutdownQueueSize, maxAttempts: 1, start: true})
 	h.up.block()
 
 	in := encodePayload(t, logsFixture(), otlpdecode.EncodingProtobuf)
-	for i := 0; i < 5; i++ {
+	// 큐를 가득 채운다. 5건만 넣으면 워커가 그것을 전부 집어가 채널이 비고, 그러면
+	// discardQueued 가 0 을 세어 DroppedShutdown 단언이 간헐 실패한다 — 워커는 막힌
+	// 상위에 물려 있을 뿐 큐에는 아무것도 남지 않기 때문이다. 큐 크기만큼 넣으면
+	// 워커가 몇 개를 집어가든 남는 것이 보장된다.
+	for i := 0; i < shutdownQueueSize; i++ {
 		h.fwd.Enqueue(otlpdecode.PayloadLogs, otlpdecode.EncodingProtobuf, in)
 	}
 	waitFor(t, "워커가 첫 요청을 상위로 보냄", func() bool { return h.up.count() > 0 })

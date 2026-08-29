@@ -6,6 +6,8 @@ Accepted
 ## Context
 PROJ-36 은 로컬 SQLite(ADR 0002)에 세션·롤업·원문을 쌓는다. 이 데이터를 그리는 쪽은 Wails v3 데스크탑 앱이다.
 GUI 는 같은 저장소 안 `gui/` 디렉터리에 **별도 `go.mod`** 로 둔다 — Wails 의존성이 CLI 바이너리로 새어들지 않게 하기 위해서다.
+(`gui/` 자체는 GUI 티켓 계열 브랜치(PROJ-44·58·60·61)에 있고 `develop` 에는 아직 없다.
+**이 괄호 문장은 임시이며 GUI 병합 PR 에서 삭제한다** — 병합 PR 체크리스트에 넣는다.)
 
 데몬과 GUI 는 별도 프로세스다. 데몬이 DB 를 소유하고 쓰며, GUI 는 읽기만 한다.
 따라서 "GUI 가 데이터를 어떻게 얻는가"를 정해야 하고, 선택지는 프로세스 간 프로토콜을 세우는 쪽과
@@ -69,6 +71,6 @@ GUI 는 같은 저장소 안 `gui/` 디렉터리에 **별도 `go.mod`** 로 둔�
 - 데몬 쓰기와 GUI 읽기가 동시에 일어나므로 read-only 연결 조회를 `-race` 로 검증해야 한다.
 
 ## Follow-up
-- ~~**데몬 자동 실행** — GUI 를 켰는데 데몬이 꺼져 있는 상태를 근본적으로 줄인다. Settings 「시작 프로그램」 토글의 구현이기도 하다.~~ → **PROJ-55 에서 구현했다** (`internal/autostart`, ADR 0007). Settings 「시작 프로그램」 토글은 `autostart.Manager` 의 `Enable`·`Disable`·`Status` 를 그대로 감싸면 된다 — `internal/dashboard` 처럼 Wails 를 import 하지 않는 순수 Go 패키지이고, 등록 상태를 `state.json` 에 저장하지 않으므로 토글의 진실원은 OS 서비스 관리자 하나다. Windows 는 PROJ-56.
+- **완료** — **데몬 자동 실행**. GUI 를 켰는데 데몬이 꺼져 있는 상태를 근본적으로 줄이고, Settings 「시작 프로그램」 토글의 구현이기도 했다. **PROJ-55 에서 구현했다** (`internal/autostart`, ADR 0007). Settings 「시작 프로그램」 토글은 `autostart.Manager` 의 `Enable`·`Disable`·`Status` 를 그대로 감싸면 된다 — `internal/dashboard` 처럼 Wails 를 import 하지 않는 순수 Go 패키지이고, 등록 상태를 `state.json` 에 저장하지 않으므로 토글의 진실원은 OS 서비스 관리자 하나다. Windows 는 PROJ-56.
 - **Settings 의 Cloud 탭**(회사 서버 조회)은 이 ADR 의 범위 밖이다. 로컬 DB 가 아니라 회사 API 를 읽으므로 별도 경로가 필요하다.
 - `wails3 generate bindings` 를 CI 에 넣어 생성물이 최신인지 검증할지는 GUI 티켓에서 정한다.

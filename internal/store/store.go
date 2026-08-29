@@ -15,9 +15,10 @@
 //
 // # 단위
 //
-// events.ts 는 unix 나노초, 그 외 시각 컬럼(sessions.*, tool_events.ts, session_files.last_ts,
-// vendors.*, rollup_hourly.hour)은 전부 unix 초다. event 패키지가 UnixNano·UnixSec·Hour 로
-// 나눠 두었으므로 이 패키지는 변환을 직접 하지 않고 그 타입을 그대로 받는다.
+// events.ts 는 unix 나노초, 그 외 시각 컬럼(sessions.*, turns.*, session_phases.*,
+// tool_events.ts, session_files.last_ts, vendors.*, rollup_hourly.hour)은 전부 unix 초다.
+// event 패키지가 UnixNano·UnixSec·Hour 로 나눠 두었으므로 이 패키지는 변환을 직접 하지 않고
+// 그 타입을 그대로 받는다.
 package store
 
 import (
@@ -194,7 +195,8 @@ func writeDSN(path string, busy time.Duration) string {
 		// 잠금 경합을 드라이버 안에서 기다린다. 없으면 GUI 가 읽는 순간의 쓰기가 SQLITE_BUSY 로 즉시 실패한다.
 		fmt.Sprintf("busy_timeout(%d)", busy.Milliseconds()),
 		// 계획서 스키마가 ON DELETE CASCADE 에 의존한다. SQLite 기본값이 OFF 라 명시하지 않으면
-		// 세션을 지워도 session_files·tool_events·mcp_session_usage 가 고아로 남는다.
+		// 세션을 지워도 turns·session_phases·session_files·tool_events·mcp_session_usage 가
+		// 고아로 남는다.
 		"foreign_keys(1)",
 		// CASCADE 로 지워진 event_content 행에 대해서도 AFTER DELETE 트리거가 돌아야
 		// content_fts 가 따라 정리된다.

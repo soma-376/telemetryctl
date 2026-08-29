@@ -57,8 +57,10 @@ const (
 //     휴리스틱은 본문이 있어야 하므로 디코더가 여기에 실어 준다. 조립기는 첫 프롬프트에서
 //     제목·요약 문자열만 뽑고 본문은 즉시 버린다 — 원문을 들고 있는 것은 store 의 몫이다.
 //     원문이 없는 이벤트는 제로값(Kind == "")이다.
-//   - Target: tool_input 에서 얻은 대상 파일이다. events 테이블에 파일 컬럼이 없어
-//     Event 로는 전달되지 않고 디코더가 따로 실어 준다 (otlpdecode.Target).
+//   - Target: tool_input 에서 얻은 대상 파일의 **정규화 결과**다. events 로는 전달되지 않고
+//     디코더가 따로 실어 준다 (otlpdecode.Target).
+//   - TargetPath: 같은 파일의 정규화하지 않은 원경로다. file_changes.file_path 가 NOT NULL
+//     이라 basename 만으로는 행을 만들 수 없어 나란히 받는다 (ADR 0010).
 //
 // 어휘는 event 패키지가 소유한다. 조립기가 보는 kind 문자열과 store 가 event_content.kind
 // 에 쓰는 값이 같은 타입이어야 둘이 어긋날 때 컴파일러가 잡는다.
@@ -73,6 +75,9 @@ type Input struct {
 	Event   event.Event
 	Content event.Content
 	Target  event.Path
+	// TargetPath 는 로컬 저장 전용 원경로다. 조립 결과(Session)에는 담기지 않고
+	// FileChangeOf 를 통해 file_changes 로만 간다.
+	TargetPath string
 }
 
 // Session 은 sessions 한 행과 거기 매달린 종속 테이블 내용을 합친 조립 결과다.
@@ -92,6 +97,15 @@ type Session struct {
 	Summary     string
 	ProjectHash string
 	ProjectName string
+
+	// ── 로컬 저장 전용 (ADR 0010) ───────────────────────────────────────────
+	// v3 의 sessions.workspace_path · user_email · user_account_id · terminal_type 을
+	// 채우는 값이다. 로컬 SQLite 에만 저장하고 상위로 전달하지 않는다.
+	// 해시가 필요한 곳(상위 전달과 관련된 코드)은 ProjectHash·ProjectName 을 쓴다.
+	WorkspacePath string
+	UserEmail     string
+	UserAccountID string
+	TerminalType  string
 
 	DurationMS    int64
 	ActiveSeconds float64
