@@ -6,7 +6,7 @@ export interface TrayLimitWindow {
   pct: number;
   remain: string;
   reset: string;
-  /** 공급자가 대표로 꼽은 윈도우. 없으면 첫 항목이 대표가 된다 */
+  /** 대표 윈도우. 주간 → 5시간 → 첫 항목 순으로 선택한다 */
   head?: boolean;
 }
 

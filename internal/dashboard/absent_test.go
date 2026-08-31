@@ -55,6 +55,21 @@ func absentCases() []absentCase {
 			},
 		},
 		{
+			method: "RecentActivity",
+			call: func(ctx context.Context, r *Reader) (any, error) {
+				return r.RecentActivity(ctx, RecentQuery{TZ: seoul})
+			},
+			check: func(t *testing.T, got any) {
+				act := got.(RecentActivity)
+				if act.Sessions == nil || act.ActiveAgents == nil {
+					t.Error("슬라이스가 nil — JSON 에서 null 이 되어 프런트엔드가 터진다")
+				}
+				if act.Date == "" || act.TZ != seoul {
+					t.Errorf("날짜·시간대가 비었다: %+v", act)
+				}
+			},
+		},
+		{
 			method: "Home",
 			call: func(ctx context.Context, r *Reader) (any, error) {
 				return r.Home(ctx, HomeQuery{TZ: seoul})

@@ -1,7 +1,7 @@
 # 0004. GUI 연동을 Go 패키지 공유로 하고 HTTP 조회 API 를 두지 않는다.
 
 ## Status
-Accepted
+Accepted — 부분 대체: [ADR 0013](0013-GUI는-데몬의-로컬-API로-대시보드를-조회한다.md)이 GUI의 직접 SQLite 조회와 HTTP 조회 API 부재 결정을 대체한다. Wails 경계와 순수 Go 화면 계약 결정은 유효하다.
 
 ## Context
 PROJ-36 은 로컬 SQLite(ADR 0002)에 세션·롤업·원문을 쌓는다. 이 데이터를 그리는 쪽은 Wails v3 데스크탑 앱이다.

@@ -61,6 +61,14 @@ func main() {
 		e.Cancel()
 		quick.Hide()
 	})
+	// WebView의 document.visibilityState는 네이티브 창 Hide/Show를 보장해서 반영하지
+	// 않는다. 퀵뷰가 실제로 보이는 동안만 프런트가 조회하도록 명시적인 이벤트를 보낸다.
+	quick.RegisterHook(events.Common.WindowShow, func(*application.WindowEvent) {
+		quick.EmitEvent("tray:shown")
+	})
+	quick.RegisterHook(events.Common.WindowHide, func(*application.WindowEvent) {
+		quick.EmitEvent("tray:hidden")
+	})
 
 	svc.bind(app, win, quick)
 

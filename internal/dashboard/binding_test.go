@@ -30,8 +30,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/your-org/pulsemetry/internal/vendorlimit"
 )
 
 // bindingRoots 는 GUI 가 부르는 진입점 전부다.
@@ -152,7 +150,7 @@ func TestWailsBinding_EveryGUIFacingTypeUsesSnakeCaseTags(t *testing.T) {
 	// 전체가 무의미하게 통과한다.
 	for _, want := range []any{
 		HomeSummary{}, HomeBreakdown{}, ActivityPage{}, ActivityRow{},
-		SessionDetail{}, SessionMetrics{}, SessionFileChanges{}, TraySnapshot{},
+		SessionDetail{}, SessionMetrics{}, SessionFileChanges{},
 		SessionClassification{}, Status{}, TodaySummary{}, Row{}, Hit{},
 		VendorStatus{}, MCPRow{}, WorkspaceFolder{},
 	} {
@@ -292,8 +290,6 @@ func TestWailsBinding_ServiceCoversEveryScreen(t *testing.T) {
 		{"Insights MCP 카드", "MCPUsage"},
 		{"Settings 연결 상태", "Vendors"},
 		{"Settings 상태", "Status"},
-		{"트레이", "Tray"},
-		{"트레이 새로고침", "RefreshTray"},
 		{"작업 폴더 열기", "OpenWorkspace"},
 		{"작업 폴더 판정", "WorkspaceFolder"},
 	}
@@ -326,8 +322,6 @@ func TestWailsBinding_ScreenResponsesRoundTripThroughJSON(t *testing.T) {
 	ctx := context.Background()
 	id := f.sessionID(vendorClaude, "cs-a")
 
-	m, _, _ := newTestMonitor(f.reader, emptyVendorSnapshot())
-
 	responses := []struct {
 		name string
 		call func() (any, error)
@@ -350,7 +344,6 @@ func TestWailsBinding_ScreenResponsesRoundTripThroughJSON(t *testing.T) {
 		{"Vendors", func() (any, error) { return f.reader.Vendors(ctx) }},
 		{"MCPUsage", func() (any, error) { return f.reader.MCPUsage(ctx, 14) }},
 		{"Status", func() (any, error) { return f.reader.Status(ctx) }},
-		{"Tray", func() (any, error) { return m.Snapshot(ctx, TrayQuery{TZ: seoul}) }},
 		{"Classification", func() (any, error) { return NewClassifier(f.reader).Session(ctx, id) }},
 		{"WorkspaceFolder", func() (any, error) { return f.reader.WorkspaceFolder(ctx, id) }},
 	}
@@ -362,15 +355,6 @@ func TestWailsBinding_ScreenResponsesRoundTripThroughJSON(t *testing.T) {
 			}
 			assertJSONSerializable(t, tc.name, got)
 		})
-	}
-}
-
-// emptyVendorSnapshot 은 벤더를 하나도 조회하지 못한 결과다. 이 파일의 관심은 직렬화라
-// 한도 값 자체는 필요 없다.
-func emptyVendorSnapshot() vendorlimit.Snapshot {
-	return vendorlimit.Snapshot{
-		Results:    []vendorlimit.Result{},
-		ObservedAt: "2026-08-10T02:00:00Z",
 	}
 }
 

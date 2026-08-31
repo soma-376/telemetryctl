@@ -3,55 +3,45 @@ package main
 import (
 	"context"
 
-	"github.com/wailsapp/wails/v3/pkg/application"
-	"github.com/your-org/pulsemetry/internal/dashboard"
+	"github.com/your-org/pulsemetry/internal/dashboard/tray"
 	"github.com/your-org/pulsemetry/internal/hostenv"
+	"github.com/your-org/pulsemetry/internal/localapi"
 	"github.com/your-org/pulsemetry/internal/store"
 )
 
-// Dashboard 는 로컬 조회를 프런트엔드에 노출하는 경계다.
+// Dashboard 는 프런트엔드가 부를 수 있는 Go 함수의 목록이다. Wails 가 공개 메서드를
+// 전부 TS 로 뽑으므로, 화면이 실제로 쓰는 것만 여기 둔다.
 //
-// dashboard.Service 를 그대로 바인딩하지 않는 이유가 둘 있다. 첫째, Wails 는 공개 메서드를
-// 전부 바인딩하므로 Reader()·Start()·Stop() 까지 프런트에 나간다 — Reader 는 sync.Mutex 를
-// 품은 내부 타입이라 TS 모델로 나갈 값이 아니다. 둘째, Wails 의 수명주기 훅 이름은
-// ServiceStartup/ServiceShutdown 이라 Service 의 Start/Stop 이 저절로 불리지 않는다.
-// 이 타입이 그 이름을 맞추고 노출면을 화면이 실제로 쓰는 것만으로 좁힌다.
-//
-// 반면 **반환 타입은 dashboard 패키지 것을 그대로 쓴다.** 여기서 GUI 전용 DTO 를 새로 만들면
-// 필드가 늘 때마다 두 곳을 고쳐야 하고, 바인딩 생성기가 원본 구조체에서 TS 모델을 뽑는다는
-// 전제(ADR 0004)도 깨진다.
+// GUI 는 SQLite 를 열지 않는다. 데몬이 읽어서 내려준 것을 받는다 (internal/localapi).
 type Dashboard struct {
-	svc *dashboard.Service
+	// tray 는 앱당 하나여야 한다. 호출마다 새로 만들면 마지막 정상 스냅샷이 사라진다.
+	tray *tray.Cache
 }
 
-// NewDashboard 는 기본 DB 경로를 보는 조회 서비스를 만든다. 실패하지 않는다.
+// NewDashboard 는 데몬을 보는 조회 경계를 만든다. 실패하지 않는다.
+//
+// 여는 자원이 없어서 ServiceStartup·ServiceShutdown 도 없다 (둘 다 Wails 의 선택
+// 인터페이스다). 데몬 주소는 조회할 때마다 runtime.json 에서 읽는다 — GUI 보다 데몬이
+// 늦게 뜨거나 중간에 재시작되는 것이 정상이라 기동 시점에 붙잡아 둘 수 없다.
 func NewDashboard() *Dashboard {
-	env, err := hostenv.Detect()
-	if err != nil {
-		// 홈 디렉터리를 못 찾는 것은 화면 입장에서 "미설치" 와 같은 처지다. 여기서 죽으면
-		// GUI 가 아예 뜨지 않는다 — 미설치는 오류가 아니라 빈 결과다 (ADR 0004).
-		return &Dashboard{svc: dashboard.NewService("")}
+	// 홈 디렉터리를 못 찾는 것은 화면 입장에서 "미설치" 와 같은 처지다. 여기서 죽으면
+	// GUI 가 아예 뜨지 않는다 — 미설치는 오류가 아니라 빈 결과다 (ADR 0004).
+	dataDir := ""
+	if env, err := hostenv.Detect(); err == nil {
+		dataDir = store.DefaultDataDir(env)
 	}
-	return &Dashboard{svc: dashboard.NewService(store.DefaultPath(env))}
+	return &Dashboard{tray: tray.New(localapi.NewClient(dataDir))}
 }
 
+// ServiceName 은 Wails 가 로그에 쓰는 이름이다. 없으면 타입 이름으로 짓는다.
 func (d *Dashboard) ServiceName() string { return "Dashboard" }
 
-// ServiceStartup 은 DB 를 연다. 열지 못해도 error 를 올리지 않는다 — 그 사실은 조회 결과의
-// monitoring.state 가 말하고, 앱은 떠야 한다.
-func (d *Dashboard) ServiceStartup(_ context.Context, _ application.ServiceOptions) error {
-	_ = d.svc.Start()
-	return nil
-}
-
-func (d *Dashboard) ServiceShutdown() error { return d.svc.Stop() }
-
 // Tray 는 트레이 퀵뷰 한 장에 필요한 전부다. 갱신 주기 안이면 캐시를 그대로 준다.
-func (d *Dashboard) Tray(ctx context.Context, q dashboard.TrayQuery) (dashboard.TraySnapshot, error) {
-	return d.svc.Tray(ctx, q)
+func (d *Dashboard) Tray(ctx context.Context, q tray.Query) (tray.Snapshot, error) {
+	return d.tray.Current(ctx, q)
 }
 
-// RefreshTray 는 주기를 무시하고 다시 만든다 (퀵뷰의 수동 새로고침).
-func (d *Dashboard) RefreshTray(ctx context.Context, q dashboard.TrayQuery) (dashboard.TraySnapshot, error) {
-	return d.svc.RefreshTray(ctx, q)
+// RefreshTray 는 데몬에 갱신을 명령하고 그 결과를 다시 받는다 (퀵뷰의 수동 새로고침).
+func (d *Dashboard) RefreshTray(ctx context.Context, q tray.Query) (tray.Snapshot, error) {
+	return d.tray.Refresh(ctx, q)
 }

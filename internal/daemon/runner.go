@@ -31,13 +31,17 @@ import (
 	"time"
 
 	"github.com/your-org/pulsemetry/internal/autostart"
+	"github.com/your-org/pulsemetry/internal/dashboard"
+	"github.com/your-org/pulsemetry/internal/dashboard/tray"
 	"github.com/your-org/pulsemetry/internal/forward"
 	"github.com/your-org/pulsemetry/internal/hostenv"
 	"github.com/your-org/pulsemetry/internal/installer"
+	"github.com/your-org/pulsemetry/internal/localapi"
 	"github.com/your-org/pulsemetry/internal/otlpdecode"
 	"github.com/your-org/pulsemetry/internal/receiver"
 	"github.com/your-org/pulsemetry/internal/runtimeinfo"
 	"github.com/your-org/pulsemetry/internal/store"
+	"github.com/your-org/pulsemetry/internal/vendorlimit"
 )
 
 // 틱 주기. 각 값의 근거는 아래 주석에 있다.
@@ -90,6 +94,15 @@ const (
 	// tokenWarmTimeout 은 토큰 확보 확인 한 번의 상한이다.
 	tokenWarmTimeout = 15 * time.Second
 
+	// DefaultLimitInterval 은 벤더 한도 자동 갱신 주기다.
+	//
+	// **벤더가 우리를 429 로 끊지 않을 만큼 커야 한다.** 60초로 돌렸을 때 Anthropic
+	// 사용량 API 가 실제로 429 를 돌려줬다. 5분이면 벤더당 시간당 12회다.
+	//
+	// 화면은 나빠지지 않는다. 제일 짧은 창이 5시간이라 5분은 그 창의 1.7% 이고, 표시
+	// 퍼센트가 최대 2%p 뒤처지는 정도다. 지금 당장 정확한 값이 필요하면 새로고침을 누른다.
+	DefaultLimitInterval = 5 * time.Minute
+
 	// pipelineQueue 는 소유자 고루틴 앞의 커맨드 버퍼다. 수신기 워커 2개 + 틱들이
 	// 잠깐 겹치는 것만 흡수하면 되므로 작게 둔다. 진짜 버퍼는 수신기 큐다.
 	pipelineQueue = 8
@@ -124,6 +137,7 @@ type Options struct {
 	PruneInterval   time.Duration
 	TokenInterval   time.Duration
 	ShutdownTimeout time.Duration
+	LimitInterval   time.Duration
 	BatchEvents     int
 
 	// IngestToken 은 loopback ingest 토큰이다. 비우면 receiver.EnsureToken 이
@@ -132,6 +146,8 @@ type Options struct {
 	// ForwardTokens 는 상위 전달 토큰 공급자다. 비우면 state.ServerURL 로
 	// forward.NewTelemetryTokenSource 를 만든다(운영 경로).
 	ForwardTokens forward.TokenSource
+	// VendorLimitCollector 는 테스트가 실제 벤더에 연결하지 않게 하는 seam 이다.
+	VendorLimitCollector vendorlimit.VendorCollector
 
 	// Ready 는 기동이 끝나 요청을 받을 수 있게 된 순간 한 번 호출된다.
 	// runtime.json 에 쓴 것과 같은 값을 준다.
@@ -161,6 +177,9 @@ func (o Options) normalized() (Options, error) {
 	}
 	if o.ShutdownTimeout <= 0 {
 		o.ShutdownTimeout = DefaultShutdownTimeout
+	}
+	if o.LimitInterval <= 0 {
+		o.LimitInterval = DefaultLimitInterval
 	}
 	if o.BatchEvents <= 0 {
 		o.BatchEvents = DefaultBatchEvents
@@ -193,12 +212,17 @@ type daemon struct {
 	opts Options
 	log  *log.Logger
 
-	state  *installer.State
-	db     *store.DB
-	fwd    *forward.Forwarder
-	srv    *receiver.Server
-	pipe   *pipeline
-	tokens forward.TokenSource
+	state          *installer.State
+	db             *store.DB
+	fwd            *forward.Forwarder
+	srv            *receiver.Server
+	pipe           *pipeline
+	tokens         forward.TokenSource
+	limitCollector *vendorlimit.Collector
+	limits         *vendorlimit.Refresher
+	// query 는 GUI 조회에 쓰는 read-only 핸들이다. 쓰기 커넥션(db)과 별개다 —
+	// dashboard 는 mode=ro 를 강제하고, 조회가 쓰기를 할 수 없다는 것이 그 계약이다.
+	query *dashboard.Service
 
 	dataDir     string
 	runtimePath string
@@ -248,6 +272,20 @@ func (d *daemon) start(ctx context.Context) error {
 	}
 	if err := db.SetMeta(ctx, store.MetaRetentionDays, strconv.Itoa(store.DefaultRetentionDays)); err != nil {
 		d.log.Printf("경고: meta.retention_days 기록 실패: %v", err)
+	}
+
+	collector := d.opts.VendorLimitCollector
+	if collector == nil {
+		d.limitCollector = vendorlimit.NewCollector(vendorlimit.Options{})
+		collector = d.limitCollector
+	}
+	d.limits = vendorlimit.NewRefresher(collector, db, vendorlimit.RefreshOptions{Now: d.opts.Now, Logger: d.log})
+
+	// GUI 가 읽을 조회 핸들. 여는 데 실패해도 기동은 계속한다 — 수집은 정상이고
+	// 화면만 못 그린다 (ADR 0004 의 "미설치는 오류가 아니다" 와 같은 처지다).
+	d.query = dashboard.NewService(store.PathIn(dataDir))
+	if err := d.query.Start(); err != nil {
+		d.log.Printf("경고: 조회 핸들을 열지 못했다 (GUI 가 화면을 못 그린다): %v", err)
 	}
 
 	// 포워더를 수신기보다 먼저 띄운다. 첫 페이로드가 도착하는 순간 큐가 이미 살아
@@ -387,6 +425,7 @@ func (d *daemon) startReceiver() error {
 		Logger:    d.log,
 		Decode:    otlpdecode.Options{InstallationID: d.state.InstallationID},
 		Now:       d.opts.Now,
+		LocalAPI:  localapi.NewServer(d.limits, tray.NewBuilder(d.query)),
 	})
 	if err != nil {
 		return fmt.Errorf("로컬 수신기 기동: %w", err)
@@ -438,12 +477,16 @@ func (d *daemon) loop(ctx context.Context) {
 	defer pruneT.Stop()
 	tokenT := time.NewTicker(d.opts.TokenInterval)
 	defer tokenT.Stop()
+	limitT := time.NewTicker(d.opts.LimitInterval)
+	defer limitT.Stop()
 
 	// 기동 직후 한 번씩 돌린다. 한 시간을 못 살고 재시작되는 환경에서도 보존 정책이
 	// 적용되고, 토큰 문제를 첫 페이로드가 아니라 지금 발견한다.
 	d.pipe.submit(cmdPrune)
 	d.rotateAutostartLogs()
 	d.warmToken(ctx)
+	// 한도도 여기서 한 번 긁는다. 틱만 두면 첫 5분 동안 화면이 비어 있다.
+	d.refreshLimitsLogged(ctx)
 
 	for {
 		select {
@@ -459,7 +502,20 @@ func (d *daemon) loop(ctx context.Context) {
 			d.rotateAutostartLogs()
 		case <-tokenT.C:
 			d.warmToken(ctx)
+		case <-limitT.C:
+			d.refreshLimitsLogged(ctx)
 		}
+	}
+}
+
+// refreshLimitsLogged 는 틱이 부르는 자리다. 실패해도 데몬은 계속 돈다 — 다음 틱이
+// 그대로 재시도하고, 그 사이 화면은 마지막 성공값을 보여준다.
+func (d *daemon) refreshLimitsLogged(ctx context.Context) {
+	if d.limits == nil {
+		return
+	}
+	if err := d.limits.Refresh(ctx); err != nil {
+		d.log.Printf("경고: 벤더 한도 갱신 실패: %v", err)
 	}
 }
 
@@ -547,6 +603,17 @@ func (d *daemon) shutdown() {
 			d.log.Printf("경고: 상위 전달 큐를 다 비우지 못했다: %v", err)
 		}
 		cancel()
+	}
+
+	if d.query != nil {
+		if err := d.query.Stop(); err != nil {
+			d.log.Printf("경고: 조회 핸들 종료 실패: %v", err)
+		}
+	}
+	if d.limitCollector != nil {
+		if err := d.limitCollector.Close(); err != nil {
+			d.log.Printf("경고: 벤더 한도 수집기 종료 실패: %v", err)
+		}
 	}
 
 	if d.db != nil {

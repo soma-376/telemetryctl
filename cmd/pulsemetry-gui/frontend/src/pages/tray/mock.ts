@@ -10,8 +10,8 @@ export type {
 
 // 트레이 퀵뷰 목데이터 — 디자인(Tray Quick View) 수치 그대로.
 //
-// 벤더마다 한도 윈도우가 N개다. 접힌 카드는 공급자가 대표로 꼽은(head) 윈도우 —
-// 실제로 막히는 그 한도 — 만 보여주고, 클릭하면 나머지가 펼쳐진다.
+// 벤더마다 한도 윈도우가 N개다. 접힌 카드는 주간 한도를 대표(head)로 보여주고,
+// 클릭하면 나머지가 펼쳐진다. 주간 한도가 없는 벤더는 5시간, 그다음 첫 창을 쓴다.
 // 새 윈도우 종류가 생겨도 템플릿 변경이 필요 없다.
 
 export const TRAY_VENDORS: TrayVendor[] = [
@@ -90,4 +90,5 @@ export const TRAY_OPTIONS: TrayOption[] = [
   { key: "launch", name: "로그인 시 자동 실행", desc: "" },
 ];
 
-export const TRAY_SYNCED_TEXT = "40초 전";
+// 프리뷰에서 헤더가 "40초 전" 으로 시작해 실제로 초를 세어 가는지 보이게 한다.
+export const TRAY_SYNCED_AGO_SEC = 40;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Events } from "@wailsio/runtime";
   import RecentSessions from "./components/RecentSessions.svelte";
   import TrayFooter from "./components/TrayFooter.svelte";
   import TrayHeader from "./components/TrayHeader.svelte";
@@ -15,7 +16,7 @@
     type TrayQuery,
   } from "$lib/ipc/dashboard";
   import { toTrayView, type TrayView } from "./adapter";
-  import { TRAY_SESSIONS, TRAY_SYNCED_TEXT, TRAY_VENDORS } from "./mock";
+  import { TRAY_SESSIONS, TRAY_SYNCED_AGO_SEC, TRAY_VENDORS } from "./mock";
 
   let settingsOpen = $state(false);
   let quitOpen = $state(false);
@@ -46,8 +47,40 @@
     failure = r.message;
   }
 
+  // 데몬은 5분마다 한도를 갱신하는데, 여기서 다시 읽지 않으면 화면은 앱을 켠 순간의
+  // 값을 계속 들고 있는다. 헤더의 "N분 전" 이 늘어나기만 하던 것이 그 증상이었다.
+  //
+  // 퀵뷰는 닫혀도 파괴되지 않고 숨겨질 뿐이다. document.visibilityState는 네이티브
+  // 창의 Hide/Show와 같은 계약이 아니므로 Wails 창 이벤트로 폴링 수명을 제어한다.
+  const POLL_MS = 60_000;
   $effect(() => {
+    let visible = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const poll = async () => {
+      if (!visible) return;
+      await load(false);
+      if (visible) timer = setTimeout(poll, POLL_MS);
+    };
+
+    const offShow = Events.On("tray:shown", () => {
+      visible = true;
+      clearTimeout(timer);
+      void poll();
+    });
+    const offHide = Events.On("tray:hidden", () => {
+      visible = false;
+      clearTimeout(timer);
+    });
+
+    // 브라우저 프리뷰와 첫 Show 이벤트보다 늦게 리스너가 붙는 경우에도 초기 화면은 만든다.
     void load(false);
+    return () => {
+      visible = false;
+      clearTimeout(timer);
+      offShow();
+      offHide();
+    };
   });
 
   // 브라우저 프리뷰(vite dev 단독)에는 백엔드가 없다. 그때만 목데이터로 화면을 채운다.
@@ -58,19 +91,19 @@
     unavailable: [],
     sessions: TRAY_SESSIONS,
     monitoring: {
-      state: TrayState.TrayStateMonitoring,
+      state: TrayState.StateMonitoring,
       database_available: true,
       daemon_running: true,
       daemon_stale: false,
       last_event_at: 0,
       running_sessions: TRAY_SESSIONS.length,
     },
-    synced: TRAY_SYNCED_TEXT,
+    limitsObservedAt: Math.floor(Date.now() / 1000) - TRAY_SYNCED_AGO_SEC,
   };
 
   const shown = $derived(view ?? (failure && PREVIEW ? previewView : null));
   const notInstalled = $derived(
-    shown?.monitoring.state === TrayState.TrayStateNotInstalled,
+    shown?.monitoring.state === TrayState.StateNotInstalled,
   );
 </script>
 
@@ -79,7 +112,7 @@
   style="animation:trayIn 180ms cubic-bezier(0.32,0.72,0,1)"
 >
   <TrayHeader
-    syncedText={shown?.synced ?? ""}
+    limitsObservedAt={shown?.limitsObservedAt ?? 0}
     trayState={shown?.monitoring.state}
     onRefresh={() => load(true)}
   />

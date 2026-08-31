@@ -214,7 +214,7 @@ func fileSum(expr string) string {
 //
 // 수치를 상관 서브쿼리로 다시 세는 것이 v3 의 구조다. v1 처럼 비정규화 컬럼을 읽으면
 // 값이 하나뿐이라 빨랐지만, v3 에는 그 컬럼이 없고 승격 테이블이 유일한 진실이다.
-// 마이그레이션 v4 의 ix_turns_session · ix_tool_calls_turn 이 이 서브쿼리들을 받친다.
+// schema.go 의 ix_turns_session · ix_tool_calls_turn 이 이 서브쿼리들을 받친다.
 var sessionColumns = `s.id, s.session_key, s.vendor_id,
   COALESCE(s.started_at, 0), ` + lastActivityExpr + `, s.ended_at, ` + statusExpr + `,
   COALESCE(s.title,''), COALESCE(s.workspace_path,''), COALESCE(s.active_time_sec, 0),

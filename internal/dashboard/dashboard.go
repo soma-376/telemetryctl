@@ -1,4 +1,4 @@
-// Package dashboard 는 GUI 와 CLI 가 로컬 SQLite 를 읽는 조회 API 다 (ADR 0004).
+// Package dashboard 는 데몬과 CLI가 로컬 SQLite를 읽는 조회 API다 (ADR 0013).
 //
 // 계획서 「화면 → 쿼리 대응」 표의 각 행이 여기 메서드 하나로 대응한다. 쓰기는 데몬만 하고
 // 이 패키지는 read-only 연결(mode=ro & busy_timeout(5000))로만 연다 — store.OpenReadOnly 가
@@ -177,6 +177,12 @@ func (r *Reader) db() (*sql.DB, bool) {
 // sqlQuerier 는 조회 함수가 필요로 하는 최소 인터페이스다. *sql.DB 를 그대로 받지 않는
 // 이유는 이 패키지가 쓰기를 할 수 없다는 것을 타입으로 못박기 위해서다 — Exec 가 없으면
 // read-only 연결에서 실패할 문장을 실수로 넣을 방법도 없다.
+// Querier 는 하위 화면 패키지가 자기 질의를 할 때 쓰는 read-only 핸들이다. Exec 가 없어
+// 쓰기 문장을 넣을 방법이 없다.
+type Querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
 type sqlQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)

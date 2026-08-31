@@ -427,6 +427,58 @@ func buildHomeCards(current, previous homeDay) []Card {
 
 // ── 최근 활동 ───────────────────────────────────────────────────────────────
 
+// RecentQuery 는 최근 활동 조회의 조건이다. Date 가 비면 오늘이다.
+type RecentQuery struct {
+	TZ    string `json:"tz"`
+	Date  string `json:"date"`
+	Limit int    `json:"limit"`
+}
+
+// RecentActivity 는 진행 중인 세션과 최근 세션 목록이다.
+//
+// Home 에서 떼어 낸 이유는 트레이가 쓰는 것이 이 둘뿐이기 때문이다. Home 은 카드 4장과
+// 2시간 창 전부를 가격표로 계산하는데, 트레이가 그것을 부르면 열 때마다 버릴 집계를 한다.
+// 질의 자체는 Home 과 같은 함수를 쓰므로 두 화면의 숫자는 갈라지지 않는다.
+type RecentActivity struct {
+	TZ             string          `json:"tz"`
+	Date           string          `json:"date"`
+	ActiveAgents   []string        `json:"active_agents"`
+	ActiveSessions int64           `json:"active_sessions"`
+	Sessions       []RecentSession `json:"recent_sessions"`
+	Truncated      bool            `json:"recent_truncated"`
+}
+
+// RecentActivity 는 tz 기준 하루의 진행 중 세션과 최근 세션 목록이다.
+// DB 가 없으면 에러가 아니라 빈 목록이다 (ADR 0004).
+func (r *Reader) RecentActivity(ctx context.Context, q RecentQuery) (RecentActivity, error) {
+	loc, err := loadLocation(q.TZ)
+	if err != nil {
+		return RecentActivity{}, err
+	}
+	day, err := selectedDay(q.Date, loc, r.now())
+	if err != nil {
+		return RecentActivity{}, err
+	}
+
+	out := RecentActivity{
+		TZ:           loc.String(),
+		Date:         day.Start.Format(dateKey),
+		ActiveAgents: []string{},
+		Sessions:     []RecentSession{},
+	}
+	db, ok := r.db()
+	if !ok {
+		return out, nil
+	}
+	if out.ActiveAgents, out.ActiveSessions, err = activeAgents(ctx, db); err != nil {
+		return RecentActivity{}, err
+	}
+	if out.Sessions, out.Truncated, err = recentSessions(ctx, db, day, q.Limit); err != nil {
+		return RecentActivity{}, err
+	}
+	return out, nil
+}
+
 // recentSessionsSQL 은 선택 날짜에 **시작한** 세션이다.
 //
 // 상태와 마지막 활동 시각은 sessions.go 의 식을 그대로 쓴다. 두 화면이 다른 식을 쓰면
