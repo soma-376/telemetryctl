@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"time"
+
+	"github.com/your-org/pulsemetry/internal/codexapp"
 )
 
 // probeEnv 는 어댑터 하나가 조회에 쓰는 바깥 자원 전부다.
@@ -13,6 +15,7 @@ import (
 type probeEnv struct {
 	home   string
 	client *http.Client
+	codex  codexapp.RateLimitsReader
 	now    func() time.Time
 }
 

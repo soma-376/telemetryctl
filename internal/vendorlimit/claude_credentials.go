@@ -25,11 +25,6 @@ func claudeCredentialPath(home string) string {
 	return filepath.Join(home, ".claude", ".credentials.json")
 }
 
-// codexCredentialPath 는 Codex CLI 의 auth.json 경로다 (~/.codex/auth.json).
-func codexCredentialPath(home string) string {
-	return filepath.Join(home, ".codex", "auth.json")
-}
-
 // credentialError 는 자격증명 로드 실패를 Reason 과 함께 나른다. 호출자가 문자열을
 // 뜯어보지 않고 그대로 Result 로 옮길 수 있어야 한다.
 type credentialError struct {
@@ -159,59 +154,4 @@ func loadClaudeCredential(home string) (claudeCredential, error) {
 		cred.expiresAt = time.UnixMilli(file.OAuth.ExpiresAt).UTC()
 	}
 	return cred, nil
-}
-
-// codexCredential 은 Codex auth.json 에서 우리가 쓰는 값 전부다.
-type codexCredential struct {
-	token Token
-	// accountID 는 요청 헤더에 넣는 계정 식별자다. 응답 모델에는 담지 않는다.
-	accountID string
-}
-
-// codexAuthFile 은 auth.json 의 **관측된** 모양이다.
-//
-// # 가정과 확인 방법
-//
-// Codex CLI 는 `{"tokens": {"access_token": ..., "account_id": ...}}` 로 쓴다.
-// `OPENAI_API_KEY` 로 로그인한 사용자는 tokens 가 비고 API 키만 있는데, 그 경우 구독
-// 사용 한도라는 개념 자체가 없으므로 ReasonCredentialMalformed 가 아니라 조용한
-// unavailable 로 다뤄야 맞다 — 아래에서 그렇게 가른다.
-// 사람이 확인하려면 `jq 'keys' ~/.codex/auth.json` 과 `jq '.tokens | keys'` 를 본다.
-//
-// 만료 시각은 파일에서 읽지 않는다. access_token 은 JWT 라 exp 클레임을 직접 디코드할 수
-// 있지만, 남의 토큰 형식을 파싱하는 코드는 벤더가 형식을 바꾸는 순간 조용히 틀린다.
-// 만료는 상위의 401 로 안다 (claude.go·codex.go 의 statusReason).
-type codexAuthFile struct {
-	OpenAIAPIKey *string `json:"OPENAI_API_KEY"`
-	Tokens       *struct {
-		AccessToken string `json:"access_token"`
-		AccountID   string `json:"account_id"`
-	} `json:"tokens"`
-}
-
-// loadCodexCredential 은 Codex 액세스 토큰을 메모리로만 읽는다.
-func loadCodexCredential(home string) (codexCredential, error) {
-	path := codexCredentialPath(home)
-	b, err := readCredentialFile(home, path)
-	if err != nil {
-		return codexCredential{}, err
-	}
-	shown := displayPath(home, path)
-
-	var file codexAuthFile
-	if err := json.Unmarshal(b, &file); err != nil {
-		return codexCredential{}, credErr(ReasonCredentialMalformed, "%s 가 JSON 이 아니다", shown)
-	}
-	if file.Tokens == nil || strings.TrimSpace(file.Tokens.AccessToken) == "" {
-		if file.OpenAIAPIKey != nil && strings.TrimSpace(*file.OpenAIAPIKey) != "" {
-			return codexCredential{}, credErr(ReasonCredentialMissing,
-				"%s 가 API 키 로그인이다 — 구독 사용 한도가 없는 계정이다", shown)
-		}
-		return codexCredential{}, credErr(ReasonCredentialMalformed, "%s 에 tokens.access_token 이 없다", shown)
-	}
-
-	return codexCredential{
-		token:     newToken(file.Tokens.AccessToken),
-		accountID: strings.TrimSpace(file.Tokens.AccountID),
-	}, nil
 }
