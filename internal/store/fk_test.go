@@ -65,7 +65,7 @@ func TestForeignKeyCheckIsEmptyAfterRepeatedWrites(t *testing.T) {
 			Sessions: []session.Session{newSession("sess-1", at), newSession("sess-2", at)},
 			Events: []EventRecord{
 				evrec("claude_code.user_prompt", at, i, inTurn("p1")),
-				evrec("claude_code.session.count", at, i, sess("s-other"), vendor("codex")),
+				evrec("claude_code.session.count", at, i, sess("s-other"), withVendor("codex")),
 				evrec("claude_code.tool_result", at, i,
 					inTurn("p1"), call("claude_code:toolu_1"), toolName("Edit"), succeeded(true)),
 			},
