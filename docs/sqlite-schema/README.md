@@ -1,12 +1,12 @@
 # SQLite 스키마
 
-이 디렉터리는 로컬 데이터베이스의 스키마 버전 3 계약을 설명한다. 실행 DDL의 진실원은
-`internal/store/schema.go`의 `schemaV3`이며, 각 문서의 DDL은 검토용 사본이다.
+이 디렉터리는 로컬 데이터베이스의 현재 계약을 설명한다. 실행 DDL의 진실원은
+`internal/store/schema.go`의 `schemaSQL`이며, 각 문서의 DDL은 검토용 사본이다.
 
 > **전환 상태:** v3는 기존 v1/v2 도메인 테이블과 데이터를 트랜잭션 안에서 모두 삭제하고 새
 > 모델을 만든다. `meta`와 DB 파일은 유지한다. **쓰기 런타임은 PROJ-85가, 세션 생명주기·보존·
 > 원문 삭제는 PROJ-86이, 조회 계층(`internal/dashboard`)과 CLI 출력은 PROJ-87이 v3로 옮겼다.**
-> PROJ-87은 읽기 인덱스 세 개를 마이그레이션 v4로 덧붙였다.
+> 읽기 인덱스 세 개도 최신 전체 DDL에 포함한다(ADR 0012).
 
 ## 관계
 
@@ -50,14 +50,13 @@ vendors
 | `ix_turns_session` | `turns(session_id)` | 세션별 턴 조회 (v4) |
 | `ix_sessions_started` | `sessions(started_at)` | 세션 목록 정렬·구간 필터 (v4) |
 
-`ix_tool_calls_turn`·`ix_turns_session`·`ix_sessions_started`는 **마이그레이션 v4**가 더한
-읽기 인덱스다(ADR 0009). 조회 계층은 세션 → 턴 → 도구 호출 방향으로 탐색하는데 v3 DDL에는
-그 방향의 인덱스가 없었다. `events(turn_id)`는 `UNIQUE (turn_id, seq)`가 선두 컬럼으로
+`ix_tool_calls_turn`·`ix_turns_session`·`ix_sessions_started`는 조회 계층이 세션 → 턴 →
+도구 호출 방향으로 탐색할 때 쓰는 인덱스다. `events(turn_id)`는 `UNIQUE (turn_id, seq)`가 선두 컬럼으로
 받쳐 주므로 따로 만들지 않는다.
 
 DDL에 없는 인덱스, `ON DELETE CASCADE`, 기본값, 추가 `CHECK` 제약은 만들지 않는다.
-읽기 인덱스가 필요하면 **마이그레이션 v5 이후로 덧붙이고**, 이미 배포된 `schemaV3`·`schemaV4`의
-문장은 고치지 않는다.
+제품 최초 배포 전의 인덱스 변경은 `schemaSQL`에 반영한다. 배포 후에는 ADR 0012의 재검토
+조건에 따라 증분 마이그레이션으로 전환한다.
 
 ## 계약 규칙
 
@@ -96,12 +95,8 @@ DDL에 없는 인덱스, `ON DELETE CASCADE`, 기본값, 추가 `CHECK` 제약�
 | `recursive_triggers` | `1` |
 | `synchronous` | `NORMAL` |
 
-## v3 마이그레이션
+## 배포 전 초기화
 
-1. v1/v2의 FTS5 트리거와 자식 테이블부터 부모 테이블 순서로 삭제한다.
-2. 이 문서의 일곱 도메인 테이블을 부모부터 자식 순서로 생성한다.
-3. 같은 트랜잭션에서 `meta.local_schema_version`을 `3`으로 기록한다.
-4. 어느 문장이든 실패하면 삭제·생성과 버전 기록을 모두 롤백한다.
-
-백업, 데이터 매핑, 백필은 수행하지 않는다. 이미 배포된 `schemaV1`과 `schemaV2` 문장은 변경하지
-않으며 새 DB도 v1 → v2 → v3 순서로 적용된다.
+1. 빈 DB에 `schemaSQL` 전체를 한 트랜잭션으로 실행한다.
+2. 같은 트랜잭션에서 `meta.local_schema_version`을 현재 단일 세대로 기록한다.
+3. 다른 세대의 개발 DB는 자동 변환하지 않고 삭제 후 재생성을 안내한다.
