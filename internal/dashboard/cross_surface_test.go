@@ -25,7 +25,6 @@ import (
 	"github.com/your-org/pulsemetry/internal/event"
 	"github.com/your-org/pulsemetry/internal/session"
 	"github.com/your-org/pulsemetry/internal/store"
-	"github.com/your-org/pulsemetry/internal/vendorlimit"
 )
 
 // crossDay 는 이 파일이 검사하는 "그 날" 이다. testNow(2026-08-10 02:00 UTC =
@@ -477,65 +476,6 @@ func TestCrossSurface_BreakdownVendorRowsSumToHomeTotals(t *testing.T) {
 				t.Errorf("%s 행 토큰 합 = %d, Home 카드 = %d", dim, tokens, home.Totals.Tokens())
 			}
 		})
-	}
-}
-
-// TestCrossSurface_TrayRepeatsHomeNumbers 는 트레이가 본 화면과 같은 숫자를 말하는지 본다.
-// 트레이는 자기 SQL 을 쓰지 않고 Status·Home 을 그대로 부르는 것이 계약이다 (tray.go).
-func TestCrossSurface_TrayRepeatsHomeNumbers(t *testing.T) {
-	f := newFixture(t)
-	// 트레이는 "오늘" 을 본다. testNow 기준 오늘에 세션을 하나 둔다.
-	at := testNow.Add(-30 * time.Minute)
-	f.write(store.Batch{
-		Sessions: []session.Session{newSession("cs-tray", at, running)},
-		Events: []store.EventRecord{
-			promptRecord("cs-tray", "cs-tray-t1", at, 1, "트레이 대조"),
-			llmRecord("cs-tray", "cs-tray-t1", at, 2, llmSpec{Model: "claude-sonnet-4-5", Cost: 0.3, Input: 60, Output: 20}),
-		},
-	})
-
-	ctx := context.Background()
-	m, _, _ := newTestMonitor(f.reader, vendorlimit.Snapshot{
-		Results:    []vendorlimit.Result{availableResult(vendorlimit.VendorClaudeCode)},
-		ObservedAt: "2026-08-10T02:00:00Z",
-	})
-	snap, err := m.Snapshot(ctx, TrayQuery{TZ: seoul})
-	if err != nil {
-		t.Fatalf("Tray: %v", err)
-	}
-	home, err := f.reader.Home(ctx, HomeQuery{TZ: seoul})
-	if err != nil {
-		t.Fatalf("Home: %v", err)
-	}
-	if snap.Date != home.Date || snap.TZ != home.TZ {
-		t.Errorf("날짜·시간대가 다르다: tray = %s/%s, home = %s/%s",
-			snap.Date, snap.TZ, home.Date, home.TZ)
-	}
-	if snap.ActiveSessions != home.ActiveSessions {
-		t.Errorf("활성 세션: tray = %d, home = %d", snap.ActiveSessions, home.ActiveSessions)
-	}
-	if len(snap.Recent) != len(home.Recent) {
-		t.Fatalf("최근 세션: tray = %d건, home = %d건", len(snap.Recent), len(home.Recent))
-	}
-	for i := range snap.Recent {
-		if !reflect.DeepEqual(snap.Recent[i], home.Recent[i]) {
-			t.Errorf("[%d] 최근 세션이 다르다:\ntray = %+v\nhome = %+v",
-				i, snap.Recent[i], home.Recent[i])
-		}
-	}
-
-	// Status 도 같은 근거를 본다.
-	st, err := f.reader.Status(ctx)
-	if err != nil {
-		t.Fatalf("Status: %v", err)
-	}
-	if snap.Monitoring.RunningSessions != st.RunningSessions {
-		t.Errorf("진행 중 세션: tray = %d, status = %d",
-			snap.Monitoring.RunningSessions, st.RunningSessions)
-	}
-	if snap.Monitoring.LastEventAt != st.NewestEventAt {
-		t.Errorf("마지막 이벤트: tray = %d, status = %d",
-			snap.Monitoring.LastEventAt, st.NewestEventAt)
 	}
 }
 

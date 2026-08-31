@@ -164,7 +164,7 @@ const sessionExistsSQL = `SELECT 1 FROM sessions WHERE id = ?`
 
 // FileChanges 는 세션 하나의 파일별 변경 집계다 (계획서 「파일 변경」).
 //
-// 조인 경로는 sessions → turns → tool_calls → file_changes 다. 마이그레이션 v4 의
+// 조인 경로는 sessions → turns → tool_calls → file_changes 다. schema.go 의
 // ix_turns_session · ix_tool_calls_turn 과 v3 의 ix_fc_tool 이 이 경로를 받친다.
 //
 // DB 가 없거나 id 가 없으면 에러가 아니라 Found=false 인 빈 결과다.

@@ -18,11 +18,16 @@ Pulsemetry는 Claude Code·Codex 등 개발 AI 도구의 사용량과 비용을 
 Go로 쓴 CLI(`pulsemetry enroll`)와 데스크탑 데몬. 시스템 아키텍처의 **Desktop Application** + **Local Store**.
 
 ```
-cmd/telemetryctl/            진입점
+cmd/telemetryctl/            CLI·데몬 진입점
+cmd/pulsemetry-gui/          Wails v3 데스크탑 앱 (루트 go.mod 공유)
 internal/
   enrollment/ contract/      서버와의 enroll 계약
   receiver/ otlpdecode/      로컬 OTLP 수신기(127.0.0.1:4318) · 디코드 · 스크럽
-  store/ session/           SQLite 로컬 저장 (v3: vendors→sessions→turns→events + 승격 테이블)
+  vendor/                    벤더 정체성 단일 출처 (정식 ID·별칭·정규화)
+  store/ session/ pricing/   SQLite 로컬 저장 (v3: vendors→sessions→turns→events + 승격 테이블)
+  dashboard/ dashboard/tray/ 화면별 조회 API (CLI·데몬 공용) · 트레이 스냅샷
+  vendorlimit/ codexapp/     벤더 구독 사용 한도 조회 · Codex App Server (ADR 0011)
+  localapi/                  GUI ↔ 데몬 로컬 HTTP 계약 (ADR 0013)
   forward/                   회사 엔드포인트로 상위 전송
   config/                    ~/.claude/settings.json · ~/.codex/config.toml 배선
   credential/ autostart/     OS 키링 · launchd/systemd 등록
@@ -96,5 +101,5 @@ wails3 와 (리눅스라면) GTK4·WebKitGTK 개발 패키지를 요구해 로�
 - **로컬 수신기의 큐 포화 응답은 429가 아니라 200 + PartialSuccess다.** 벤더 exporter의 재시도 폭주를 막는 의도된 드롭 정책이다.
 - `TimeoutStopSec(20s) > 데몬 shutdown(15s)` 불변식을 깨지 않는다.
 - 알려진 미구현: **Windows 자동 시작**(PROJ-56), gRPC 상위 전송, `--force` 플래그 동작.
-- ADR을 추가하면 `0009`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
+- ADR을 추가하면 `0014`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
   Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.

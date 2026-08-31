@@ -4,6 +4,7 @@
 //
 //	POST /v1/metrics · /v1/logs · /v1/traces
 //	GET  /healthz    (인증 없음, status 명령이 사용)
+//	GET  /v1/tray · POST /v1/tray/refresh (인증된 로컬 GUI API)
 //	그 외             404
 //
 // # 이 패키지가 지키는 상한선은 §5.4 다
@@ -28,6 +29,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -42,6 +44,10 @@ const (
 	// HealthPath 는 인증 없이 열려 있는 유일한 경로다. status 명령과 GUI 가
 	// runtime.json 의 pid 판정을 확정하는 데 쓴다 (runtimeinfo.Load 주석).
 	HealthPath = "/healthz"
+
+	// LocalAPIPathPrefix 는 GUI 가 부르는 로컬 API 경로의 접두다. 개별 경로는
+	// internal/localapi 가 정하고, 여기서는 인증만 태워 그대로 넘긴다 (ServeHTTP).
+	LocalAPIPathPrefix = "/v1/tray"
 
 	// DefaultMaxBodyBytes 는 요청 본문 상한이다 (계획서 「수신기 설계」의 4 MiB).
 	// gzip 은 **압축 해제 후** 크기에 이 값을 건다 (body.go).
@@ -103,6 +109,9 @@ type Options struct {
 	// Token 은 loopback ingest bearer 토큰이다. 비어 있으면 New 가 거부한다 —
 	// 인증 없는 수신기를 실수로 띄우는 경로를 만들지 않는다. EnsureToken 이 만들어 준다.
 	Token string
+	// LocalAPI 는 인증을 통과한 LocalAPIPathPrefix 요청 전부를 받는다 (internal/localapi).
+	// 메서드·경로 판정은 그쪽 몫이다. nil이면 로컬 API를 열지 않는다.
+	LocalAPI http.Handler
 
 	// Decode 는 워커가 otlpdecode 에 넘길 옵션이다. InstallationID 가 비어 있으면
 	// 모든 이벤트가 검증에서 거부되므로 New 가 미리 막는다.
@@ -338,6 +347,16 @@ func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.URL.Path == HealthPath {
 		rc.serveHealth(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, LocalAPIPathPrefix) && rc.opt.LocalAPI != nil {
+		if ok, reason := rc.authorize(r); !ok {
+			total := rc.stats.unauthorized.Add(1)
+			rc.logUnauthorized(reason, total)
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		rc.opt.LocalAPI.ServeHTTP(w, r)
 		return
 	}
 

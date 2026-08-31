@@ -26,7 +26,6 @@ import (
 	"github.com/your-org/pulsemetry/internal/event"
 	"github.com/your-org/pulsemetry/internal/session"
 	"github.com/your-org/pulsemetry/internal/store"
-	"github.com/your-org/pulsemetry/internal/vendorlimit"
 )
 
 // daemonWriter 는 데몬의 쓰기 루프를 흉내 낸다. rounds 번 쓰고 done 을 닫는다.
@@ -146,30 +145,7 @@ func serviceReads(svc *Service) []struct {
 		{"Vendors", func(ctx context.Context) error { _, err := svc.Vendors(ctx); return err }},
 		{"MCPUsage", func(ctx context.Context) error { _, err := svc.MCPUsage(ctx, 14); return err }},
 		{"Status", func(ctx context.Context) error { _, err := svc.Status(ctx); return err }},
-		{"Tray", func(ctx context.Context) error { _, err := svc.Tray(ctx, TrayQuery{TZ: seoul}); return err }},
-		{"RefreshTray", func(ctx context.Context) error {
-			_, err := svc.RefreshTray(ctx, TrayQuery{TZ: seoul})
-			return err
-		}},
 	}
-}
-
-// stubTrayCollector 는 서비스의 트레이 모니터가 네트워크에 닿지 않게 한다.
-//
-// 벤더 한도 조회는 남의 API 다. -race 테스트가 그것을 두드리면 CI 는 네트워크에 묶이고,
-// 개발자 기계에서는 실제 계정 한도를 조회하게 된다.
-func stubTrayCollector(svc *Service) {
-	snap := vendorlimit.Snapshot{
-		Results: []vendorlimit.Result{
-			availableResult(vendorlimit.VendorClaudeCode,
-				window(vendorlimit.PeriodFiveHour, "primary", 0.4, 3600)),
-		},
-		ObservedAt: "2026-08-10T02:00:00Z",
-	}
-	svc.tray.collect = func(context.Context) vendorlimit.Snapshot { return snap }
-	// 주기를 0 으로 두어 호출마다 실제로 다시 만들게 한다 — 캐시가 걸리면 갱신 경로가
-	// 한 번만 돌고 그 자리의 경합은 검사되지 않는다.
-	svc.tray.interval = 0
 }
 
 // TestConcurrentServiceQueriesWhileDaemonWrites 는 데몬이 쓰는 동안 GUI 의 모든 화면을
@@ -190,7 +166,6 @@ func TestConcurrentServiceQueriesWhileDaemonWrites(t *testing.T) {
 	}
 	t.Cleanup(func() { svc.Stop() }) //nolint:errcheck // 테스트 정리
 	svc.Reader().now = func() time.Time { return testNow }
-	stubTrayCollector(svc)
 
 	const rounds = 30
 	writeDone := make(chan struct{})
@@ -257,7 +232,6 @@ func TestConcurrentServiceReconnectsMidQuery(t *testing.T) {
 	}
 	t.Cleanup(func() { svc.Stop() }) //nolint:errcheck // 테스트 정리
 	svc.Reader().now = func() time.Time { return testNow }
-	stubTrayCollector(svc)
 	if svc.Available() {
 		t.Fatal("Available = true — 아직 DB 가 없다")
 	}
@@ -334,47 +308,6 @@ func TestConcurrentServiceReconnectsMidQuery(t *testing.T) {
 	}
 }
 
-// TestConcurrentTrayMonitorIsOnePerService 는 여러 화면이 동시에 트레이를 불러도
-// 모니터가 하나로 유지되는지 본다. 호출마다 새로 만들면 "마지막 정상 스냅샷" 이 매번
-// 사라져 실패가 곧 빈 화면이 된다 (service.go 의 tray 필드 주석).
-func TestConcurrentTrayMonitorIsOnePerService(t *testing.T) {
-	f := newFixture(t)
-	f.write(store.Batch{
-		Sessions: []session.Session{newSession("cw-tray", testNow.Add(-time.Hour), running)},
-	})
-
-	svc := NewService(f.path)
-	if err := svc.Start(); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	t.Cleanup(func() { svc.Stop() }) //nolint:errcheck // 테스트 정리
-	svc.Reader().now = func() time.Time { return testNow }
-
-	col := &stubCollector{snap: vendorlimit.Snapshot{
-		Results:    []vendorlimit.Result{availableResult(vendorlimit.VendorClaudeCode)},
-		ObservedAt: "2026-08-10T02:00:00Z",
-	}}
-	svc.tray.collect = col.collect
-	svc.tray.now = func() time.Time { return testNow }
-
-	// 주기(60초) 안에서 동시에 여러 번 부른다. 모니터가 하나라면 벤더 조회는 한 번뿐이다.
-	var wg sync.WaitGroup
-	for range 16 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if _, err := svc.Tray(context.Background(), TrayQuery{TZ: seoul}); err != nil {
-				t.Errorf("Tray: %v", err)
-			}
-		}()
-	}
-	wg.Wait()
-
-	if got := col.count(); got != 1 {
-		t.Errorf("벤더 조회 = %d회, want 1 — 주기를 지키는 캐시가 동시 호출에서 무너졌다", got)
-	}
-}
-
 // TestConcurrentServiceIgnoresHalfCreatedDatabase 는 위 경합에서 실제로 드러난 버그의
 // 화면 쪽 회귀 테스트다.
 //
@@ -399,7 +332,6 @@ func TestConcurrentServiceIgnoresHalfCreatedDatabase(t *testing.T) {
 	}
 	t.Cleanup(func() { svc.Stop() }) //nolint:errcheck // 테스트 정리
 	svc.Reader().now = func() time.Time { return testNow }
-	stubTrayCollector(svc)
 
 	if svc.Available() {
 		t.Fatal("Available = true — 테이블이 없는 파일에 붙었다")
