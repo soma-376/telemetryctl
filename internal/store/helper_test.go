@@ -60,7 +60,7 @@ func sess(id string) func(*EventRecord) {
 	return func(r *EventRecord) { r.Event.SessionID = id }
 }
 
-func vendor(v string) func(*EventRecord) {
+func withVendor(v string) func(*EventRecord) {
 	return func(r *EventRecord) { r.Event.Vendor = v }
 }
 

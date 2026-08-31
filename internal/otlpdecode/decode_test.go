@@ -4,6 +4,9 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
+
 	"github.com/your-org/pulsemetry/internal/event"
 )
 
@@ -146,6 +149,21 @@ func TestDecodeSessionWalkthrough(t *testing.T) {
 		}
 		if e.Measure.ResponseLength.Valid() {
 			t.Errorf("response_length 가 오지 않았는데 설정됐다")
+		}
+	})
+
+	t.Run("event.name 속성이 LogRecord eventName보다 우선한다", func(t *testing.T) {
+		d := newDecoder(testOptions())
+		d.logRecord(carrier{serviceName: "codex_cli_rs"}, &logspb.LogRecord{
+			EventName:    "event otel/src/events.rs:1",
+			TimeUnixNano: 1,
+			Attributes: []*commonpb.KeyValue{
+				kv("event.name", "codex.sse_event"), kv("event.kind", "response.completed"), kv("session.id", "s1"),
+			},
+		})
+		res := d.result()
+		if len(res.Events) != 1 || res.Events[0].Name != "codex.sse_event" {
+			t.Fatalf("events = %+v", res.Events)
 		}
 	})
 
@@ -380,6 +398,7 @@ func TestVendorInference(t *testing.T) {
 		want        string
 	}{
 		{"service.name 이 이긴다", "claude-code", "codex.api_request", "fb", "claude_code"},
+		{"Codex Rust 서비스명", "codex_cli_rs", "codex.sse_event", "fb", "codex"},
 		{"이름 접두로 추론", "", "claude_code.token.usage", "fb", "claude_code"},
 		{"codex 접두", "", "codex.tool_result", "fb", "codex"},
 		{"모르는 service.name 은 정규화만", "acme-agent", "x.y", "fb", "acme_agent"},
