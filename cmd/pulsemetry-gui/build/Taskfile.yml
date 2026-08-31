@@ -74,8 +74,16 @@ tasks:
       - exclude: frontend/**/*
       - frontend/bindings/**/*  # Rerun when switching between dev/production mode causes changes in output
       - "**/*.go"
-      - go.mod
-      - go.sum
+      # 바인딩은 모듈 전체에서 생성된다. 이 Taskfile 기준의 "**/*.go" 는 cmd/pulsemetry-gui
+      # 아래만 보는데, 바인딩에 실리는 타입은 루트의 internal/dashboard 에 있다. 그것을
+      # 넣지 않으면 internal 의 Go 모델을 고쳐도 task 가 "up to date" 로 보고 재생성을
+      # 건너뛴다 — 빌드는 성공하고 앱만 낡은 타입으로 돈다.
+      #
+      # go.mod·go.sum 도 앞에 ../../ 가 없으면 존재하지 않는 cmd/pulsemetry-gui/go.mod 를
+      # 가리킨다. 모듈은 루트에 하나뿐이다.
+      - "../../internal/**/*.go"
+      - ../../go.mod
+      - ../../go.sum
     generates:
       - frontend/bindings/**/*
     cmds:

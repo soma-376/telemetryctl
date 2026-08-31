@@ -107,14 +107,18 @@ tasks:
     # 우산은 하나만 둔다. check 라는 별도 우산을 같이 두면 둘이 거의 같은 뜻이 되어
     # 새로 온 사람이 무엇을 쳐야 할지 모른다. 사람들이 반사적으로 치는 쪽을 남겼다.
     #
-    # 여기에 gofmt·go mod tidy 가 들어가는 것이 요점이다. 그래야 "task test 하나로
-    # CI 가 보는 전부를 로컬에서 돌린다" 가 성립하고, 푸시한 뒤에야 포맷 때문에 빨간
-    # 것을 보는 일이 없다.
+    # 여기에 gofmt·go mod tidy 가 들어가는 것이 요점이다. 푸시한 뒤에야 포맷 때문에
+    # 빨간 것을 보는 일이 없다.
+    #
+    # 다만 이것이 CI 전부는 아니다. CI 의 product-build 잡은 3개 OS 에서 task build 로
+    # GUI 까지 만든다. 그쪽은 wails3 와 (리눅스라면) GTK4·WebKitGTK 개발 패키지를 요구해
+    # 로컬 검사 우산에 넣지 않았다 — 넣으면 툴체인이 없는 사람은 task test 조차 못 친다.
+    # GUI 를 건드렸다면 task build 를 따로 돌려라.
     #
     # go test ./... 를 직접 부르지 않는 이유: check:cli 가 이미 CLI 범위로 race·cover
     # 테스트를 돌린다. ./... 로 두면 GUI 까지 컴파일하려 들어 리눅스·macOS 에서 깨진다
     # (GUI 에는 테스트 파일이 없어 잃는 것도 없다).
-    desc: 전체 검사. CI 가 보는 것과 같다.
+    desc: 전체 검사. CI 의 CLI·정적 검사를 로컬에서 돈다 (제품 빌드는 task build).
     cmds:
       - task: check:cli
       - task: check:cli:nocgo
@@ -184,6 +188,62 @@ tasks:
     #
     # test 가 아니라 check 인 이유: 코드를 실행하지 않고 읽기만 한다. 그래서 OS 를 타지
     # 않고, CI 에서도 static-checks 잡 하나에서만 돈다 (3개 러너에서 돌릴 이유가 없다).
+    deps:
+      - install:frontend
     dir: cmd/pulsemetry-gui/frontend
     cmds:
       - npm run check
+
+  check:bindings:
+    desc: 커밋된 Go 바인딩이 현재 Go 코드와 일치하는지 검사한다.
+    # frontend/bindings 는 Go 코드에서 생성된 TypeScript 인데 커밋되어 있다. 그래서 Go
+    # 구조체를 고치고 재생성을 잊으면 낡은 타입이 저장소에 남는다.
+    #
+    # 이것을 잡는 곳이 여태 없었다. check:frontend 의 svelte-check 는 **커밋된** 낡은
+    # 타입을 읽으므로 프런트가 그 타입에 맞춰져 있는 한 통과하고, build:gui 는 바인딩을
+    # 새로 만들지만 vite 는 타입을 검사하지 않아 번들이 그대로 만들어진다. 검사하는 쪽은
+    # 낡은 것을 보고, 새로 만드는 쪽은 검사를 안 하는 상태였다.
+    #
+    # go mod tidy -diff 와 달리 여기는 파일을 쓴다 — wails3 generate bindings 에 -diff 가
+    # 없다. 대신 실패했을 때 워크스페이스에 이미 올바른 파일이 놓여 있어 고치는 방법이
+    # `git add` 하나다.
+    #
+    # build:gui 에 기대지 않고 직접 생성한다. build/Taskfile.yml 의 generate:bindings 는
+    # sources 가 cmd/pulsemetry-gui 기준의 "**/*.go" 인데, 바인딩에 실리는 타입은 레포
+    # 루트의 internal/dashboard 에 있다. 감시 범위 밖이라 internal 을 고쳐도 캐시가
+    # 무효화되지 않고, 그러면 이 검사가 낡은 바인딩을 보고 조용히 통과한다.
+    # (실제로 그 상태를 재현해 확인했다. 생성은 4초라 build:gui 를 앞세울 이유도 없다.)
+    #
+    # -tags production 만 넘긴다. build:native 의 나머지 플래그(-trimpath·-buildvcs·
+    # -ldflags)는 타입 분석 결과를 바꾸지 않는다 — 이 플래그로 재생성한 결과가 커밋된
+    # 바인딩과 바이트 단위로 같음을 확인했다.
+    #
+    # test 에 넣지 않는 이유: wails3 가 있어야 하고, 리눅스라면 GUI 패키지 분석에 GTK4
+    # 헤더까지 필요하다. GUI 를 로컬 검사 우산에서 뺀 것과 같은 이유다. CI 는 그 둘을
+    # 이미 갖춘 product-build 잡에서 부른다.
+    dir: cmd/pulsemetry-gui
+    cmds:
+      - wails3 generate bindings -f '-tags production' -clean=true -ts -i
+      - git diff --exit-code -- frontend/bindings
+
+  install:frontend:
+    internal: true
+    # svelte-check 는 devDependency 라 node_modules 안에만 있다. 이 deps 가 없으면 방금
+    # 클론한 체크아웃에서 task test 가 마지막 단계에서 "svelte-check: not found" 로 깨진다.
+    # 여태 안 보였던 것은 개발자 머신엔 이미 node_modules 가 있고 CI 는 워크플로에 npm ci
+    # 스텝을 따로 두었기 때문이다 — 무엇을 설치하는가는 이 파일이 알아야 할 지식이다.
+    #
+    # npm install 이 아니라 npm ci 인 이유: install 은 package.json 과 lock 이 어긋나면
+    # lock 을 조용히 고쳐 쓴다. ci 는 lock 만 읽고 어긋나면 멈춘다 (go mod tidy -diff 와
+    # 같은 기준이다).
+    #
+    # 다만 npm ci 는 node_modules 를 통째로 지우고 다시 깐다. task test 마다 그러면 수십
+    # 초씩 태워 사람들이 안 치게 되므로, lock 이 바뀌었을 때만 돌린다.
+    dir: cmd/pulsemetry-gui/frontend
+    sources:
+      - package-lock.json
+    generates:
+      - node_modules/.package-lock.json
+    method: timestamp
+    cmds:
+      - npm ci

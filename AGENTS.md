@@ -63,11 +63,12 @@ task build:gui               # GUI 만
 task build:cli               # CLI + 데몬만
 
 # 검증
-task test                    # 전체. CI 가 보는 것과 같다
+task test                    # 전체. CI 의 CLI·정적 검사 (제품 빌드는 task build)
 task check:cli               # CLI 빌드·vet·race 테스트
 task check:cli:nocgo         # CGO 없이 빌드되는지 (ADR 0002)
 task check:format            # gofmt · go mod tidy -diff
 task check:frontend          # svelte-check
+task check:bindings          # 커밋된 frontend/bindings 가 Go 코드와 맞는지 (wails3 필요)
 ```
 
 **`go build ./...` · `go test ./...` 를 직접 쓰지 않는다.** 이유가 둘이다.
@@ -80,7 +81,11 @@ task check:frontend          # svelte-check
    성립하지 않는 범위라, `check:*` 는 `./cmd/telemetryctl ./internal/...` 만 본다.
    GUI 가 그 OS 에서 빌드되는지는 CI 의 `product-build` 잡이 본다.
 
-**`task test` 하나로 CI 가 보는 전부를 로컬에서 돌린다.** 푸시 전에 이것만 통과시키면 된다.
+**`task test` 는 CI 의 CLI·정적 검사를 로컬에서 그대로 돌린다.** 푸시 전에 먼저 통과시켜라.
+
+다만 CI 전부는 아니다. `product-build` 잡이 3개 OS 에서 `task build` 로 GUI 까지 만드는데, 그쪽은
+wails3 와 (리눅스라면) GTK4·WebKitGTK 개발 패키지를 요구해 로컬 검사 우산에 넣지 않았다.
+**GUI 나 프런트를 건드렸다면 `task build` 를 따로 돌려라.**
 
 ## 이 레포에서 특히 조심할 것
 

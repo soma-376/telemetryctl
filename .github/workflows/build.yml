@@ -102,6 +102,18 @@ jobs:
       - name: Build product
         run: task build
 
+      # 커밋된 frontend/bindings 가 현재 Go 코드와 맞는지 본다. 이 잡에서 도는 이유는
+      # 바인딩 생성이 wails3 와 (리눅스라면) GTK4 헤더를 요구하는데 그 둘을 갖춘 잡이
+      # 여기뿐이기 때문이다. static-checks 에 두면 설치 스텝 두 개가 더 붙는다.
+      #
+      # 리눅스에서만 도는 이유는 static-checks 가 리눅스인 것과 같다. windows 러너는
+      # core.autocrlf=true 로 체크아웃해 git diff 가 전 파일을 변경으로 신고한다.
+      # 바인딩 출력은 OS 를 타지 않는다 — internal/dashboard 의 OS 별 파일이 정의하는
+      # fileManagerCommand·acceptExitCode 는 unexported 라 바인딩에 실리지 않는다.
+      - name: Check bindings are up to date
+        if: runner.os == 'Linux'
+        run: task check:bindings
+
   static-checks:
     name: Static Checks
     # 코드를 실행하지 않고 읽기만 하는 검사를 모은다. 결과가 OS 에 의존하지 않으므로
@@ -130,12 +142,11 @@ jobs:
       - name: Install Task runner
         run: go install github.com/go-task/task/v3/cmd/task@v3.40.1
 
-      # svelte-check 는 node_modules 를 필요로 한다. dist 는 필요 없다 — 타입만 읽으므로
-      # vite build 를 앞세우지 않는다. Go 바인딩(frontend/bindings)은 커밋되어 있다.
-      - name: Install frontend dependencies
-        working-directory: cmd/pulsemetry-gui/frontend
-        run: npm ci
-
+      # 프런트 의존성 설치는 여기 없다 — check:frontend 가 deps 로 직접 챙긴다. 여기에
+      # npm ci 를 두면 "무엇을 검사하는가" 가 두 곳으로 갈리고, 이 잡만 통과하는 대신
+      # 로컬 task test 는 신규 체크아웃에서 깨진 채로 남는다. 실제로 그 상태였다.
+      #
+      # dist 는 필요 없다 — 타입만 읽으므로 vite build 를 앞세우지 않는다.
       - name: Check format and dependencies
         run: task check:format
 
