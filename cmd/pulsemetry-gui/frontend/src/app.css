@@ -1,0 +1,208 @@
+@import "tailwindcss";
+
+@theme {
+  /* ── Page width: Overview v2 기준 ─────────────────────
+     본문·헤더·내비 공통 폭. 좌우 패딩은 32px 고정. */
+  --page-min-width: 880px;
+  --page-max-width: 1080px;
+
+  /* Surfaces */
+  --color-bg: #f7f4ef;
+  --color-surface: #fffdfc;
+  --color-surface-hover: #faf7f2;
+
+  /* Borders */
+  --color-border: #e7e1d9;
+  --color-border-strong: #d9d2c9;
+
+  /* Text */
+  --color-text: #1b1a18;
+  --color-text-secondary: #68645f;
+  --color-text-muted: #96918a;
+
+  /* ── Brand: 미어캣 투톤 ──────────────────────────────
+     accent = 눈가 엄버(주역), sand = 모래빛 몸통(강조/차트) */
+  --color-accent: #6b5333;
+  --color-accent-hover: #57422a;
+  --color-accent-soft: #efe7d9;
+
+  --color-sand: #c79a5b;
+  --color-sand-hover: #b0854a;
+  --color-sand-soft: #f6efe3;
+
+  /* ── Vendor: 브랜드와 절대 공유하지 않음 ──────────────
+     Claude 주황은 여기에만 존재. accent로 대체 금지. */
+  --color-agent-claude: #ff6b1a;
+  --color-agent-claude-soft: #fff0e6;
+  --color-agent-codex: #4f7ef7;
+  --color-agent-codex-soft: #ecf1fe;
+  --color-agent-gemini: #2fae66;
+  --color-agent-gemini-soft: #e8f6ee;
+  --color-agent-cursor: #8c8882;
+  --color-agent-cursor-soft: #f2efea;
+
+  /* Semantic */
+  --color-success: #2fae66;
+  --color-info: #4f7ef7;
+  --color-info-hover: #3d6ae0;
+  --color-warning: #e99a2c;
+  --color-danger: #e35d5d;
+  --color-danger-strong: #c24a4a;
+  --color-inactive: #8c8882;
+
+  --color-success-soft: #e8f6ee;
+  --color-info-soft: #ecf1fe;
+  --color-warning-soft: #fdf3e4;
+  --color-danger-soft: #fceded;
+  --color-inactive-soft: #f2efea;
+
+  /* 캐시 지표 */
+  --color-session: #7a76c7;
+  --color-session-soft: #f1f0fb;
+
+  --color-track: #f0ebe3;
+
+  /* 주간 패턴 램프 — 모래빛 → 엄버 */
+  --color-ramp-1: #e6dac3;
+  --color-ramp-2: #d6b98a;
+  --color-ramp-3: #c79a5b;
+  --color-ramp-4: #6b5333;
+
+  --font-sans: "Helvetica Neue", Helvetica, "Apple SD Gothic Neo",
+    "Malgun Gothic", Arial, sans-serif;
+}
+
+@layer base {
+
+  html,
+  body {
+    margin: 0;
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* ── Motion ──────────────────────────────────────────── */
+@keyframes livePulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(199, 154, 91, 0.5);
+  }
+
+  70% {
+    box-shadow: 0 0 0 8px rgba(199, 154, 91, 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(199, 154, 91, 0);
+  }
+}
+
+@keyframes sheetIn {
+  from {
+    transform: translateX(100%);
+  }
+
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* 트레이 퀵뷰 등장 */
+@keyframes trayIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* 트레이 아코디언 확장 행 등장 */
+@keyframes rowIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 트레이 설정 메뉴 등장 */
+@keyframes menuIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* 트레이 퀵뷰 스크롤 — 좁은 팝업이라 스크롤바를 감춘다 */
+.tray-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.tray-scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* 새로고침 스피너 */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 설정 모달 등장 */
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* 세션 바 접힘 (macOS "크기 조절") */
+@keyframes barCollapse {
+  0% {
+    transform: none;
+    opacity: 1;
+  }
+
+  55% {
+    transform: translateY(4px) scaleX(0.72) scaleY(0.6) skewX(-3deg);
+    opacity: 0.7;
+  }
+
+  100% {
+    transform: translateY(12px) scaleX(0.28) scaleY(0.1) skewX(-7deg);
+    opacity: 0;
+  }
+}

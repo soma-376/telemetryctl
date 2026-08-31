@@ -162,12 +162,20 @@ go build -ldflags "-X main.defaultServer=https://get.your-service.com" ./cmd/tel
 
 클라이언트는 Go 1.25 이상이 필요합니다. SQLite 드라이버는 순수 Go 라 **CGO 가 필요 없습니다.**
 
+빌드와 검사는 [Task](https://taskfile.dev) 로 진입합니다. 루트 `Taskfile.yml` 이 단일 출처이고
+CI 도 같은 명령을 부르므로, 푸시 전에 `task test` 만 통과시키면 CI 가 보는 것과 같습니다.
+
 ```sh
-go build ./...
-go vet ./...
-go test -race -cover ./...
-CGO_ENABLED=0 go build ./...   # 배포 바이너리가 C 툴체인을 요구하지 않는지 (ADR 0002)
+task dev:gui        # GUI 를 핫리로드로 띄운다
+task dev:daemon     # 데몬을 포그라운드로 실행 (옵션은 -- 뒤에)
+task cli -- status  # CLI 실행
+
+task build          # CLI + GUI → artifacts/build/{os}-{arch}
+task test           # 전체 검사 (빌드·vet·race 테스트·gofmt·go mod tidy·svelte-check)
 ```
+
+`go build ./...` 를 직접 쓰지 않습니다. GUI 가 Vite 산출물을 embed 하고 OS 의 창 시스템을 링크해서
+순수 Go 기준의 검사가 성립하는 범위가 아닙니다. 자세한 것은 `AGENTS.md` 「명령어」를 보세요.
 
 자세한 설계는 [설치 아키텍처](docs/installation-architecture.md),
 [로컬 파이프라인](docs/local-pipeline.md), [SQLite 스키마](docs/sqlite-schema/README.md)를 참고하세요.

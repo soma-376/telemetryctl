@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=My Product
+Comment=A pmtest application
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/pmtest.exe %u
+Terminal=false
+Type=Application
+Icon=pmtest.exe
+Categories=Utility;
+StartupWMClass=pmtest.exe
+
+ 

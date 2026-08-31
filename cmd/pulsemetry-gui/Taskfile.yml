@@ -1,0 +1,47 @@
+version: '3'
+
+vars:
+  # 사용자에게 보이는 제품 이름이다. 바이너리 이름뿐 아니라 NSIS 설치 프로그램·MSIX·
+  # 서명 대상 이름까지 이 값에서 나온다 (build/windows/Taskfile.yml).
+  # pulsemetry-gui 는 Go 패키지 이름이지 사용자가 볼 이름이 아니다.
+  APP_NAME: "Pulsemetry"
+  BIN_DIR: '{{.BIN_DIR | default "bin"}}'
+  PACKAGE_MANAGER: '{{.PACKAGE_MANAGER | default "npm"}}'
+  VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
+  # Target OS for build/package/run. Defaults to the host OS, and is overridden
+  # by `wails3 build GOOS=...` (or the GOOS env var) for cross-compilation.
+  GOOS: '{{.GOOS | default OS}}'
+
+includes:
+  common: ./build/Taskfile.yml
+  windows: ./build/windows/Taskfile.yml
+  darwin: ./build/darwin/Taskfile.yml
+  linux: ./build/linux/Taskfile.yml
+
+tasks:
+  build:
+    summary: Builds the application
+    cmds:
+      - task: "{{.GOOS}}:build"
+
+  package:
+    summary: Packages a production build of the application
+    cmds:
+      - task: "{{.GOOS}}:package"
+
+  run:
+    summary: Runs the application
+    cmds:
+      - task: "{{.GOOS}}:run"
+
+  dev:
+    summary: Runs the application in development mode
+    # 포트 충돌 대응: WAILS_VITE_PORT 를 명시하면 그 포트를 그대로 쓰고(충돌 시
+    # 실패해서 알려줌), 지정하지 않으면 9245부터 비어 있는 포트를 찾아 쓴다.
+    # 고아 vite/앱 프로세스가 남아 있어도 dev 는 다음 포트로 비켜서 뜬다.
+    vars:
+      FREE_VITE_PORT:
+        sh: node build/devport.mjs {{.VITE_PORT}}
+      DEV_PORT: '{{if .WAILS_VITE_PORT}}{{.WAILS_VITE_PORT}}{{else}}{{.FREE_VITE_PORT}}{{end}}'
+    cmds:
+      - wails3 dev -config ./build/config.yml -port {{.DEV_PORT}}

@@ -5,9 +5,9 @@ Accepted
 
 ## Context
 PROJ-36 은 로컬 SQLite(ADR 0002)에 세션·롤업·원문을 쌓는다. 이 데이터를 그리는 쪽은 Wails v3 데스크탑 앱이다.
-GUI 는 같은 저장소 안 `gui/` 디렉터리에 **별도 `go.mod`** 로 둔다 — Wails 의존성이 CLI 바이너리로 새어들지 않게 하기 위해서다.
-(`gui/` 자체는 GUI 티켓 계열 브랜치(PROJ-44·58·60·61)에 있고 `develop` 에는 아직 없다.
-**이 괄호 문장은 임시이며 GUI 병합 PR 에서 삭제한다** — 병합 PR 체크리스트에 넣는다.)
+GUI 는 같은 저장소의 `cmd/pulsemetry-gui/`에 두고 루트 `go.mod`를 함께 사용한다.
+Go는 실행 파일이 실제로 import한 패키지만 링크하므로, 루트 모듈에 Wails 의존성이 있어도
+`cmd/telemetryctl`이 Wails를 import하지 않는 한 CLI·데몬 바이너리에 Wails 코드가 포함되지 않는다.
 
 데몬과 GUI 는 별도 프로세스다. 데몬이 DB 를 소유하고 쓰며, GUI 는 읽기만 한다.
 따라서 "GUI 가 데이터를 어떻게 얻는가"를 정해야 하고, 선택지는 프로세스 간 프로토콜을 세우는 쪽과
@@ -31,7 +31,7 @@ GUI 는 같은 저장소 안 `gui/` 디렉터리에 **별도 `go.mod`** 로 둔�
   func (r *Reader) Search(ctx context.Context, q SearchQuery) ([]Hit, error)
   ```
 
-- **Wails v3 서비스가 이 패키지를 직접 import 해 감싼다.** Wails 는 `gui/` 쪽에만 존재한다.
+- **Wails v3 서비스가 이 패키지를 직접 import 해 감싼다.** Wails import는 `cmd/pulsemetry-gui/` 경계에만 존재한다.
   `application.NewService(&DashboardService{})` 로 등록하고 `wails3 generate bindings` 로 TS 바인딩을 생성한다.
   Go 의 `error` 는 Promise reject 로 전파되고, 구조체에 `json` 태그를 붙여 TS 필드명을 고정한다.
 - **로컬 HTTP 조회 API 를 만들지 않는다.** 로컬 네트워크 표면은 ADR 0001 의 수신기 하나로 유지한다.
@@ -64,9 +64,8 @@ GUI 는 같은 저장소 안 `gui/` 디렉터리에 **별도 `go.mod`** 로 둔�
 ### Negative
 - GUI 가 Go 로 고정된다. 다른 스택으로 옮기려면 조회 계층을 새로 만들어야 한다.
   - 지금 그럴 계획이 없고, 필요해지면 `internal/dashboard` 를 감싸는 얇은 HTTP 어댑터를 추가하면 된다. 되돌리기 어려운 결정이 아니다.
-- `gui/` 가 별도 모듈이므로 `internal/` import 규칙을 만족시켜야 한다.
-  gui 모듈 경로를 상위 모듈 경로 아래(`.../gui`)에 두고 로컬 `replace` 로 상위 모듈을 가리켜야 한다. 이 배치를 벗어나면 `internal/dashboard` import 가 거부된다.
-- 모듈이 둘이라 빌드·CI 단계가 둘이다. `go build ./...` 와 `(cd gui && go build ./...)` 를 모두 돌려야 한다.
+- 루트 단일 모듈이므로 `go build ./...`가 CLI·데몬과 GUI Go 코드를 함께 검사한다.
+  프로덕션 GUI는 Vite 산출물을 임베드해야 하므로 루트 `Taskfile.yml`이 프런트엔드와 Wails 빌드 순서를 별도로 관리한다.
 - 화면에 새 지표가 필요하면 `internal/dashboard` 에 메서드를 추가하고 바인딩을 재생성해야 한다. GUI 쪽만 고쳐서 끝낼 수 없다.
 - 데몬 쓰기와 GUI 읽기가 동시에 일어나므로 read-only 연결 조회를 `-race` 로 검증해야 한다.
 
