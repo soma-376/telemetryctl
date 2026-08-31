@@ -9,10 +9,6 @@ tasks:
   build:
     summary: Builds the application for Linux
     cmds:
-      # Linux requires CGO - use Docker when:
-      # 1. Cross-compiling from non-Linux, OR
-      # 2. No C compiler is available, OR
-      # 3. Target architecture differs from host architecture (cross-arch compilation)
       - task: build:native
         vars:
           ARCH: '{{.ARCH}}'

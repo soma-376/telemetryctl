@@ -9,7 +9,6 @@ tasks:
   build:
     summary: Builds the application for Windows
     cmds:
-      # Auto-detect CGO: if CGO_ENABLED=1, use Docker; otherwise use native Go cross-compile
       - task: build:native
         vars:
           ARCH: '{{.ARCH}}'
