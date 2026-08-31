@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/your-org/pulsemetry/internal/dashboard"
+	"github.com/your-org/pulsemetry/internal/dashboard/tray"
 	"github.com/your-org/pulsemetry/internal/store"
 	"github.com/your-org/pulsemetry/internal/vendorlimit"
 )
@@ -393,12 +394,12 @@ func TestScreenContract_Tray_SummarizesLocalStateWithoutCredentials(t *testing.T
 	f := newScreenFixture(t)
 	ctx := context.Background()
 
-	snap, err := f.svc.Tray(ctx, dashboard.TrayQuery{TZ: screenTZ})
+	snap, err := tray.NewBuilder(f.svc).Snapshot(ctx, tray.Query{TZ: screenTZ})
 	if err != nil {
 		t.Fatalf("Tray: %v", err)
 	}
 	// 데몬은 이미 멈췄고 DB 는 있다 — paused 다.
-	if snap.Monitoring.State != dashboard.TrayStatePaused {
+	if snap.Monitoring.State != tray.StatePaused {
 		t.Errorf("state = %q, want paused (DB 는 있고 데몬은 멈췄다)", snap.Monitoring.State)
 	}
 	if !snap.Monitoring.DatabaseAvailable {
@@ -424,8 +425,12 @@ func TestScreenContract_Tray_SummarizesLocalStateWithoutCredentials(t *testing.T
 		if res.State != vendorlimit.StateUnavailable {
 			t.Errorf("%s state = %q — 자격증명이 없는데 available 이다", res.Vendor, res.State)
 		}
-		if res.Reason != vendorlimit.ReasonCredentialMissing {
-			t.Errorf("%s reason = %q, want credential_missing", res.Vendor, res.Reason)
+		// 데몬이 기동 직후 한 번 조회하므로 여기까지 오면 모든 벤더에 실제 결과가 있다.
+		// 무엇으로 실패했는지는 환경마다 다르다 (Claude 는 자격증명 파일 부재, Codex 는
+		// App Server 부재). 계약은 "not_probed 가 아니다" — 그 값이 나오면 기동 시
+		// 1회 조회가 돌지 않았다는 뜻이다 (runner.go 의 refreshLimitsLogged).
+		if res.Reason == "" || res.Reason == vendorlimit.ReasonNotProbed {
+			t.Errorf("%s reason = %q — 기동 시 한도 조회가 돌지 않았다", res.Vendor, res.Reason)
 		}
 		if res.Windows == nil {
 			t.Errorf("%s windows = nil — JSON 에서 null 이 되어 화면이 분기해야 한다", res.Vendor)

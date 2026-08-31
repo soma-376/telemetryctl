@@ -11,7 +11,9 @@ Codex와 Claude Code의 OpenTelemetry 설정을 조직 단위로 안전하게 �
 
 ```text
 .
-├── cmd/telemetryctl/          # CLI 진입점 (enroll·status·reconnect·daemon·stats·sessions·purge·local·autostart·version)
+├── cmd/
+│   ├── telemetryctl/          # CLI 진입점 (enroll·status·reconnect·daemon·stats·sessions·purge·local·autostart·version)
+│   └── pulsemetry-gui/        # Wails v3 데스크탑 앱 (루트 go.mod 공유, ADR 0004)
 ├── contracts/                 # 서버와의 JSON Schema 계약 사본 (계약 테스트 기준)
 │   ├── enrollment-manifest.schema.json
 │   └── enrollment-envelope.schema.json
@@ -26,13 +28,21 @@ Codex와 Claude Code의 OpenTelemetry 설정을 조직 단위로 안전하게 �
     │
     │                          # ── 로컬 데이터 파이프라인 (PROJ-36) ──
     ├── event/                 #   정규화 이벤트 타입·DedupKey·경로 해시 (IO 없음)
+    ├── vendor/                #   벤더 정체성의 단일 출처 (정식 ID·별칭·정규화)
     ├── otlpdecode/            #   OTLP 디코드 + content 제거 재인코딩 (proto 의존 격리)
     ├── receiver/              #   loopback OTLP/HTTP 수신기
     ├── forward/               #   회사 Collector 전달 (유계 큐·제한된 재시도)
     ├── session/               #   이벤트 → 세션 조립, 제목 휴리스틱 (순수 함수)
-    ├── rollup/                #   시간 버킷 집계 (순수 함수)
-    ├── store/                 #   SQLite 스키마·쓰기·보존 정책
-    ├── dashboard/             #   화면별 조회 API (CLI·GUI 공용, Wails 의존 없음)
+    ├── pricing/               #   LLM 호출 비용 산정 (보고값이 없을 때의 가격표)
+    ├── store/                 #   SQLite 스키마·쓰기·승격·보존 정책
+    │
+    │                          # ── 조회와 화면 ──
+    ├── dashboard/             #   화면별 조회 API (CLI·데몬 공용, Wails 의존 없음)
+    │   └── tray/              #     트레이 퀵뷰 스냅샷 조립과 캐시
+    ├── vendorlimit/           #   벤더 구독 사용 한도 조회 (Claude API·Codex App Server)
+    ├── codexapp/              #   Codex App Server 프로세스·프로토콜 (ADR 0011)
+    ├── localapi/              #   GUI ↔ 데몬 로컬 HTTP 계약 (ADR 0013)
+    │
     ├── runtimeinfo/           #   runtime.json (비밀 없음: 주소·pid·데이터 경로)
     ├── autostart/             #   로그인 시 데몬 자동 실행 등록 (launchd·systemd user unit)
     └── daemon/                #   위 패키지 배선 + 틱 루프 + graceful shutdown
@@ -91,10 +101,6 @@ Claude Code(`~/.claude/settings.json`)·Codex(`~/.codex/config.toml`)에 OTel �
 직접 받고, 세션 단위로 조립·집계해 로컬 SQLite(`~/.pulsemetry/pulsemetry.db`)에 저장한 뒤 회사
 Collector 로도 전달합니다. **끄려면 `local disable` 입니다.**
 
-> **개발 브랜치 주의:** SQLite 스키마 v3는 기존 로컬 도메인 데이터를 삭제하고 새 모델을 만들지만
-> 데몬·CLI 런타임은 아직 v3로 전환되지 않았습니다. 후속 구현 전에는 로컬 수집·조회 명령이 실패하며,
-> 현재 스키마 계약과 파괴적 전환 범위는 [SQLite 스키마 문서](docs/sqlite-schema/README.md)를 따릅니다.
-
 ```sh
 telemetryctl enroll --invite <코드>   # 설치 + 로컬 배선 + 자동 실행 등록 (endpoint → http://localhost:4318)
 telemetryctl sessions --since 1d
@@ -123,6 +129,12 @@ telemetryctl local disable            # 회사 Collector 직결로 복귀
 
 기존 설치자(이미 `enroll` 을 마친 사용자)는 바이너리를 교체해도 자동 전환되지 않습니다.
 `telemetryctl local enable` 로 명시적으로 켜세요.
+
+데스크탑 앱(트레이 퀵뷰)은 SQLite 를 직접 열지 않습니다. 데몬이 로컬 HTTP 로 조회 결과를
+내려주고 GUI 는 그것을 그립니다 — 그래서 화면과 CLI 가 같은 `internal/dashboard` 함수로 같은
+숫자를 냅니다([ADR 0013](docs/adr/0013-GUI는-데몬의-로컬-API로-대시보드를-조회한다.md)).
+벤더 구독 사용 한도(Claude·Codex)는 데몬이 기동 직후 한 번과 이후 5분마다 조회해 저장하고,
+실패해도 마지막 성공값을 지우지 않습니다.
 
 토폴로지·프라이버시 불변식·GUI 조회 API 계약은 [로컬 파이프라인 문서](docs/local-pipeline.md)에,
 DDL과 테이블별 계약은 [SQLite 스키마 문서](docs/sqlite-schema/README.md)에, 설계 결정 배경은
@@ -184,14 +196,15 @@ enrollment 서버 스펙은 서버 저장소를 참조하세요.
 
 ## 다음 구현 대상
 
-1. **SQLite v3 런타임 전환** — 새 세션·턴·이벤트·LLM 호출·도구 호출 모델에 맞춰 쓰기, 조회,
-   보존 로직을 교체하고 전체 테스트를 다시 통과시킵니다
-2. **GUI 데스크탑 앱** (PROJ-35) — `gui/` 에 별도 `go.mod` 로 Wails v3 앱을 두고
-   `internal/dashboard` 를 감쌉니다. 계약은 [로컬 파이프라인 문서](docs/local-pipeline.md) 6절
-3. **데몬 자동 실행 등록 — Windows** (PROJ-56, 작업 스케줄러). macOS·리눅스는 PROJ-55 에서
+1. **데몬 자동 실행 등록 — Windows** (PROJ-56, 작업 스케줄러). macOS·리눅스는 PROJ-55 에서
    구현했습니다 (`internal/autostart`, [ADR 0007](docs/adr/0007-데몬은-비정상-종료일-때만-자동-재시작한다.md)).
    Windows 에서는 `autostart` 명령이 미지원임을 알리고 `telemetryctl daemon` 을 직접 띄워야 합니다
-4. 토큰 rotation · heartbeat · 설정 재조회(`GET /v1/manifest`)
-5. `resource_attributes` → `OTEL_RESOURCE_ATTRIBUTES` 배선 (회사 단위 태깅)
-6. 설치 바이너리 PATH 등록, `uninstall`·`repair` (자격증명 파일에서 헤더 재주입)
-7. Codex 텔레메트리 인증 배선 (현재 Codex 설정에는 토큰이 들어가지 않음)
+2. **GUI 화면 배선** — 트레이 퀵뷰는 실데이터로 돌고 있고, Home·Activity 는 아직 목데이터입니다
+3. **조회 API 전용 토큰** — 현재 데몬 로컬 API 는 ingest 토큰을 그대로 씁니다. 그 토큰은 벤더 설정
+   파일에 평문으로 들어가므로, 세션 이력을 돌려주는 조회 경로는 별도 자격으로 분리해야 합니다
+4. **고아 세션 마감** — 데몬이 비정상 종료하면 그때 열려 있던 세션의 `ended_at` 이 NULL 로 남아
+   영원히 "진행 중" 으로 보입니다. 기동 시 유휴 임계값을 넘긴 세션을 마감해야 합니다
+5. 토큰 rotation · heartbeat · 설정 재조회(`GET /v1/manifest`)
+6. `resource_attributes` → `OTEL_RESOURCE_ATTRIBUTES` 배선 (회사 단위 태깅)
+7. 설치 바이너리 PATH 등록, `uninstall`·`repair` (자격증명 파일에서 헤더 재주입)
+8. Codex 텔레메트리 인증 배선 (현재 Codex 설정에는 토큰이 들어가지 않음)

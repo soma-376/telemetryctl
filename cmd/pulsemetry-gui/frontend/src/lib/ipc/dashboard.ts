@@ -1,12 +1,14 @@
 import { Dashboard } from "../../../bindings/github.com/your-org/pulsemetry/cmd/pulsemetry-gui";
-import { TrayState } from "../../../bindings/github.com/your-org/pulsemetry/internal/dashboard";
+import type { RecentSession } from "../../../bindings/github.com/your-org/pulsemetry/internal/dashboard";
+// 트레이 타입은 Go 쪽 tray 패키지에 있어 이름에 접두사가 없다. 화면이 쓰는 이름은
+// 여기서 붙인다 — Tray 를 뗀 Snapshot·Query 는 다른 화면의 것과 구분되지 않는다.
+import { State as TrayState } from "../../../bindings/github.com/your-org/pulsemetry/internal/dashboard/tray";
 import type {
-  RecentSession,
+  Monitoring as TrayMonitoring,
+  Query as TrayQuery,
+  Snapshot as TraySnapshot,
   TightestLimit,
-  TrayMonitoring,
-  TrayQuery,
-  TraySnapshot,
-} from "../../../bindings/github.com/your-org/pulsemetry/internal/dashboard";
+} from "../../../bindings/github.com/your-org/pulsemetry/internal/dashboard/tray";
 import { State as LimitState } from "../../../bindings/github.com/your-org/pulsemetry/internal/vendorlimit";
 import type {
   Result as VendorLimit,

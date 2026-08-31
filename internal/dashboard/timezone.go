@@ -40,6 +40,10 @@ func loadLocation(tz string) (*time.Location, error) {
 	return loc, nil
 }
 
+// LoadLocation 은 loadLocation 의 공개판이다. 하위 화면 패키지가 같은 규칙으로 시간대를
+// 검증하게 한다 — 화면마다 규칙이 다르면 같은 오타가 어디선 에러, 어디선 조용한 UTC 가 된다.
+func LoadLocation(tz string) (*time.Location, error) { return loadLocation(tz) }
+
 // timeRange 는 [Start, End) 반열린 구간이다. 끝을 배타로 두어야 자정이 두 날에 동시에
 // 속하지 않는다.
 type timeRange struct {
