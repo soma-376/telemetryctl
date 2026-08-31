@@ -113,19 +113,15 @@ func TestTokenNeverEscapes(t *testing.T) {
 	homes := make([]string, 0, len(paths))
 	for _, p := range paths {
 		homes = append(homes, p.home)
-		snap := Collect(context.Background(), collectOptions(p.home, p.claudeBase, p.codexBase))
+		snap := collectAll(context.Background(), collectOptions(p.home, p.claudeBase, p.codexBase))
 		add(p.name, snap)
 
 		// 어댑터를 거치지 않은 날것의 오류도 자루에 넣는다. Result 로 옮기는 과정에서
 		// 걸러지는 것이 아니라 애초에 오류에 토큰이 없어야 한다.
 		_, err := loadClaudeCredential(p.home)
 		addErr(err)
-		_, err = loadCodexCredential(p.home)
-		addErr(err)
 		addErr(getJSON(context.Background(), newHTTPClient(), p.claudeBase+claudeUsagePath,
 			newToken(claudeCanary), map[string]string{"anthropic-beta": claudeOAuthBeta}, new(map[string]any)))
-		addErr(getJSON(context.Background(), newHTTPClient(), p.codexBase+codexUsagePath,
-			newToken(codexCanary), map[string]string{codexAccountHeader: accountCanary}, new(map[string]any)))
 	}
 
 	// 컨텍스트 취소 경로.
@@ -137,7 +133,7 @@ func TestTokenNeverEscapes(t *testing.T) {
 	writeBoth(hangHome, testNow.Add(time.Hour))
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	add("취소", Collect(ctx, collectOptions(hangHome, hang.srv.URL, hang.srv.URL)))
+	add("취소", collectAll(ctx, collectOptions(hangHome, hang.srv.URL, hang.srv.URL)))
 
 	// 패닉 경로.
 	add("패닉", safeProbe(context.Background(), panicAdapter{},

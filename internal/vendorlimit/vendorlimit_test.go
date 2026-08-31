@@ -2,10 +2,60 @@ package vendorlimit
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/your-org/pulsemetry/internal/codexapp"
 )
+
+const codexUsageBody = `{"rate_limits":{"primary":{"used_percent":12,"window_minutes":300,"resets_in_seconds":3600},"secondary":{"used_percent":40,"window_minutes":10080,"resets_in_seconds":86400}},"plan_type":"plus","credits":{"enabled":true}}`
+
+type testCodexHTTPReader struct{ url string }
+
+type testCodexWireWindow struct {
+	UsedPercent     int   `json:"used_percent"`
+	WindowMinutes   int64 `json:"window_minutes"`
+	ResetsInSeconds int64 `json:"resets_in_seconds"`
+}
+
+func (r testCodexHTTPReader) RateLimits(ctx context.Context) (codexapp.RateLimitSnapshot, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.url, nil)
+	if err != nil {
+		return codexapp.RateLimitSnapshot{}, context.DeadlineExceeded
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return codexapp.RateLimitSnapshot{}, context.DeadlineExceeded
+	}
+	defer resp.Body.Close() //nolint:errcheck // 테스트 서버 본문이다.
+	var wire struct {
+		RateLimits *struct {
+			Primary   *testCodexWireWindow `json:"primary"`
+			Secondary *testCodexWireWindow `json:"secondary"`
+		} `json:"rate_limits"`
+		PlanType string `json:"plan_type"`
+		Credits  *struct {
+			Enabled bool `json:"enabled"`
+		} `json:"credits"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&wire) != nil || wire.RateLimits == nil {
+		return codexapp.RateLimitSnapshot{}, nil
+	}
+	out := codexapp.RateLimitSnapshot{PlanType: stringp(wire.PlanType)}
+	convert := func(w *testCodexWireWindow) *codexapp.RateLimitWindow {
+		if w == nil {
+			return nil
+		}
+		return &codexapp.RateLimitWindow{UsedPercent: w.UsedPercent, WindowDurationMins: int64p(w.WindowMinutes), ResetsAt: int64p(testNow.Add(time.Duration(w.ResetsInSeconds) * time.Second).Unix())}
+	}
+	out.Primary, out.Secondary = convert(wire.RateLimits.Primary), convert(wire.RateLimits.Secondary)
+	if wire.Credits != nil {
+		out.Credits = &codexapp.CreditsSnapshot{HasCredits: wire.Credits.Enabled}
+	}
+	return out, nil
+}
 
 // bothVendorsHome 은 두 벤더 모두 로그인된 홈을 만든다.
 func bothVendorsHome(t *testing.T) string {
@@ -19,14 +69,31 @@ func bothVendorsHome(t *testing.T) string {
 // collectOptions 는 모의 서버를 가리키는 Collect 구성이다.
 func collectOptions(home, claudeBase, codexBase string) Options {
 	return Options{
-		HomeDir: home,
-		Client:  newHTTPClient(),
-		now:     fixedNow,
-		baseURLs: map[Vendor]string{
-			VendorClaudeCode: claudeBase,
-			VendorCodex:      codexBase,
-		},
+		HomeDir:       home,
+		Client:        newHTTPClient(),
+		CodexClient:   testCodexHTTPReader{url: codexBase},
+		now:           fixedNow,
+		claudeBaseURL: claudeBase,
 	}
+}
+
+func collectAll(ctx context.Context, opts Options) Snapshot {
+	c := NewCollector(opts)
+	defer c.Close() //nolint:errcheck
+	snap := Snapshot{Results: make([]Result, 0, len(SupportedVendors())), ObservedAt: formatTime(opts.now())}
+	for _, vendor := range SupportedVendors() {
+		snap.Results = append(snap.Results, c.CollectVendor(ctx, vendor))
+	}
+	return snap
+}
+
+func resultOf(s Snapshot, vendor Vendor) (Result, bool) {
+	for _, result := range s.Results {
+		if result.Vendor == vendor {
+			return result, true
+		}
+	}
+	return Result{}, false
 }
 
 func TestCollect는두벤더를모두정규화한다(t *testing.T) {
@@ -35,7 +102,7 @@ func TestCollect는두벤더를모두정규화한다(t *testing.T) {
 	codexUp := jsonUpstream(t, codexUsageBody)
 	home := bothVendorsHome(t)
 
-	snap := Collect(context.Background(), collectOptions(home, claudeUp.srv.URL, codexUp.srv.URL))
+	snap := collectAll(context.Background(), collectOptions(home, claudeUp.srv.URL, codexUp.srv.URL))
 
 	if len(snap.Results) != 2 {
 		t.Fatalf("결과 = %d개: %+v", len(snap.Results), snap.Results)
@@ -56,11 +123,11 @@ func TestCollect는두벤더를모두정규화한다(t *testing.T) {
 		}
 	}
 
-	got, ok := snap.Result(VendorCodex)
+	got, ok := resultOf(snap, VendorCodex)
 	if !ok || got.Plan != "plus" {
 		t.Errorf("Result(codex) = (%+v, %v)", got, ok)
 	}
-	if _, ok := snap.Result(Vendor("gemini_cli")); ok {
+	if _, ok := resultOf(snap, Vendor("gemini_cli")); ok {
 		t.Error("지원하지 않는 벤더가 결과에 있다")
 	}
 
@@ -123,9 +190,9 @@ func TestCollect는실패한벤더만unavailable로만든다(t *testing.T) {
 			home := newHome(t)
 			claudeBase, codexBase := tc.setup(t, home)
 
-			snap := Collect(context.Background(), collectOptions(home, claudeBase, codexBase))
+			snap := collectAll(context.Background(), collectOptions(home, claudeBase, codexBase))
 
-			broken, ok := snap.Result(tc.broken)
+			broken, ok := resultOf(snap, tc.broken)
 			if !ok {
 				t.Fatalf("%s 결과가 통째로 빠졌다 — 화면이 로딩 중과 구분하지 못한다", tc.broken)
 			}
@@ -134,7 +201,7 @@ func TestCollect는실패한벤더만unavailable로만든다(t *testing.T) {
 					tc.broken, broken.State, broken.Reason, tc.wantReason, broken.Detail)
 			}
 
-			healthy, ok := snap.Result(tc.healthy)
+			healthy, ok := resultOf(snap, tc.healthy)
 			if !ok {
 				t.Fatalf("%s 결과가 빠졌다", tc.healthy)
 			}
@@ -147,41 +214,6 @@ func TestCollect는실패한벤더만unavailable로만든다(t *testing.T) {
 			}
 
 			assertSerializable(t, snap, claudeCanary, codexCanary, accountCanary, home)
-		})
-	}
-}
-
-func TestCollect는요청한벤더만조회한다(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		want []Vendor
-		got  []Vendor
-	}{
-		{name: "비우면 전부", want: nil, got: SupportedVendors()},
-		{name: "Codex 만", want: []Vendor{VendorCodex}, got: []Vendor{VendorCodex}},
-		{name: "지원하지 않는 벤더는 건너뛴다", want: []Vendor{Vendor("gemini_cli"), Vendor("cursor")}, got: nil},
-		{name: "지원 벤더만 걸러 낸다", want: []Vendor{Vendor("cursor"), VendorClaudeCode}, got: []Vendor{VendorClaudeCode}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			home := bothVendorsHome(t)
-			claudeUp := jsonUpstream(t, claudeUsageBody(testNow.Format(time.RFC3339)))
-			codexUp := jsonUpstream(t, codexUsageBody)
-
-			opts := collectOptions(home, claudeUp.srv.URL, codexUp.srv.URL)
-			opts.Vendors = tc.want
-			snap := Collect(context.Background(), opts)
-
-			if len(snap.Results) != len(tc.got) {
-				t.Fatalf("결과 = %d개, want %d: %+v", len(snap.Results), len(tc.got), snap.Results)
-			}
-			for i, v := range tc.got {
-				if snap.Results[i].Vendor != v {
-					t.Errorf("results[%d] = %q, want %q", i, snap.Results[i].Vendor, v)
-				}
-			}
 		})
 	}
 }
@@ -228,19 +260,23 @@ func TestResolveHome(t *testing.T) {
 	}
 }
 
-// 자격증명이 하나도 없는 깨끗한 장비에서도 Collect 는 모양을 유지해야 한다.
+// 자격증명이 하나도 없는 깨끗한 장비에서도 벤더별 조회는 모양을 유지해야 한다.
 // 미설치는 오류가 아니라 상태다 (ADR 0004 의 "미설치 상태는 error 가 아니다").
 func TestCollect는미설치장비에서도모양을유지한다(t *testing.T) {
 	t.Parallel()
 	home := newHome(t)
 
-	snap := Collect(context.Background(), collectOptions(home, deadUpstream(t), deadUpstream(t)))
+	snap := collectAll(context.Background(), collectOptions(home, deadUpstream(t), deadUpstream(t)))
 
 	if len(snap.Results) != 2 {
 		t.Fatalf("결과 = %d개", len(snap.Results))
 	}
 	for _, r := range snap.Results {
-		if r.State != StateUnavailable || r.Reason != ReasonCredentialMissing {
+		wantReason := ReasonCredentialMissing
+		if r.Vendor == VendorCodex {
+			wantReason = ReasonNetwork
+		}
+		if r.State != StateUnavailable || r.Reason != wantReason {
 			t.Errorf("%s: state = %q, reason = %q", r.Vendor, r.State, r.Reason)
 		}
 		if r.Windows == nil {
