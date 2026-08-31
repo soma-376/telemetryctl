@@ -53,7 +53,7 @@ func writeClaudeCredential(t *testing.T, home, body string) {
 
 func writeCodexAuth(t *testing.T, home, body string) {
 	t.Helper()
-	writeFileAt(t, codexCredentialPath(home), body, 0o600)
+	writeFileAt(t, filepath.Join(home, ".codex", "auth.json"), body, 0o600)
 }
 
 // claudeCredentialJSON 은 관측된 모양의 Claude 자격증명 파일을 만든다.
