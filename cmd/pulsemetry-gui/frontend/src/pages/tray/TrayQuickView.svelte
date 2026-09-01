@@ -3,7 +3,6 @@
   import RecentSessions from "./components/RecentSessions.svelte";
   import TrayFooter from "./components/TrayFooter.svelte";
   import TrayHeader from "./components/TrayHeader.svelte";
-  import TrayInsight from "./components/TrayInsight.svelte";
   import TraySettingsMenu from "./components/TraySettingsMenu.svelte";
   import VendorLimits from "./components/VendorLimits.svelte";
   import QuitDialog from "$lib/components/dialog/QuitDialog.svelte";
@@ -104,7 +103,6 @@
     {:else}
       <VendorLimits vendors={shown.vendors} unavailable={shown.unavailable} />
       <RecentSessions sessions={shown.sessions} />
-      <TrayInsight />
     {/if}
   </main>
 

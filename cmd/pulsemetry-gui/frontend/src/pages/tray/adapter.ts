@@ -91,8 +91,8 @@ function resetText(w: LimitWindow, now: Date): string {
 }
 
 // toWindows 는 한 벤더의 창들을 화면 줄로 옮기고 주간 한도를 대표로 세운다.
-// 주간 창이 없으면 5시간, 그것도 없으면 첫 창을 쓴다. 가장 빠듯한 한도는 별도
-// tightest_limit 계약이 맡으며, 대표 카드는 벤더 사이에서 같은 기간을 안정적으로 보여준다.
+// 주간 창이 없으면 5시간, 그것도 없으면 첫 창을 쓴다 — 대표 카드는 벤더 사이에서 같은
+// 기간을 안정적으로 보여주는 것이 목적이고, "가장 빠듯한 하나" 를 고르는 것이 아니다.
 function toWindows(windows: LimitWindow[], now: Date): TrayLimitWindow[] {
   const labels = windowLabels(windows);
   const weeklyAt = windows.findIndex((window) => window.period === "weekly");
