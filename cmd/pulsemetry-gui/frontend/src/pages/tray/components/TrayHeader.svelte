@@ -13,14 +13,21 @@
   let {
     limitsObservedAt,
     trayState,
+    syncing = false,
     onRefresh,
   }: {
     limitsObservedAt: number;
     trayState?: TrayState;
+    /** 창 열기로 시작된 갱신이 도는 중이다. 버튼을 누른 것과 달리 이 창이 시작하지 않았다. */
+    syncing?: boolean;
     onRefresh?: () => Promise<void> | void;
   } = $props();
 
   let pulling = $state(false);
+
+  // 버튼을 눌렀든 창이 열려서든, 갱신이 도는 동안은 경과 시간 대신 그 사실을 말한다.
+  // 낡은 "N분 전" 옆에서 아무 일도 안 일어나는 것처럼 보이는 구간을 없앤다.
+  const busy = $derived(pulling || syncing);
 
   // 한도를 마지막으로 확인한 뒤로 얼마나 지났는지다. 초를 세어 주지 않으면 처음 계산한
   // 값이 몇 시간이고 그대로 남는다 — 창을 닫아도 컴포넌트가 살아 있기 때문이다.
@@ -76,7 +83,7 @@
     <span class="truncate">{status.text}</span>
   </span>
   <span class="flex-none whitespace-nowrap" style="font-size:12px;color:#b3aba0"
-    >{pulling ? "조회 중" : synced}</span
+    >{busy ? "조회 중" : synced}</span
   >
   <button
     type="button"

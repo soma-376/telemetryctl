@@ -40,21 +40,36 @@ func NewClient(dataDir string) *Client {
 
 // Snapshot 은 데몬이 만든 트레이 스냅샷 한 장을 받는다.
 func (c *Client) Snapshot(ctx context.Context, q tray.Query) (tray.Snapshot, error) {
-	return c.requestSnapshot(ctx, snapshotTimeout, http.MethodGet, TrayPath, q)
+	return c.requestSnapshot(ctx, snapshotTimeout, http.MethodGet, TrayPath, q, nil)
 }
 
-// Refresh 는 데몬에 수동 한도 갱신을 명령하고 갱신된 트레이 스냅샷을 받는다.
-func (c *Client) Refresh(ctx context.Context, q tray.Query) (tray.Snapshot, error) {
-	return c.requestSnapshot(ctx, refreshTimeout, http.MethodPost, TrayRefreshPath, q)
+// RefreshAuto 는 트레이 창이 열렸다고 데몬에 알리고 갱신된 스냅샷을 받는다. 자동 등급이라 데몬의
+// 쿨다운 안이면 벤더를 두드리지 않고 저장된 최신값이 그대로 온다 (ADR 0014).
+//
+// GUI 는 여기서 "지금 갱신할 때가 됐는지" 를 판단하지 않는다. 창을 열면 무조건 부르고,
+// 억제는 데몬이 한다 — 임계값이 두 프로세스에 흩어지지 않게 하기 위해서다.
+func (c *Client) RefreshAuto(ctx context.Context, q tray.Query) (tray.Snapshot, error) {
+	return c.requestSnapshot(ctx, refreshTimeout, http.MethodPost, TrayRefreshPath, q, nil)
 }
 
-func (c *Client) requestSnapshot(ctx context.Context, timeout time.Duration, method, path string, q tray.Query) (tray.Snapshot, error) {
+// RefreshManual 은 사용자가 새로고침 버튼을 누른 것이다. 수동 등급으로 명령한다.
+func (c *Client) RefreshManual(ctx context.Context, q tray.Query) (tray.Snapshot, error) {
+	return c.requestSnapshot(ctx, refreshTimeout, http.MethodPost, TrayRefreshPath, q,
+		url.Values{paramManual: {manualValue}})
+}
+
+// requestSnapshot 은 질의를 여기 한 곳에서만 만든다. 호출자는 경로에 질의를 박지 않고
+// extra 로 넘긴다 — 그래야 path 가 계속 경로만 뜻한다.
+func (c *Client) requestSnapshot(ctx context.Context, timeout time.Duration, method, path string, q tray.Query, extra url.Values) (tray.Snapshot, error) {
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	params := url.Values{}
 	params.Set(paramTZ, q.TZ)
 	params.Set(paramRecentLimit, strconv.Itoa(q.RecentLimit))
+	for k, vs := range extra {
+		params[k] = vs
+	}
 
 	req, err := c.newRequest(callCtx, method, path+"?"+params.Encode())
 	if err != nil {
