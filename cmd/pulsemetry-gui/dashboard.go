@@ -14,8 +14,8 @@ import (
 //
 // GUI 는 SQLite 를 열지 않는다. 데몬이 읽어서 내려준 것을 받는다 (internal/localapi).
 type Dashboard struct {
-	// tray 는 앱당 하나여야 한다. 호출마다 새로 만들면 마지막 정상 스냅샷이 사라진다.
-	tray *tray.Cache
+	// 데몬으로 가는 통로. 캐시는 여기 없다 — 프런트의 Query 계층이 소유한다 (ADR 0015).
+	daemon *localapi.Client
 }
 
 // NewDashboard 는 데몬을 보는 조회 경계를 만든다. 실패하지 않는다.
@@ -30,7 +30,7 @@ func NewDashboard() *Dashboard {
 	if env, err := hostenv.Detect(); err == nil {
 		dataDir = store.DefaultDataDir(env)
 	}
-	return &Dashboard{tray: tray.New(localapi.NewClient(dataDir))}
+	return &Dashboard{daemon: localapi.NewClient(dataDir)}
 }
 
 // ServiceName 은 Wails 가 로그에 쓰는 이름이다. 없으면 타입 이름으로 짓는다.
@@ -38,16 +38,16 @@ func (d *Dashboard) ServiceName() string { return "Dashboard" }
 
 // Tray 는 트레이 퀵뷰 한 장에 필요한 전부다. 갱신 주기 안이면 캐시를 그대로 준다.
 func (d *Dashboard) Tray(ctx context.Context, q tray.Query) (tray.Snapshot, error) {
-	return d.tray.Current(ctx, q)
+	return d.daemon.Snapshot(ctx, q)
 }
 
 // SyncTray 는 트레이 창이 열렸을 때 부른다. 캐시를 건너뛰고 데몬까지 가되, 벤더를 두드릴지는
 // 데몬이 정한다 (ADR 0014). 화면이 억제를 판단하지 않는다.
 func (d *Dashboard) SyncTray(ctx context.Context, q tray.Query) (tray.Snapshot, error) {
-	return d.tray.RefreshAuto(ctx, q)
+	return d.daemon.RefreshAuto(ctx, q)
 }
 
 // RefreshTray 는 데몬에 수동 갱신을 명령하고 그 결과를 다시 받는다 (퀵뷰의 새로고침 버튼).
 func (d *Dashboard) RefreshTray(ctx context.Context, q tray.Query) (tray.Snapshot, error) {
-	return d.tray.RefreshManual(ctx, q)
+	return d.daemon.RefreshManual(ctx, q)
 }
