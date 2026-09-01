@@ -1,15 +1,9 @@
 package tray
 
 import (
-	"time"
-
 	"github.com/your-org/pulsemetry/internal/dashboard"
 	"github.com/your-org/pulsemetry/internal/vendorlimit"
 )
-
-// DefaultInterval 은 스냅샷 자동 갱신 주기다. 한도 창이 5시간·7일 단위로 움직이므로
-// 1분 지연은 화면에 드러나지 않는다.
-const DefaultInterval = 60 * time.Second
 
 // State 는 트레이 아이콘이 말하는 한 단어다. 값 문자열이 프런트엔드와의 계약이다.
 type State string
@@ -21,9 +15,6 @@ const (
 	// StateNotInstalled 는 로컬 DB 자체가 없다는 뜻이다. 오류가 아니다 (ADR 0004).
 	StateNotInstalled State = "not_installed"
 )
-
-// StaleLocalQuery 는 로컬 DB 조회가 실패했다는 뜻의 StaleReason 값이다.
-const StaleLocalQuery = "local_query_failed"
 
 type Monitoring struct {
 	State             State `json:"state"`
@@ -54,13 +45,6 @@ type Snapshot struct {
 	Date string `json:"date"`
 
 	Monitoring Monitoring `json:"monitoring"`
-
-	// RefreshedAt 은 마지막으로 **성공한** 갱신, CheckedAt 은 마지막 **시도** 시각이다.
-	// 갱신이 실패하면 CheckedAt 만 움직이고 Stale 이 선다.
-	RefreshedAt int64  `json:"refreshed_at"`
-	CheckedAt   int64  `json:"checked_at"`
-	Stale       bool   `json:"stale"`
-	StaleReason string `json:"stale_reason"`
 
 	ActiveAgents   []string `json:"active_agents"`
 	ActiveSessions int64    `json:"active_sessions"`

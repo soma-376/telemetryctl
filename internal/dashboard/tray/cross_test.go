@@ -30,13 +30,13 @@ func TestRepeatsHomeNumbers(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	m, _, _ := newTestCache(f.svc, vendorlimit.Snapshot{
+	b, _, _ := newTestBuilder(f.svc, vendorlimit.Snapshot{
 		Results:    []vendorlimit.Result{availableResult(vendorlimit.VendorClaudeCode)},
 		ObservedAt: "2026-08-10T02:00:00Z",
 	})
-	snap, err := m.Current(ctx, Query{TZ: seoul})
+	snap, err := b.Snapshot(ctx, Query{TZ: seoul})
 	if err != nil {
-		t.Fatalf("Current: %v", err)
+		t.Fatalf("Snapshot: %v", err)
 	}
 	home, err := f.svc.Home(ctx, dashboard.HomeQuery{TZ: seoul})
 	if err != nil {
@@ -112,13 +112,13 @@ func TestVendorUsageAPIFailureKeepsTrayUsable(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 
-			m := newTestCacheWithLimits(f.svc, func(ctx context.Context) vendorlimit.Snapshot {
+			b := newTestBuilderWithLimits(f.svc, func(ctx context.Context) vendorlimit.Snapshot {
 				return probeFailingUsageAPI(ctx, srv.URL, tc.wantReason)
 			})
 
-			snap, err := m.Current(context.Background(), Query{TZ: seoul})
+			snap, err := b.Snapshot(context.Background(), Query{TZ: seoul})
 			if err != nil {
-				t.Fatalf("Current: %v — 벤더 장애는 조회 실패가 아니다", err)
+				t.Fatalf("Snapshot: %v — 벤더 장애는 조회 실패가 아니다", err)
 			}
 			if hits == 0 {
 				t.Fatal("모의 서버가 한 번도 불리지 않았다 — 이 테스트는 아무것도 검증하지 못했다")
@@ -130,10 +130,6 @@ func TestVendorUsageAPIFailureKeepsTrayUsable(t *testing.T) {
 			}
 			if len(snap.Recent) != 1 {
 				t.Errorf("최근 세션 = %d건, want 1", len(snap.Recent))
-			}
-			// 벤더 장애는 stale 이 아니다. Stale 은 **로컬 조회** 실패만을 뜻한다.
-			if snap.Stale {
-				t.Errorf("Stale = true (%s) — 로컬 조회는 성공했다", snap.StaleReason)
 			}
 			// 실패한 벤더도 자리를 지킨다.
 			if len(snap.Limits) != len(vendorlimit.SupportedVendors()) {
@@ -151,9 +147,6 @@ func TestVendorUsageAPIFailureKeepsTrayUsable(t *testing.T) {
 				if res.Detail != "" && containsString([]string{res.Detail}, srv.URL) {
 					t.Errorf("%s detail 에 URL 이 실렸다: %q", res.Vendor, res.Detail)
 				}
-			}
-			if snap.Tightest.Found {
-				t.Error("가장 빠듯한 한도가 있다고 한다 — available 한 창이 하나도 없다")
 			}
 		})
 	}

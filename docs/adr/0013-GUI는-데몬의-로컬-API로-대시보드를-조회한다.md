@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (ADR 0004의 GUI 직접 SQLite 조회 결정을 대체한다)
+Accepted (ADR 0004의 GUI 직접 SQLite 조회 결정을 대체한다) — 「GUI는 마지막 정상 응답을 메모리에 캐시한다」는 [ADR 0015](0015-트레이-스냅샷의-캐시와-신선도를-프런트가-소유한다.md)가 구체화한다. 나머지 결정은 그대로다.
 
 ## Context
 

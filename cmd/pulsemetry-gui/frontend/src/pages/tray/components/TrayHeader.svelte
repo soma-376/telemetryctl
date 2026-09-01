@@ -5,50 +5,69 @@
   import XIcon from "$lib/icons/XIcon.svelte";
   import Dot from "$lib/components/ui/Dot.svelte";
 
-  import { TrayState } from "$lib/ipc/dashboard";
-  import { syncedText } from "../adapter";
+  import { TrayState } from "$lib/bindings";
+  import { fetchedAtText } from "../adapter";
 
   // 프롭 이름을 state 로 두면 안 된다. Svelte 는 선언된 변수 앞의 $ 를 스토어 구독으로
   // 읽으므로, 이 파일의 $state(...) 룬이 전부 "state 스토어" 로 해석돼 컴파일이 깨진다.
   let {
-    limitsObservedAt,
+    fetchedAt,
     trayState,
     syncing = false,
+    fetching = false,
     onRefresh,
   }: {
-    limitsObservedAt: number;
+    /** 스냅샷을 마지막으로 받은 시각(ms, TanStack 의 dataUpdatedAt). 0 이면 아직 못 받았다. */
+    fetchedAt: number;
     trayState?: TrayState;
     /** 창 열기로 시작된 갱신이 도는 중이다. 버튼을 누른 것과 달리 이 창이 시작하지 않았다. */
     syncing?: boolean;
+    /** 폴링을 포함해 조회가 나가 있다. */
+    fetching?: boolean;
     onRefresh?: () => Promise<void> | void;
   } = $props();
 
   let pulling = $state(false);
 
-  // 버튼을 눌렀든 창이 열려서든, 갱신이 도는 동안은 경과 시간 대신 그 사실을 말한다.
-  // 낡은 "N분 전" 옆에서 아무 일도 안 일어나는 것처럼 보이는 구간을 없앤다.
-  const busy = $derived(pulling || syncing);
+  // 갱신이 도는 동안은 조회 시각 대신 그 사실을 말한다. 세 경로가 같은 상태를 쓴다 —
+  // 새로고침 버튼(pulling) · 창 열기(syncing) · 폴링(fetching).
+  const busyNow = $derived(pulling || syncing || fetching);
 
-  // 한도를 마지막으로 확인한 뒤로 얼마나 지났는지다. 초를 세어 주지 않으면 처음 계산한
-  // 값이 몇 시간이고 그대로 남는다 — 창을 닫아도 컴포넌트가 살아 있기 때문이다.
-  let tick = $state(Date.now());
+  // 최소 표시 시간. 셋 다 데몬 쿨다운이나 로컬 읽기로 수십 밀리초에 끝날 수 있어(ADR 0014),
+  // 그대로 두면 스피너가 번쩍이기만 해서 눌린 것인지 알 수 없다. 한 곳에서 걸어야 세 경로가
+  // 같은 화면에서 다르게 보이지 않는다.
+  const MIN_BUSY_MS = 450;
+  let busy = $state(false);
+  let busyUntil = 0;
   $effect(() => {
-    const id = setInterval(() => (tick = Date.now()), 1000);
-    return () => clearInterval(id);
+    if (busyNow) {
+      busy = true;
+      busyUntil = Date.now() + MIN_BUSY_MS;
+      return;
+    }
+    const wait = busyUntil - Date.now();
+    if (wait <= 0) {
+      busy = false;
+      return;
+    }
+    const id = setTimeout(() => (busy = false), wait);
+    return () => clearTimeout(id);
   });
-  const synced = $derived(syncedText(limitsObservedAt, new Date(tick)));
 
+  // 절대 시각이라 다시 그릴 필요가 없다. fetchedAt 이 바뀔 때만 갱신된다.
+  const synced = $derived(fetchedAtText(fetchedAt));
+
+  // 최소 표시 시간은 busy 가 맡는다. 여기서는 실제 갱신만 기다린다.
   async function pull() {
     if (pulling) return;
     pulling = true;
-    // 로컬 SQLite 조회는 대개 한 프레임 안에 끝난다. 최소 표시 시간을 함께 기다리지
-    // 않으면 스피너가 번쩍이기만 해서 눌린 것인지 알 수 없다.
     try {
-      await Promise.all([onRefresh?.(), new Promise((r) => setTimeout(r, 450))]);
+      await onRefresh?.();
     } finally {
       pulling = false;
     }
   }
+
 
   // 상태 줄. 아직 첫 조회가 끝나지 않았으면(undefined) 초록 점을 켜지 않는다 —
   // 확인하지 않은 것을 "모니터링 중" 이라고 말하면 안 된다.
@@ -87,20 +106,20 @@
   >
   <button
     type="button"
-    disabled={pulling}
-    title={pulling ? "조회 중" : "새로고침"}
+    disabled={busy}
+    title={busy ? "조회 중" : "새로고침"}
     onclick={pull}
-    class="flex flex-none items-center justify-center border bg-transparent transition-[opacity,border-color] duration-[180ms] ease-in-out {pulling
+    class="flex flex-none items-center justify-center border bg-transparent transition-[opacity,border-color] duration-[180ms] ease-in-out {busy
       ? 'text-text-muted cursor-default'
       : 'text-accent hover:border-border-strong hover:bg-surface-hover cursor-pointer'}"
-    style="width:30px;height:30px;border-radius:9px;border-color:{pulling
+    style="width:30px;height:30px;border-radius:9px;border-color:{busy
       ? '#efe9e1'
-      : 'var(--color-border)'};opacity:{pulling ? '0.6' : '1'}"
+      : 'var(--color-border)'};opacity:{busy ? '0.6' : '1'}"
   >
     <RefreshIcon
       size={15}
       strokeWidth={2.2}
-      style="animation:{pulling
+      style="animation:{busy
         ? 'spin 900ms linear infinite'
         : 'none'};transform-origin:50% 50%"
     />
