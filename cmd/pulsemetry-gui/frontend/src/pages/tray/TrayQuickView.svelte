@@ -12,6 +12,7 @@
     fetchTray,
     localTimeZone,
     refreshTray,
+    syncTray,
     TrayState,
     type TrayQuery,
   } from "$lib/ipc/dashboard";
@@ -34,8 +35,29 @@
   let failure = $state("");
   let loading = $state(true);
 
-  async function load(fresh: boolean) {
-    const r = await (fresh ? refreshTray(QUERY) : fetchTray(QUERY));
+  // 세 진입점의 세기가 다르다 (ADR 0014). poll 은 데몬이 들고 있는 값을 읽기만 하고,
+  // open 과 manual 은 갱신을 명령한다 — 얼마나 억제할지는 데몬이 정하므로 여기엔 임계값이 없다.
+  type Load = "poll" | "open" | "manual";
+
+  // 창 열기가 이제 벤더 조회까지 갈 수 있다 (ADR 0014). 데몬 쿨다운에 걸리면 즉시 돌아오지만,
+  // 실제로 조회하면 수십 초가 걸린다 — 그동안 헤더는 낡은 "N분 전" 을 아무 표시 없이 들고 있게
+  // 된다. 그래서 갱신이 도는 중임을 헤더에 알린다. 버튼은 자기 스피너가 따로 있다.
+  //
+  // 곧바로 켜지 않고 SYNCING_DELAY_MS 를 기다린다. 쿨다운에 걸린 응답은 한 프레임 안에 오는데
+  // 그때마다 문구가 번쩍이면 값이 계속 바뀌는 것처럼 보인다.
+  const SYNCING_DELAY_MS = 400;
+  let syncing = $state(false);
+
+  async function load(how: Load) {
+    const call =
+      how === "manual" ? refreshTray : how === "open" ? syncTray : fetchTray;
+    let announce: ReturnType<typeof setTimeout> | undefined;
+    if (how === "open") {
+      announce = setTimeout(() => (syncing = true), SYNCING_DELAY_MS);
+    }
+    const r = await call(QUERY);
+    clearTimeout(announce);
+    syncing = false;
     loading = false;
     if (r.ok) {
       view = toTrayView(r.data);
@@ -59,14 +81,18 @@
 
     const poll = async () => {
       if (!visible) return;
-      await load(false);
+      await load("poll");
       if (visible) timer = setTimeout(poll, POLL_MS);
     };
 
     const offShow = Events.On("tray:shown", () => {
       visible = true;
       clearTimeout(timer);
-      void poll();
+      // 창이 열린 순간은 갱신을 건다. 그 뒤의 주기 폴링은 읽기만 한다 — 폴링까지 갱신으로
+      // 두면 창을 열어둔 채로 두는 것만으로 벤더 호출이 계속 나간다.
+      void load("open").then(() => {
+        if (visible) timer = setTimeout(poll, POLL_MS);
+      });
     });
     const offHide = Events.On("tray:hidden", () => {
       visible = false;
@@ -74,7 +100,7 @@
     });
 
     // 브라우저 프리뷰와 첫 Show 이벤트보다 늦게 리스너가 붙는 경우에도 초기 화면은 만든다.
-    void load(false);
+    void load("poll");
     return () => {
       visible = false;
       clearTimeout(timer);
@@ -114,7 +140,8 @@
   <TrayHeader
     limitsObservedAt={shown?.limitsObservedAt ?? 0}
     trayState={shown?.monitoring.state}
-    onRefresh={() => load(true)}
+    {syncing}
+    onRefresh={() => load("manual")}
   />
 
   <main class="tray-scroll min-h-0 flex-1 overflow-y-auto">

@@ -22,10 +22,19 @@ func (f *fakeSource) Snapshot(_ context.Context, q tray.Query) (tray.Snapshot, e
 	return f.snap, f.err
 }
 
-type fakeRefresher struct{ calls int }
+type fakeRefresher struct {
+	calls  int
+	manual int
+}
 
-func (f *fakeRefresher) Refresh(context.Context) error {
+func (f *fakeRefresher) RefreshAuto(context.Context) error {
 	f.calls++
+	return nil
+}
+
+func (f *fakeRefresher) RefreshManual(context.Context) error {
+	f.calls++
+	f.manual++
 	return nil
 }
 
@@ -124,5 +133,36 @@ func TestServerRejectsWrongMethod(t *testing.T) {
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405", resp.StatusCode)
+	}
+}
+
+// 갱신 등급이 쿼리로 건너가야 한다. 빠지면 새로고침 버튼이 자동 쿨다운에 막혀 (ADR 0014)
+// 눌러도 벤더를 조회하지 않는다.
+func TestServerRefreshCarriesManualGrade(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		query      string
+		wantManual int
+	}{
+		{"창 열기는 자동", "?tz=UTC&recent_limit=5", 0},
+		{"버튼은 수동", "?tz=UTC&recent_limit=5&" + paramManual + "=" + manualValue, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ref := &fakeRefresher{}
+			srv := httptest.NewServer(NewServer(ref, &fakeSource{}))
+			defer srv.Close()
+
+			resp, err := http.Post(srv.URL+TrayRefreshPath+tc.query, "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close() //nolint:errcheck
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d", resp.StatusCode)
+			}
+			if ref.calls != 1 || ref.manual != tc.wantManual {
+				t.Errorf("calls = %d, manual = %d, want manual %d", ref.calls, ref.manual, tc.wantManual)
+			}
+		})
 	}
 }

@@ -1,6 +1,10 @@
 # Build output
 /pulsemetry
 /pulsemetry.exe
+# wails3 dev/build 가 레포 루트에 떨구는 GUI 바이너리. artifacts/ 로 가는 task build 산출물과
+# 달리 여기 남는다.
+/pulsemetry-gui
+/pulsemetry-gui.exe
 /dist/
 /bin/
 /artifacts/
