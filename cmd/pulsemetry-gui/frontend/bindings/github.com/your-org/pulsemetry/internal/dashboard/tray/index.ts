@@ -8,6 +8,5 @@ export {
 export type {
     Monitoring,
     Query,
-    Snapshot,
-    TightestLimit
+    Snapshot
 } from "./models.js";

@@ -42,7 +42,6 @@ func (b *Builder) Snapshot(ctx context.Context, q Query) (Snapshot, error) {
 	}
 	out.Limits = limits.Results
 	out.LimitsObservedAt = limits.ObservedAt
-	out.Tightest = TightestOf(limits.Results)
 	return out, nil
 }
 

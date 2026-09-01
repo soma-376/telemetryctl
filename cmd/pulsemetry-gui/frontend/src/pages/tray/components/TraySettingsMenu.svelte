@@ -1,8 +1,13 @@
 <script lang="ts">
   import { openMainSettings } from "$lib/ipc/app";
   import PowerIcon from "$lib/icons/PowerIcon.svelte";
-  import { TRAY_OPTIONS } from "../mock";
-  import type { TrayOptionKey } from "../types";
+  import type { TrayOption, TrayOptionKey } from "../types";
+
+  // 메뉴에 뜨는 실제 옵션 목록이다. 목데이터가 아니라 화면 문구라, 쓰는 곳에 둔다.
+  const TRAY_OPTIONS: TrayOption[] = [
+    { key: "notify", name: "한도 알림", desc: "20% 아래로 떨어지면 알림" },
+    { key: "launch", name: "로그인 시 자동 실행", desc: "" },
+  ];
 
   let {
     onClose,
