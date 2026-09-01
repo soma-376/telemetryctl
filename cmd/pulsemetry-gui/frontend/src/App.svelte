@@ -1,5 +1,7 @@
 <script lang="ts">
   import { Events } from "@wailsio/runtime";
+  import { QueryClientProvider } from "@tanstack/svelte-query";
+  import { makeQueryClient } from "$lib/query/client";
   import Home from "./pages/home/Home.svelte";
   import Activity from "./pages/activity/Activity.svelte";
   import Header from "$lib/components/shell/Header.svelte";
@@ -12,6 +14,10 @@
 
   const isTray =
     new URLSearchParams(window.location.search).get("view") === "tray";
+
+  // 조회 캐시는 앱당 하나다 (ADR 0015). 트레이 창과 메인 창은 각각 별도의 웹뷰라 각자
+  // 자기 것을 갖는다 — 두 창이 같은 캐시를 공유해야 할 이유가 아직 없다.
+  const queryClient = makeQueryClient();
 
   let activeTab = $state<AppSection>("overview");
   let settingsOpen = $state(false);
@@ -65,49 +71,51 @@
      (svelte:window 는 블록 안에 둘 수 없어 트레이 모드와 공유한다 — 그쪽은 scroller 가 없어 무시된다) -->
 <svelte:window onresize={syncFade} />
 
-{#if isTray}
-  <TrayQuickView />
-{:else}
-  <!-- 앱 셸: 창 높이 고정(h-screen). 헤더와 하단 nav는 스크롤 영역 밖에 두어
-       창에 고정되고, 가운데 본문만 스크롤된다. -->
-  <div
-    class="flex h-screen min-w-(--page-min-width) flex-col overflow-hidden bg-bg"
-  >
-    <Header
-      activeAgents={3}
-      tokensToday="148k"
-      onOpenSettings={() => (settingsOpen = true)}
-      onQuit={() => (quitOpen = true)}
-    />
-
+<QueryClientProvider client={queryClient}>
+  {#if isTray}
+    <TrayQuickView />
+  {:else}
+    <!-- 앱 셸: 창 높이 고정(h-screen). 헤더와 하단 nav는 스크롤 영역 밖에 두어
+         창에 고정되고, 가운데 본문만 스크롤된다. -->
     <div
-      bind:this={scroller}
-      onscroll={syncFade}
-      class="flex flex-1 flex-col overflow-y-auto"
-      style={maskStyle}
+      class="flex h-screen min-w-(--page-min-width) flex-col overflow-hidden bg-bg"
     >
-      {#if activeTab === "overview"}
-        <Home onNavigate={go} />
-      {:else if activeTab === "activity"}
-        <Activity />
-      {:else}
-        <main class="flex flex-1 flex-col items-center justify-center gap-2">
-          <div
-            class="text-text font-bold"
-            style="font-size:25px;letter-spacing:-0.02em"
-          >
-            Insights
-          </div>
-          <div class="text-text-secondary" style="font-size:13.5px">
-            아직 준비 중인 화면이야.
-          </div>
-        </main>
-      {/if}
+      <Header
+        activeAgents={3}
+        tokensToday="148k"
+        onOpenSettings={() => (settingsOpen = true)}
+        onQuit={() => (quitOpen = true)}
+      />
+
+      <div
+        bind:this={scroller}
+        onscroll={syncFade}
+        class="flex flex-1 flex-col overflow-y-auto"
+        style={maskStyle}
+      >
+        {#if activeTab === "overview"}
+          <Home onNavigate={go} />
+        {:else if activeTab === "activity"}
+          <Activity />
+        {:else}
+          <main class="flex flex-1 flex-col items-center justify-center gap-2">
+            <div
+              class="text-text font-bold"
+              style="font-size:25px;letter-spacing:-0.02em"
+            >
+              Insights
+            </div>
+            <div class="text-text-secondary" style="font-size:13.5px">
+              아직 준비 중인 화면이야.
+            </div>
+          </main>
+        {/if}
+      </div>
+
+      <Nav active={activeTab} onSelect={go} />
     </div>
 
-    <Nav active={activeTab} onSelect={go} />
-  </div>
-
-  <SettingsModal open={settingsOpen} onClose={() => (settingsOpen = false)} />
-  <QuitDialog open={quitOpen} onClose={() => (quitOpen = false)} />
-{/if}
+    <SettingsModal open={settingsOpen} onClose={() => (settingsOpen = false)} />
+    <QuitDialog open={quitOpen} onClose={() => (quitOpen = false)} />
+  {/if}
+</QueryClientProvider>

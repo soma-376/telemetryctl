@@ -54,15 +54,6 @@ export interface Snapshot {
     "tz": string;
     "date": string;
     "monitoring": Monitoring;
-
-    /**
-     * RefreshedAt 은 마지막으로 **성공한** 갱신, CheckedAt 은 마지막 **시도** 시각이다.
-     * 갱신이 실패하면 CheckedAt 만 움직이고 Stale 이 선다.
-     */
-    "refreshed_at": number;
-    "checked_at": number;
-    "stale": boolean;
-    "stale_reason": string;
     "active_agents": string[] | null;
     "active_sessions": number;
 

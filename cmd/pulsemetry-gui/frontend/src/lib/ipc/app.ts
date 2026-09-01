@@ -1,6 +1,5 @@
-import { App } from "../../../bindings/github.com/your-org/pulsemetry/cmd/pulsemetry-gui";
-import type { AppInfo } from "../../../bindings/github.com/your-org/pulsemetry/cmd/pulsemetry-gui";
-import { Application } from "@wailsio/runtime";
+import { App, type AppInfo } from "$lib/bindings";
+import { Window } from "@wailsio/runtime";
 
 export type { AppInfo };
 
@@ -23,10 +22,16 @@ export async function openMainWindow(): Promise<void> {
   }
 }
 
-// 현재 웹뷰(트레이 퀵뷰)만 숨긴다. 앱 프로세스는 계속 실행된다.
+// 현재 창(트레이 퀵뷰)만 숨긴다. 앱 프로세스는 계속 실행된다.
+//
+// **Application.Hide 를 쓰면 안 된다.** 그건 앱 레벨이라 열려 있는 창을 전부 숨기고
+// (메인 창까지) 포커스를 다음 애플리케이션으로 넘긴다 — Wails 의 windowsApp.hide 가
+// 명시적으로 그렇게 한다. X 를 눌렀을 때 뒤에 있던 다른 프로그램이 앞으로 나오던 원인이다.
+//
+// main.go 가 OS 의 창 닫기를 가로챌 때도 창 단위(quick.Hide)로 숨긴다. 두 경로가 같아야 한다.
 export async function hideCurrentWindow(): Promise<void> {
   try {
-    await Application.Hide();
+    await Window.Hide();
   } catch {
     /* browser preview */
   }

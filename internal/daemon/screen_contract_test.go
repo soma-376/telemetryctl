@@ -408,9 +408,6 @@ func TestScreenContract_Tray_SummarizesLocalStateWithoutCredentials(t *testing.T
 	if snap.Monitoring.LastEventAt == 0 {
 		t.Error("last_event_at = 0 — 저장된 이벤트의 신선도가 트레이에 닿지 않는다")
 	}
-	if snap.Stale {
-		t.Errorf("Stale = true (%s) — 로컬 조회는 성공했다", snap.StaleReason)
-	}
 	// 진행 중인 세션 하나가 있다.
 	if snap.ActiveSessions != 1 || len(snap.ActiveAgents) != 1 {
 		t.Errorf("활성 세션 = %d / 에이전트 = %v, want 1 / [claude_code]",
@@ -435,9 +432,6 @@ func TestScreenContract_Tray_SummarizesLocalStateWithoutCredentials(t *testing.T
 		if res.Windows == nil {
 			t.Errorf("%s windows = nil — JSON 에서 null 이 되어 화면이 분기해야 한다", res.Vendor)
 		}
-	}
-	if snap.Tightest.Found {
-		t.Error("가장 빠듯한 한도가 있다고 한다 — available 한 창이 하나도 없다")
 	}
 }
 

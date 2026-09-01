@@ -8,16 +8,14 @@
   import VendorLimits from "./components/VendorLimits.svelte";
   import QuitDialog from "$lib/components/dialog/QuitDialog.svelte";
   import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import { TrayState, type TrayQuery } from "$lib/bindings";
+  import { localTimeZone } from "$lib/utils/timezone";
   import {
-    fetchTray,
-    localTimeZone,
-    refreshTray,
-    syncTray,
-    TrayState,
-    type TrayQuery,
-  } from "$lib/ipc/dashboard";
-  import { toTrayView, type TrayView } from "./adapter";
-  import { TRAY_SESSIONS, TRAY_SYNCED_AGO_SEC, TRAY_VENDORS } from "./mock";
+    trayQuery,
+    trayRefreshMutation,
+    traySyncMutation,
+  } from "$lib/query/tray";
+  import { toTrayView } from "./adapter";
 
   let settingsOpen = $state(false);
   let quitOpen = $state(false);
@@ -31,103 +29,41 @@
   // tz 는 "오늘" 의 경계다. 창이 떠 있는 동안 시간대가 바뀔 일은 없으니 한 번만 읽는다.
   const QUERY: TrayQuery = { tz: localTimeZone(), recent_limit: 5 };
 
-  let view = $state<TrayView | null>(null);
-  let failure = $state("");
-  let loading = $state(true);
+  // 퀵뷰는 닫혀도 파괴되지 않고 숨겨질 뿐이다. document.visibilityState 는 네이티브 창의
+  // Hide/Show 와 같은 계약이 아니므로 Wails 창 이벤트로 폴링 수명을 제어한다 (ADR 0015).
+  let visible = $state(false);
 
-  // 세 진입점의 세기가 다르다 (ADR 0014). poll 은 데몬이 들고 있는 값을 읽기만 하고,
-  // open 과 manual 은 갱신을 명령한다 — 얼마나 억제할지는 데몬이 정하므로 여기엔 임계값이 없다.
-  type Load = "poll" | "open" | "manual";
+  const tray = trayQuery(QUERY, () => visible);
+  const sync = traySyncMutation(QUERY);
+  const refresh = trayRefreshMutation(QUERY);
 
-  // 창 열기가 이제 벤더 조회까지 갈 수 있다 (ADR 0014). 데몬 쿨다운에 걸리면 즉시 돌아오지만,
-  // 실제로 조회하면 수십 초가 걸린다 — 그동안 헤더는 낡은 "N분 전" 을 아무 표시 없이 들고 있게
-  // 된다. 그래서 갱신이 도는 중임을 헤더에 알린다. 버튼은 자기 스피너가 따로 있다.
-  //
-  // 곧바로 켜지 않고 SYNCING_DELAY_MS 를 기다린다. 쿨다운에 걸린 응답은 한 프레임 안에 오는데
-  // 그때마다 문구가 번쩍이면 값이 계속 바뀌는 것처럼 보인다.
-  const SYNCING_DELAY_MS = 400;
-  let syncing = $state(false);
-
-  async function load(how: Load) {
-    const call =
-      how === "manual" ? refreshTray : how === "open" ? syncTray : fetchTray;
-    let announce: ReturnType<typeof setTimeout> | undefined;
-    if (how === "open") {
-      announce = setTimeout(() => (syncing = true), SYNCING_DELAY_MS);
-    }
-    const r = await call(QUERY);
-    clearTimeout(announce);
-    syncing = false;
-    loading = false;
-    if (r.ok) {
-      view = toTrayView(r.data);
-      failure = "";
-      return;
-    }
-    // 실패했을 때 직전 화면을 남겨 두지 않는다 — 낡은 숫자를 현재로 읽게 된다.
-    view = null;
-    failure = r.message;
-  }
-
-  // 데몬은 5분마다 한도를 갱신하는데, 여기서 다시 읽지 않으면 화면은 앱을 켠 순간의
-  // 값을 계속 들고 있는다. 헤더의 "N분 전" 이 늘어나기만 하던 것이 그 증상이었다.
-  //
-  // 퀵뷰는 닫혀도 파괴되지 않고 숨겨질 뿐이다. document.visibilityState는 네이티브
-  // 창의 Hide/Show와 같은 계약이 아니므로 Wails 창 이벤트로 폴링 수명을 제어한다.
-  const POLL_MS = 60_000;
   $effect(() => {
-    let visible = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    const poll = async () => {
-      if (!visible) return;
-      await load("poll");
-      if (visible) timer = setTimeout(poll, POLL_MS);
-    };
-
     const offShow = Events.On("tray:shown", () => {
       visible = true;
-      clearTimeout(timer);
-      // 창이 열린 순간은 갱신을 건다. 그 뒤의 주기 폴링은 읽기만 한다 — 폴링까지 갱신으로
-      // 두면 창을 열어둔 채로 두는 것만으로 벤더 호출이 계속 나간다.
-      void load("open").then(() => {
-        if (visible) timer = setTimeout(poll, POLL_MS);
-      });
+      // 창이 열린 순간은 갱신을 건다. 폴링은 읽기만 한다 — 폴링까지 갱신으로 두면 창을
+      // 열어둔 채 두는 것만으로 벤더 호출이 계속 나간다 (ADR 0014).
+      sync.mutate();
     });
     const offHide = Events.On("tray:hidden", () => {
       visible = false;
-      clearTimeout(timer);
     });
-
-    // 브라우저 프리뷰와 첫 Show 이벤트보다 늦게 리스너가 붙는 경우에도 초기 화면은 만든다.
-    void load("poll");
     return () => {
       visible = false;
-      clearTimeout(timer);
       offShow();
       offHide();
     };
   });
 
-  // 브라우저 프리뷰(vite dev 단독)에는 백엔드가 없다. 그때만 목데이터로 화면을 채운다.
-  // 프로덕션 빌드에서는 이 갈래가 없어지므로 실제 장애가 정상 화면으로 위장되지 않는다.
-  const PREVIEW = import.meta.env.DEV;
-  const previewView: TrayView = {
-    vendors: TRAY_VENDORS,
-    unavailable: [],
-    sessions: TRAY_SESSIONS,
-    monitoring: {
-      state: TrayState.StateMonitoring,
-      database_available: true,
-      daemon_running: true,
-      daemon_stale: false,
-      last_event_at: 0,
-      running_sessions: TRAY_SESSIONS.length,
-    },
-    limitsObservedAt: Math.floor(Date.now() / 1000) - TRAY_SYNCED_AGO_SEC,
-  };
+  // 창 열기가 벤더 조회까지 갈 수 있어(ADR 0014) 수십 초가 걸릴 수 있다. 그동안 헤더가 낡은
+  // "N분 전" 을 아무 표시 없이 들고 있지 않도록 갱신 중임을 알린다. 버튼은 자기 스피너가 있다.
+  const syncing = $derived(sync.isPending);
+  // 폴링도 같은 표시를 공유한다. 세 경로(버튼·창 열기·폴링)가 헤더에서 한 상태로 모인다.
+  const fetching = $derived(tray.isFetching);
 
-  const shown = $derived(view ?? (failure && PREVIEW ? previewView : null));
+  const view = $derived(tray.data ? toTrayView(tray.data) : null);
+  const failure = $derived(tray.error ? String(tray.error) : "");
+
+  const shown = $derived(view);
   const notInstalled = $derived(
     shown?.monitoring.state === TrayState.StateNotInstalled,
   );
@@ -138,14 +74,19 @@
   style="animation:trayIn 180ms cubic-bezier(0.32,0.72,0,1)"
 >
   <TrayHeader
-    limitsObservedAt={shown?.limitsObservedAt ?? 0}
+    fetchedAt={tray.dataUpdatedAt}
     trayState={shown?.monitoring.state}
     {syncing}
-    onRefresh={() => load("manual")}
+    {fetching}
+    onRefresh={async () => {
+      // 헤더가 이 약속을 기다려 스피너 최소 표시 시간을 맞춘다. 스냅샷은 캐시로 들어가므로
+      // (query/tray.ts) 여기서 받을 것이 없다.
+      await refresh.mutateAsync();
+    }}
   />
 
   <main class="tray-scroll min-h-0 flex-1 overflow-y-auto">
-    {#if loading}
+    {#if tray.isPending}
       <!-- 첫 조회. 로컬 SQLite 조회라 보통 한 프레임 안에 끝나므로 스켈레톤을 두지 않는다.
            깜빡임을 만드는 쪽이 기다림보다 눈에 띈다. -->
     {:else if !shown}
