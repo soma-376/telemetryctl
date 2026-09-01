@@ -279,7 +279,14 @@ func (d *daemon) start(ctx context.Context) error {
 		d.limitCollector = vendorlimit.NewCollector(vendorlimit.Options{})
 		collector = d.limitCollector
 	}
-	d.limits = vendorlimit.NewRefresher(collector, db, vendorlimit.RefreshOptions{Now: d.opts.Now, Logger: d.log})
+	// 자동 쿨다운을 틱에서 파생시킨다. 둘이 같거나 쿨다운이 더 길면 다음 틱이 자기 쿨다운에
+	// 걸려 자동 갱신이 통째로 멈춘다 (ADR 0014). 상수 두 개로 두면 한쪽만 바꿔도 그렇게 되므로,
+	// 깨질 수 없게 여기서 계산한다.
+	d.limits = vendorlimit.NewRefresher(collector, db, vendorlimit.RefreshOptions{
+		AutoCooldown: d.opts.LimitInterval / 2,
+		Now:          d.opts.Now,
+		Logger:       d.log,
+	})
 
 	// GUI 가 읽을 조회 핸들. 여는 데 실패해도 기동은 계속한다 — 수집은 정상이고
 	// 화면만 못 그린다 (ADR 0004 의 "미설치는 오류가 아니다" 와 같은 처지다).
@@ -514,7 +521,7 @@ func (d *daemon) refreshLimitsLogged(ctx context.Context) {
 	if d.limits == nil {
 		return
 	}
-	if err := d.limits.Refresh(ctx); err != nil {
+	if err := d.limits.RefreshAuto(ctx); err != nil {
 		d.log.Printf("경고: 벤더 한도 갱신 실패: %v", err)
 	}
 }

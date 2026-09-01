@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	// DefaultRefreshCooldown 동안은 직전 갱신 결과를 재사용한다. 수동 새로고침 연타와
-	// 여러 GUI 창의 동시 요청이 벤더 API 호출로 증폭되지 않게 하는 최소 간격이다.
-	DefaultRefreshCooldown = 10 * time.Second
+	// DefaultManualCooldown 은 사용자가 새로고침 버튼을 눌렀을 때의 최소 간격이다.
+	// 연타만 막으면 되므로 짧다 — 10초 안에 두 번 누르는 것은 의도가 아니라 손이다.
+	DefaultManualCooldown = 10 * time.Second
 	// DefaultRefreshTimeout 은 지원하는 모든 벤더를 한 번씩 조회하는 전체 상한이다.
 	DefaultRefreshTimeout = 30 * time.Second
 )
@@ -22,11 +22,21 @@ type LimitStore interface {
 	UpsertVendorLimit(context.Context, Result, time.Time) error
 }
 
-// RefreshOptions 는 Refresher의 정책과 테스트 seam이다. 영값은 운영 기본값이다.
+// RefreshOptions 는 Refresher의 정책과 테스트 seam이다. 영값은 운영 기본값이며,
+// 예외가 하나다 — AutoCooldown 에는 기본값이 없다(아래).
 type RefreshOptions struct {
-	Cooldown time.Duration
-	Timeout  time.Duration
-	Now      func() time.Time
+	// AutoCooldown 은 기동·틱·창 열기의 최소 간격, ManualCooldown 은 새로고침 버튼의 것이다.
+	// 둘로 나눈 이유는 ADR 0014 에 있다 — 사용자가 누른 것과 화면이 뜬 것은 의도의 세기가 다르다.
+	//
+	// **AutoCooldown 에는 기본값이 없다. 호출자가 자동 갱신 주기에서 파생시켜 넘겨야 한다.**
+	// 쿨다운은 lastSuccess 부터 재고 그 시각은 조회가 끝난 뒤에 찍히므로, 주기와 같거나 더 길면
+	// 다음 주기 갱신이 자기 쿨다운에 막혀 자동 갱신이 통째로 멈춘다. 여기 상수를 두면 주기를
+	// 옮길 때 한쪽만 바뀌어 그 상태가 되므로, 두 값을 한 곳에서 계산하게 남겨 둔다 (daemon).
+	// 0 이면 자동 갱신을 억제하지 않는다.
+	AutoCooldown   time.Duration
+	ManualCooldown time.Duration
+	Timeout        time.Duration
+	Now            func() time.Time
 	// Logger 는 벤더별 조회 실패를 남길 곳이다. nil 이면 남기지 않는다.
 	Logger *log.Logger
 }
@@ -36,14 +46,22 @@ type RefreshOptions struct {
 type Refresher struct {
 	collector VendorCollector
 	store     LimitStore
-	cooldown  time.Duration
+	auto      time.Duration
+	manual    time.Duration
 	timeout   time.Duration
 	now       func() time.Time
 	logger    *log.Logger
 
-	mu          sync.Mutex
-	inFlight    *refreshCall
-	lastSuccess time.Time
+	mu       sync.Mutex
+	inFlight *refreshCall
+	// 마지막 성공 시각을 등급별로 따로 잰다. 하나로 두면 창을 열어 나간 자동 갱신이 그 직후
+	// 10초 동안 새로고침 버튼까지 막는다 — 창을 열고 바로 누르는 흔한 순서가 그 구간이라,
+	// 버튼이 아무 일도 하지 않는 것처럼 보인다 (ADR 0014 의 "버튼은 사실상 항상 새 값").
+	//
+	// 수동 쿨다운은 연타만 막으면 되므로 자기 성공만 보면 된다. 반대 방향은 그대로 둔다 —
+	// 버튼을 눌러 방금 조회했으면 자동 갱신도 쉬는 것이 맞다.
+	lastAuto   time.Time
+	lastManual time.Time
 }
 
 type refreshCall struct {
@@ -53,8 +71,8 @@ type refreshCall struct {
 
 // NewRefresher 는 데몬 수명 동안 재사용할 갱신기를 만든다.
 func NewRefresher(collector VendorCollector, store LimitStore, opts RefreshOptions) *Refresher {
-	if opts.Cooldown <= 0 {
-		opts.Cooldown = DefaultRefreshCooldown
+	if opts.ManualCooldown <= 0 {
+		opts.ManualCooldown = DefaultManualCooldown
 	}
 	if opts.Timeout <= 0 {
 		opts.Timeout = DefaultRefreshTimeout
@@ -65,22 +83,44 @@ func NewRefresher(collector VendorCollector, store LimitStore, opts RefreshOptio
 	return &Refresher{
 		collector: collector,
 		store:     store,
-		cooldown:  opts.Cooldown,
+		auto:      opts.AutoCooldown,
+		manual:    opts.ManualCooldown,
 		timeout:   opts.Timeout,
 		now:       opts.Now,
 		logger:    opts.Logger,
 	}
 }
 
-// Refresh 는 모든 벤더를 조회해 저장한다. 진행 중 호출은 같은 작업의 완료를 기다린 뒤
+// RefreshAuto 는 사람이 누르지 않은 갱신이다 — 기동, 주기 틱, 트레이 창 열기가 여기로 온다.
+// 자동 쿨다운이 걸린다.
+func (r *Refresher) RefreshAuto(ctx context.Context) error {
+	return r.refreshWithin(ctx, r.auto, false)
+}
+
+// RefreshManual 은 사용자가 새로고침 버튼을 누른 것이다. 짧은 쿨다운만 걸리므로 사실상
+// 항상 벤더를 다시 조회한다 — 버튼을 눌렀는데 아무 일도 일어나지 않으면 고장으로 읽힌다.
+func (r *Refresher) RefreshManual(ctx context.Context) error {
+	return r.refreshWithin(ctx, r.manual, true)
+}
+
+// refreshWithin 은 모든 벤더를 조회해 저장한다. 진행 중 호출은 같은 작업의 완료를 기다린 뒤
 // 쿨다운 판정으로 빠져나가므로 외부 요청을 중복 실행하지 않는다.
-func (r *Refresher) Refresh(ctx context.Context) error {
+//
+// 싱글플라이트는 등급을 보지 않는다. 동시 요청 병합은 억제가 아니라 중복 제거이고, 마침 도는
+// 갱신이 자동이었다고 해서 수동 요청이 한 번 더 나갈 이유가 없다.
+func (r *Refresher) refreshWithin(ctx context.Context, cooldown time.Duration, manual bool) error {
 	if r == nil || r.collector == nil || r.store == nil {
 		return nil
 	}
 	r.mu.Lock()
 	now := r.now()
-	if !r.lastSuccess.IsZero() && now.Sub(r.lastSuccess) < r.cooldown {
+	// 수동은 자기 성공만 본다. 자동은 lastAuto 만 보면 되는데, 그 값이 등급과 무관하게
+	// 모든 성공에서 갱신되기 때문이다 (아래).
+	since := r.lastAuto
+	if manual {
+		since = r.lastManual
+	}
+	if !since.IsZero() && now.Sub(since) < cooldown {
 		r.mu.Unlock()
 		return nil
 	}
@@ -100,7 +140,13 @@ func (r *Refresher) Refresh(ctx context.Context) error {
 	active.err = r.refresh(ctx, now)
 	r.mu.Lock()
 	if active.err == nil {
-		r.lastSuccess = r.now()
+		done := r.now()
+		// 조회는 한 번뿐이므로 자동 쪽 시각은 등급과 무관하게 갱신한다. 방금 벤더를 두드렸다면
+		// 곧 뒤따르는 틱·창 열기는 쉬어야 한다.
+		r.lastAuto = done
+		if manual {
+			r.lastManual = done
+		}
 	}
 	r.inFlight = nil
 	close(active.done)

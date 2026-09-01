@@ -156,7 +156,7 @@ func TestReadsPersistedVendorLimits(t *testing.T) {
 	}
 	m := New(builderSource{NewBuilder(f.svc)})
 	m.now = func() time.Time { return testNow }
-	got, err := m.Refresh(context.Background(), Query{TZ: utc})
+	got, err := m.RefreshManual(context.Background(), Query{TZ: utc})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestKeepsLastGoodSnapshotOnRefreshFailure(t *testing.T) {
 	f.breakQueries()
 	*clock = testNow.Add(5 * time.Minute)
 
-	stale, err := m.Refresh(ctx, Query{TZ: seoul})
+	stale, err := m.RefreshManual(ctx, Query{TZ: seoul})
 	if err != nil {
 		t.Fatalf("Refresh 가 error 를 냈다 — 갱신 실패는 상태이지 오류가 아니다: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestSnapshotHonoursRefreshInterval(t *testing.T) {
 		t.Fatalf("시간대가 바뀌었는데 %d회 조회했다", col.count())
 	}
 	// 명시적 새로고침은 주기를 기다리지 않는다.
-	if _, err := m.Refresh(ctx, Query{TZ: utc}); err != nil {
+	if _, err := m.RefreshManual(ctx, Query{TZ: utc}); err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
 	if col.count() != 4 {
@@ -301,7 +301,7 @@ func TestRejectsUnknownTimezone(t *testing.T) {
 	m, col, _ := newTestCache(f.svc, vendorlimit.Snapshot{})
 	for _, call := range []func() (Snapshot, error){
 		func() (Snapshot, error) { return m.Current(context.Background(), Query{TZ: "Mars/Phobos"}) },
-		func() (Snapshot, error) { return m.Refresh(context.Background(), Query{TZ: "Mars/Phobos"}) },
+		func() (Snapshot, error) { return m.RefreshManual(context.Background(), Query{TZ: "Mars/Phobos"}) },
 	} {
 		if _, err := call(); err == nil {
 			t.Error("에러가 없다 — 시간대 오타를 조용히 UTC 로 떨어뜨리면 안 된다")
@@ -337,7 +337,7 @@ func TestCacheIsSafeForConcurrentUse(t *testing.T) {
 			if i%2 == 0 {
 				got, err = m.Current(ctx, Query{TZ: seoul})
 			} else {
-				got, err = m.Refresh(ctx, Query{TZ: seoul})
+				got, err = m.RefreshManual(ctx, Query{TZ: seoul})
 			}
 			if err != nil {
 				t.Errorf("조회 %d: %v", i, err)

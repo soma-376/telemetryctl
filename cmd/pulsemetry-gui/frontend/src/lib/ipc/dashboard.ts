@@ -61,8 +61,14 @@ export function fetchTray(q: TrayQuery): Promise<IpcResult<TraySnapshot>> {
   return guard(() => Dashboard.Tray(q));
 }
 
-// refreshTray 는 주기를 무시하고 다시 만든다. 사용자가 새로고침을 눌렀는데 캐시가
-// 돌아오면 버튼이 고장 난 것처럼 보인다.
+// syncTray 는 트레이 창이 열렸을 때 부른다. 캐시를 건너뛰고 데몬까지 가되, 벤더를 실제로
+// 두드릴지는 데몬이 정한다 — 화면은 "언제 갱신할 때인지" 를 판단하지 않는다 (ADR 0014).
+export function syncTray(q: TrayQuery): Promise<IpcResult<TraySnapshot>> {
+  return guard(() => Dashboard.SyncTray(q));
+}
+
+// refreshTray 는 사용자가 새로고침을 누른 것이다. 짧은 쿨다운만 걸려 사실상 항상 새 값을
+// 가져온다. 눌렀는데 캐시가 돌아오면 버튼이 고장 난 것처럼 보인다.
 export function refreshTray(q: TrayQuery): Promise<IpcResult<TraySnapshot>> {
   return guard(() => Dashboard.RefreshTray(q));
 }
