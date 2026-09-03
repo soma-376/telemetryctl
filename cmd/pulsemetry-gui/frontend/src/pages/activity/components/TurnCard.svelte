@@ -14,21 +14,8 @@
     onToggle?: () => void;
   } = $props();
 
-  function onRowKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      onToggle?.();
-    }
-  }
-
   function copyPrompt() {
     navigator.clipboard?.writeText(turn.prompt);
-  }
-  function onCopyKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      copyPrompt();
-    }
   }
 </script>
 
@@ -40,14 +27,12 @@
     ? 'var(--color-surface-hover)'
     : 'var(--color-surface)'};padding:12px 14px;margin-bottom:8px"
 >
-  <div
-    class="grid cursor-pointer items-center"
+  <button
+    type="button"
+    class="grid w-full cursor-pointer items-center text-left"
     style="grid-template-columns:26px 44px 60px minmax(0,1fr) auto 14px;gap:11px"
-    role="button"
-    tabindex="0"
     aria-expanded={open}
     onclick={() => onToggle?.()}
-    onkeydown={onRowKeydown}
   >
     <span
       class="flex items-center justify-center font-bold"
@@ -85,7 +70,7 @@
       class="text-text-muted flex-none"
       rotated={open}
     />
-  </div>
+  </button>
 
   {#if open}
     <div style="animation:rowIn 180ms ease-out">
@@ -104,13 +89,11 @@
             class="text-text-muted whitespace-nowrap"
             style="font-size:10.5px">{turn.chars}</span
           >
-          <span
-            class="cursor-pointer font-semibold whitespace-nowrap"
+          <button
+            type="button"
+            class="cursor-pointer border-none bg-transparent font-semibold whitespace-nowrap"
             style="font-size:10.5px;color:var(--color-accent)"
-            role="button"
-            tabindex="0"
-            onclick={copyPrompt}
-            onkeydown={onCopyKeydown}>복사</span
+            onclick={copyPrompt}>복사</button
           >
         </div>
         <div

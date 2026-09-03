@@ -57,6 +57,8 @@ export interface VendorRow {
   topModel: string;
 }
 export interface ActivityRow {
+  /// 목록 재조정용 안정 키. 날짜+시각+제목은 같은 분에 같은 제목이면 충돌한다.
+  id: string;
   date: string;
   time: string;
   agent: AgentId;

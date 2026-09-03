@@ -1,6 +1,7 @@
 import { AGENT_NAMES } from "$lib/domain/agent";
 import type { AgentId } from "$lib/domain/agent.types";
 import { formatDuration } from "$lib/utils/format";
+import { at, isNonEmpty, type NonEmpty } from "$lib/utils/array";
 import {
   LimitState,
   type LimitWindow,
@@ -93,23 +94,28 @@ function resetText(w: LimitWindow, now: Date): string {
 // toWindows 는 한 벤더의 창들을 화면 줄로 옮기고 주간 한도를 대표로 세운다.
 // 주간 창이 없으면 5시간, 그것도 없으면 첫 창을 쓴다 — 대표 카드는 벤더 사이에서 같은
 // 기간을 안정적으로 보여주는 것이 목적이고, "가장 빠듯한 하나" 를 고르는 것이 아니다.
-function toWindows(windows: LimitWindow[], now: Date): TrayLimitWindow[] {
+function toWindows(
+  windows: NonEmpty<LimitWindow>,
+  now: Date,
+): NonEmpty<TrayLimitWindow> {
   const labels = windowLabels(windows);
   const weeklyAt = windows.findIndex((window) => window.period === "weekly");
   const fiveHourAt = windows.findIndex(
     (window) => window.period === "five_hour",
   );
   const headAt = weeklyAt >= 0 ? weeklyAt : fiveHourAt >= 0 ? fiveHourAt : 0;
+  // map 은 길이를 보존하지만 타입에는 그 사실이 남지 않는다. 입력이 NonEmpty 이므로
+  // 결과도 NonEmpty 다 — 그 한 가지만 여기서 단언한다.
   return windows.map((w, i) => {
     const pct = remainPct(w.used_ratio);
     return {
-      label: labels[i],
+      label: at(labels, i),
       pct,
       remain: `${pct}%`,
       reset: resetText(w, now),
       head: i === headAt,
     };
-  });
+  }) as NonEmpty<TrayLimitWindow>;
 }
 
 const capitalize = (s: string) =>
@@ -162,7 +168,8 @@ interface TrayView {
 // 창이 비면 보여줄 숫자가 없다 — 그때만 null 이고, 안내 문구는 unavailable 쪽이 맡는다.
 function toVendor(r: VendorLimit, now: Date): TrayVendor | null {
   const windows = r.windows ?? [];
-  if (windows.length === 0) return null;
+  // 이 검사가 TrayVendor.windows 의 NonEmpty 보장을 만드는 자리다.
+  if (!isNonEmpty(windows)) return null;
   return {
     id: toAgentId(r.vendor),
     plan: capitalize(r.plan),

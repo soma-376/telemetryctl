@@ -1,3 +1,5 @@
+import type { NonEmpty } from "$lib/utils/array";
+
 import type { AgentId } from "$lib/domain/agent.types";
 
 export interface TrayLimitWindow {
@@ -16,7 +18,11 @@ export interface TrayVendor {
   spend: string;
   tokens: string;
   credential: string;
-  windows: TrayLimitWindow[];
+  /**
+   * 비어 있지 않다. adapter 의 toVendor 가 창이 없는 벤더를 카드로 만들지 않으므로
+   * 이 배열이 빈 채로 화면에 닿는 경로가 없다 — headOf 가 그 사실에 기댄다.
+   */
+  windows: NonEmpty<TrayLimitWindow>;
 }
 
 export interface TraySession {

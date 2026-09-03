@@ -29,6 +29,12 @@
   }
 
   const rangeText = $derived(periodRangeText(period.value));
+
+  // 드로어는 세션 자체와 "몇 번째인지" 만 알면 된다. 전체 목록을 아는 것은 이 화면이다.
+  const detail = $derived(selected === null ? null : (SESSIONS[selected] ?? null));
+  const detailPosition = $derived(
+    selected === null ? "" : `${selected + 1} / ${SESSIONS.length}`,
+  );
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -56,7 +62,8 @@
 
 <SessionDetail
   open={selected !== null}
-  index={selected}
+  session={detail}
+  position={detailPosition}
   onClose={close}
   onPrev={() => step(-1)}
   onNext={() => step(1)}

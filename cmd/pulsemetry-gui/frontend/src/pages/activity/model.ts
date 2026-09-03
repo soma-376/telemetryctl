@@ -35,7 +35,6 @@ const TURN_STYLE: Record<TurnKind, TurnStyle> = {
 };
 
 const TURN_KINDS = Object.keys(TURN_STYLE) as TurnKind[];
-import { SESSIONS } from "./mock";
 
 // ml: 세션 행 표시 데이터 계산
 export function rowDisplay(e: ActivitySession, selected: boolean) {
@@ -70,8 +69,11 @@ export function rowDisplay(e: ActivitySession, selected: boolean) {
 }
 
 // bl: 세션 상세(드로어) 표시 데이터 계산
-export function detailDisplay(index: number) {
-  const t = SESSIONS[index];
+//
+// 세션을 인자로 받는다. 예전에는 mock 의 SESSIONS 를 직접 인덱싱했는데, 그러면 이 함수가
+// 데이터 출처를 알아야 하고 index 의 의미가 그 배열에 묶인다. position 도 같은 이유로
+// 호출부가 만든다 — 전체 개수를 아는 것은 목록이지 이 함수가 아니다.
+export function detailDisplay(t: ActivitySession, position: string) {
   const n = STATE_STYLE[t.state];
 
   const turns = t.turns;
@@ -121,7 +123,7 @@ export function detailDisplay(index: number) {
         labelBg: s.bg,
         labelBorder: s.border,
         labelDot: s.bar,
-        preview: u.prompt.split("\n")[0],
+        preview: u.prompt.split("\n")[0] ?? "",
         prompt: u.prompt,
         chars: u.prompt.length + "자",
         meta: u.actions + " Action · " + u.tokens,
@@ -136,6 +138,6 @@ export function detailDisplay(index: number) {
       };
     }),
     files: t.files,
-    position: `${index + 1} / ${SESSIONS.length}`,
+    position,
   };
 }

@@ -51,7 +51,7 @@
       description="선택한 기간에 실행된 세션이 없습니다."
     />
   {/if}
-  {#each activity.rows as t, i (t.date + t.time + t.title)}
+  {#each activity.rows as t, i (t.id)}
     {@const st = STATUS[t.state]}
     <div
       class="grid items-center"

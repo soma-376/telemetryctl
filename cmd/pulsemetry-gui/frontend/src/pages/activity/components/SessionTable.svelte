@@ -40,7 +40,7 @@
       description={"선택한 기간에 실행된 세션이 없습니다.\n기간을 넓히거나 필터를 지워보세요."}
     />
   {:else}
-    {#each sessions as session, i (session)}
+    {#each sessions as session, i (session.id)}
       <SessionRow
         {session}
         selected={selectedIndex === i}

@@ -2,6 +2,7 @@ import { AGENT_STYLE } from "$lib/domain/agent";
 import type { AgentId } from "$lib/domain/agent.types";
 import { HOURLY_DAYS, RETAIN_DAYS, TODAY } from "$lib/domain/retention";
 import { formatDuration } from "$lib/utils/format";
+import { at } from "$lib/utils/array";
 import type {
   ActivityData,
   ActivityRow,
@@ -25,8 +26,8 @@ const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
 const toIso = (d: Date) =>
   `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const parseIso = (s: string) => {
-  const p = s.split("-").map(Number);
-  return new Date(p[0], p[1] - 1, p[2]);
+  const p = s.split("-");
+  return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
 };
 const addDays = (s: string, n: number) => {
   const d = parseIso(s);
@@ -111,7 +112,7 @@ const LADDER: BucketRung[] = [
 
 function buildBuckets(start: string, end: string): BucketSet {
   const n = Math.min(dayCount(start, end), RETAIN_DAYS);
-  let rung = LADDER.find((r) => n <= r.maxDays) ?? LADDER[LADDER.length - 1];
+  let rung = LADDER.find((r) => n <= r.maxDays) ?? at(LADDER, LADDER.length - 1);
 
   // 보존 강등 — 시간 단위 롤업 지평(HOURLY_DAYS)보다 오래된 구간은 시간 버킷
   // 데이터가 없으므로 일 단위로 내려간다.
@@ -243,18 +244,18 @@ export function heroData(start: string, end: string): HeroData {
       0,
     ) || 1;
   const perVendor = SERIES.map((_, i) =>
-    items.reduce((s, b) => s + b.parts[i], 0),
+    items.reduce((s, b) => s + at(b.parts, i), 0),
   );
   const grandTotal = perVendor.reduce((s, v) => s + v, 0);
   const cents = SERIES.map((k, i) =>
-    Math.round(perVendor[i] * VENDOR_META[k].rate * 100),
+    Math.round(at(perVendor, i) * VENDOR_META[k].rate * 100),
   );
   const cost = cents.reduce((s, c) => s + c, 0) / 100;
   const minutes = Math.round(grandTotal * MIN_PER_K);
   const peakIdx = items.reduce(
     (bi, b, i) =>
       b.parts[0] + b.parts[1] + b.parts[2] >
-      items[bi].parts[0] + items[bi].parts[1] + items[bi].parts[2]
+      at(items, bi).parts[0] + at(items, bi).parts[1] + at(items, bi).parts[2]
         ? i
         : bi,
     0,
@@ -276,10 +277,10 @@ export function heroData(start: string, end: string): HeroData {
     totalTokens: grandTotal,
     totalCost: `$${cost.toFixed(2)}`,
     totalTime: formatDuration(minutes),
-    peakNote: `최다 ${items[peakIdx].label || items[peakIdx].key} · ${
-      items[peakIdx].parts[0] +
-      items[peakIdx].parts[1] +
-      items[peakIdx].parts[2]
+    peakNote: `최다 ${at(items, peakIdx).label || at(items, peakIdx).key} · ${
+      at(items, peakIdx).parts[0] +
+      at(items, peakIdx).parts[1] +
+      at(items, peakIdx).parts[2]
     }k`,
     gridCols: `repeat(${items.length},minmax(0,1fr))`,
     gridGap: `${items.length > 18 ? 4 : items.length > 11 ? 6 : 10}px`,
@@ -295,7 +296,7 @@ export function heroData(start: string, end: string): HeroData {
       const peak = bi === peakIdx;
       // 높이는 픽셀이 아니라 비율로 넘긴다. 렌더는 flex-grow 로 배분하므로
       // 플롯이 커지면 같이 커지고, 조각 합이 막대 높이를 넘을 수 없다.
-      const parts = SERIES.map((k, i) => ({ k, v: b.parts[i] }))
+      const parts = SERIES.map((k, i) => ({ k, v: at(b.parts, i) }))
         .filter((p) => p.v > 0)
         .map((p, i, arr) => ({
           color: AGENT_STYLE[p.k].fg,
@@ -328,14 +329,14 @@ export function heroData(start: string, end: string): HeroData {
 
 export function vendorRows(hero: HeroData): VendorRow[] {
   return SERIES.map((k, i) => {
-    const tok = hero.perVendor[i];
+    const tok = at(hero.perVendor, i);
     const share = hero.grandTotal
       ? Math.round((tok / hero.grandTotal) * 100)
       : 0;
     return {
       id: k,
       plan: VENDOR_META[k].plan,
-      spend: `$${(hero.cents[i] / 100).toFixed(2)}`,
+      spend: `$${(at(hero.cents, i) / 100).toFixed(2)}`,
       tokens: `${tok}k`,
       share: `${share}%`,
       topModel: `${VENDOR_META[k].topModel} · ${Math.round(tok * 0.67)}k`,
@@ -368,16 +369,17 @@ function sessionsOn(isoDate: string): ActivityRow[] {
   const out: ActivityRow[] = [];
   for (let i = 0; i < n; i++) {
     const seed = `${isoDate}s${i}`;
-    const task = TASKS[Math.floor(hash(seed + "t") * TASKS.length)];
+    const task = at(TASKS, Math.floor(hash(seed + "t") * TASKS.length));
     const hh = 9 + Math.floor(hash(seed + "h") * 9);
     const mm = Math.floor(hash(seed + "m") * 60);
     const mins = 12 + Math.floor(hash(seed + "d") * 60);
     const running = isoDate === TODAY && i < 2;
     const dur = formatDuration(mins);
     const stage = running
-      ? STAGES[Math.floor(hash(seed + "g") * STAGES.length)]
+      ? at(STAGES, Math.floor(hash(seed + "g") * STAGES.length))
       : "";
     out.push({
+      id: seed,
       date: isoDate,
       time: `${pad(hh)}:${pad(mm)}`,
       agent: task[1],
