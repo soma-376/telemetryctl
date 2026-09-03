@@ -16,22 +16,13 @@
   } = $props();
 
   const d = $derived(rowDisplay(session, selected));
-
-  function onKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      onOpen?.();
-    }
-  }
 </script>
 
-<div
-  class="row grid cursor-pointer items-center border-b"
-  role="button"
-  tabindex="0"
+<button
+  type="button"
+  class="row grid w-full cursor-pointer items-center border-b text-left"
   style="--row-bg:{d.bg};grid-template-columns:14px 58px minmax(0,1.35fr) minmax(0,1fr) 62px 62px 62px 76px;gap:12px;padding:12px 18px;border-color:#f1ece4;box-shadow:{d.rail}"
   onclick={() => onOpen?.()}
-  onkeydown={onKeydown}
 >
   <Dot size={9} color={d.dot} pulse={d.running} />
   <span
@@ -91,7 +82,7 @@
     dot={d.badge.dot}
     pulse={d.running}
   />
-</div>
+</button>
 
 <style>
   .row {

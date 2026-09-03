@@ -3,6 +3,7 @@ import type { ActivitySession } from "./types";
 // Yr: 세션 목록 (번들에서 그대로 복사)
 export const SESSIONS: ActivitySession[] = [
   {
+    id: "s1",
     time: "14:32",
     agentId: "claude",
     state: "running",
@@ -178,6 +179,7 @@ export const SESSIONS: ActivitySession[] = [
     ],
   },
   {
+    id: "s2",
     time: "14:05",
     agentId: "codex",
     state: "running",
@@ -247,6 +249,7 @@ export const SESSIONS: ActivitySession[] = [
     ],
   },
   {
+    id: "s3",
     time: "13:08",
     agentId: "codex",
     state: "done",
@@ -314,6 +317,7 @@ export const SESSIONS: ActivitySession[] = [
     ],
   },
   {
+    id: "s4",
     time: "12:24",
     agentId: "gemini",
     state: "done",
@@ -382,6 +386,7 @@ export const SESSIONS: ActivitySession[] = [
     ],
   },
   {
+    id: "s5",
     time: "11:20",
     agentId: "claude",
     state: "done",
@@ -467,6 +472,7 @@ export const SESSIONS: ActivitySession[] = [
     ],
   },
   {
+    id: "s6",
     time: "10:02",
     agentId: "codex",
     state: "done",
@@ -534,6 +540,7 @@ export const SESSIONS: ActivitySession[] = [
     ],
   },
   {
+    id: "s7",
     time: "09:18",
     agentId: "cursor",
     state: "done",
@@ -585,6 +592,7 @@ export const SESSIONS: ActivitySession[] = [
     ],
   },
   {
+    id: "s8",
     time: "08:41",
     agentId: "gemini",
     state: "done",

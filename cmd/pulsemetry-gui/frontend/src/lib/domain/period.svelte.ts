@@ -10,8 +10,9 @@ function iso(d: Date): string {
 }
 
 export function toDate(s: string): Date {
-  const [y, m, d] = s.split("-").map(Number);
-  return new Date(y, m - 1, d);
+  // "YYYY-MM-DD" 만 들어온다 (iso 가 만든 값이거나 RETAIN_FROM/TODAY).
+  const p = s.split("-");
+  return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
 }
 
 function today0(): Date {

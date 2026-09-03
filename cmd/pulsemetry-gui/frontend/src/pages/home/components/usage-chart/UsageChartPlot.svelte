@@ -118,13 +118,13 @@
     </g>
   {/if}
 
-  {#each layout.tickIndexes as index (index)}
+  {#each layout.ticks as tick (tick.x)}
     <text
-      x={layout.xAt(index)}
+      x={tick.x}
       y={layout.height - 7}
       text-anchor="middle"
       fill="var(--color-text-muted)"
-      font-size="11">{hero.bars[index].label}</text
+      font-size="11">{tick.label}</text
     >
   {/each}
 </svg>

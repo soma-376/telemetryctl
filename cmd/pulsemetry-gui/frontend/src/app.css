@@ -206,3 +206,23 @@
     opacity: 0;
   }
 }
+/* ── 동작 줄이기 (prefers-reduced-motion) ───────────────────
+   OS 접근성 설정이다. 전정기관 장애가 있으면 화면의 움직임이 실제로 어지럼증을
+   유발하고, 편두통 유발 요인이기도 하다. WCAG SC 2.2.2 는 5초 넘게 자동 재생되는
+   움직임에 정지 수단을 요구한다(Level A) — Dot 의 livePulse 가 infinite 라 여기 걸린다.
+
+   0 이 아니라 0.01ms 인 이유: 0 이면 animationend·transitionend 가 발화하지 않아
+   그 이벤트를 기다리는 코드가 멈춘다. 사실상 즉시 끝나면서 이벤트는 살려 둔다.
+
+   Svelte 의 transition: 지시자는 JS 가 돌리므로 여기서 못 막는다.
+   그쪽은 svelte/motion 의 prefersReducedMotion 을 쓴다 (SessionDetail). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

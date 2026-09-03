@@ -1,9 +1,14 @@
 <script lang="ts">
   import { fade, fly } from "svelte/transition";
+  import { prefersReducedMotion } from "svelte/motion";
   import { cubicOut } from "svelte/easing";
+
+  // CSS 의 전역 규칙(app.css)은 Svelte transition 을 못 막는다. JS 가 돌리기 때문이다.
+  const motionMs = (ms: number) => (prefersReducedMotion.current ? 0 : ms);
   import { portal } from "$lib/utils/portal";
   import ChevronDownIcon from "$lib/icons/ChevronDownIcon.svelte";
   import { detailDisplay } from "../model";
+  import type { ActivitySession } from "../types";
   import AgentBadge from "$lib/components/ui/AgentBadge.svelte";
   import XIcon from "$lib/icons/XIcon.svelte";
   import ChevronLeftIcon from "$lib/icons/ChevronLeftIcon.svelte";
@@ -16,33 +21,40 @@
 
   let {
     open = false,
-    index,
+    session,
+    position,
     onClose,
     onPrev,
     onNext,
   }: {
     open?: boolean;
-    index: number | null;
+    session: ActivitySession | null;
+    position: string;
     onClose?: () => void;
     onPrev?: () => void;
     onNext?: () => void;
   } = $props();
 
-  let n = $state(0);
   let turnOpen = $state<Record<number, boolean>>({});
   let turnSel = $state<number | null>(null);
   let filesOpen = $state(false);
 
-  // 세션이 바뀌면 턴 펼침·선택·파일 목록 상태를 초기화한다.
+  // 닫히는 동안(session 이 null) 마지막 내용을 붙잡는다. 안 그러면 나가는 transition
+  // 중에 본문이 먼저 사라져 빈 패널이 미끄러져 나간다.
+  let last = $state<ActivitySession | null>(null);
+  let lastPosition = $state("");
   $effect(() => {
-    if (index === null) return;
-    n = index;
+    if (!session) return;
+    last = session;
+    lastPosition = position;
+    // 세션이 바뀌면 턴 펼침·선택·파일 목록 상태를 초기화한다.
     turnOpen = {};
     turnSel = null;
     filesOpen = false;
   });
 
-  const d = $derived(detailDisplay(n));
+  const shown = $derived(session ?? last);
+  const d = $derived(shown ? detailDisplay(shown, position || lastPosition) : null);
   const openCount = $derived(Object.values(turnOpen).filter(Boolean).length);
   const collapseLabel = $derived(openCount ? "모두 접기" : "모두 펼치기");
 
@@ -63,43 +75,31 @@
       return;
     }
     const all: Record<number, boolean> = {};
-    d.turns.forEach((t) => (all[t.n] = true));
+    d?.turns.forEach((t) => (all[t.n] = true));
     turnOpen = all;
   }
 
-  function onOverlayKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter") onClose?.();
-  }
-  function onCloseKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" || e.key === " ") onClose?.();
-  }
-  function onCollapseKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      collapseAll();
-    }
-  }
 </script>
 
-{#if open}
+{#if open && d}
   <div class="fixed inset-0" style="z-index:60" use:portal>
-    <div
-      class="absolute inset-0"
+    <!-- 배경 클릭으로 닫는다. 키보드 경로는 Esc 이고 Activity.svelte 가 잡으므로
+         여기에 role·tabindex 를 주면 탭 순서에 도달 불가능한 칸만 늘어난다. -->
+    <button
+      type="button"
+      class="absolute inset-0 cursor-default border-none"
       style="background:rgba(27,26,24,0.28)"
-      transition:fade={{ duration: 180, easing: cubicOut }}
-      role="button"
-      tabindex="-1"
+      transition:fade={{ duration: motionMs(180), easing: cubicOut }}
       aria-label="닫기"
       onclick={() => onClose?.()}
-      onkeydown={onOverlayKeydown}
-    ></div>
+    ></button>
 
     <div
       class="bg-surface absolute top-0 right-0 bottom-0 flex flex-col"
       style="width:min(720px,70vw);border-left:1px solid var(--color-border);box-shadow:-18px 0 44px rgba(27,26,24,0.13)"
       transition:fly={{
         x: "100%",
-        duration: 280,
+        duration: motionMs(280),
         opacity: 1,
         easing: cubicOut,
       }}
@@ -162,17 +162,15 @@
               <span class="overflow-hidden text-ellipsis">{d.range}</span>
             </div>
           </div>
-          <div
-            class="border-border text-text-secondary hover:border-border-strong flex flex-none cursor-pointer items-center justify-center border"
+          <button
+            type="button"
+            class="border-border text-text-secondary hover:border-border-strong flex flex-none cursor-pointer items-center justify-center border bg-transparent"
             style="width:30px;height:30px;border-radius:9px"
-            role="button"
-            tabindex="0"
             aria-label="닫기"
             onclick={() => onClose?.()}
-            onkeydown={onCloseKeydown}
           >
             <XIcon />
-          </div>
+          </button>
         </div>
 
         <div class="flex items-center" style="gap:9px">
@@ -251,13 +249,11 @@
               style="font-size:12.5px">턴별 프롬프트</span
             >
             <span class="flex-1"></span>
-            <span
-              class="text-text-secondary hover:text-text cursor-pointer font-semibold whitespace-nowrap"
+            <button
+              type="button"
+              class="text-text-secondary hover:text-text cursor-pointer border-none bg-transparent font-semibold whitespace-nowrap"
               style="font-size:11.5px"
-              role="button"
-              tabindex="0"
-              onclick={collapseAll}
-              onkeydown={onCollapseKeydown}>{collapseLabel}</span
+              onclick={collapseAll}>{collapseLabel}</button
             >
           </div>
           {#each d.turns as turn (turn.n)}
@@ -312,13 +308,11 @@
           >{d.position}</span
         >
         <span class="flex-1"></span>
-        <span
-          class="text-text-secondary hover:text-text cursor-pointer font-semibold whitespace-nowrap"
+        <button
+          type="button"
+          class="text-text-secondary hover:text-text cursor-pointer border-none bg-transparent font-semibold whitespace-nowrap"
           style="font-size:12px;margin-right:4px"
-          role="button"
-          tabindex="0"
-          onclick={collapseAll}
-          onkeydown={onCollapseKeydown}>{collapseLabel}</span
+          onclick={collapseAll}>{collapseLabel}</button
         >
         <span
           class="text-text-muted flex items-center whitespace-nowrap"
