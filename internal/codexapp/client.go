@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -22,7 +23,9 @@ type Client struct {
 	closed  bool
 }
 
-func New(opts Options) *Client { return &Client{command: append([]string(nil), opts.Command...)} }
+func New(opts Options) *Client {
+	return &Client{command: append([]string(nil), opts.Command...)}
+}
 
 func (c *Client) RateLimits(ctx context.Context) (RateLimitSnapshot, error) {
 	c.mu.Lock()
@@ -37,6 +40,29 @@ func (c *Client) RateLimits(ctx context.Context) (RateLimitSnapshot, error) {
 		return RateLimitSnapshot{}, err
 	}
 	return result.RateLimits, nil
+}
+
+// ThreadName은 thread/read가 돌려준 벤더 제목만 읽는다. turns를 요청하지 않으므로
+// 대화 원문은 이 경로를 지나지 않는다 (ADR 0017·0018).
+func (c *Client) ThreadName(ctx context.Context, threadID string) (string, error) {
+	if threadID == "" {
+		return "", ErrThreadIDRequired
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.ensureStarted(ctx); err != nil {
+		return "", err
+	}
+	var result threadReadResponse
+	if err := c.call(ctx, "thread/read", threadReadParams{ThreadID: threadID, IncludeTurns: false}, &result); err != nil {
+		c.process.kill()
+		c.process = nil
+		return "", err
+	}
+	if result.Thread.Name == nil {
+		return "", nil
+	}
+	return strings.TrimSpace(*result.Thread.Name), nil
 }
 
 func (c *Client) ensureStarted(ctx context.Context) error {
@@ -81,7 +107,8 @@ func (c *Client) call(ctx context.Context, method string, params any, out any) e
 			}
 			resp, err := decodeResponse(line)
 			if err != nil {
-				// 알림에는 id가 없다. 요청 응답을 기다리는 동안에는 조용히 건너뛴다.
+				// 별도 App Server 프로세스의 알림은 다른 Codex 클라이언트에서 발생한
+				// 변경을 보장하지 않는다. 응답 대기 중 만난 알림은 무시한다.
 				var note notification
 				if json.Unmarshal(line, &note) == nil && note.Method != "" {
 					continue

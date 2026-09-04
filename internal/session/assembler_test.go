@@ -649,7 +649,7 @@ func TestAssembleBatchHelper(t *testing.T) {
 	}, start+600)
 
 	s := only(t, got)
-	if s.Status != StatusCompleted || s.Title != "리시버 붙이기" {
+	if s.Status != StatusCompleted || s.Prompts != 1 {
 		t.Fatalf("Assemble 결과가 예상과 다름: %+v", s)
 	}
 }

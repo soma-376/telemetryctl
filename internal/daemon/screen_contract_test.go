@@ -212,8 +212,10 @@ func TestScreenContract_Activity_ListsTheStoredSession(t *testing.T) {
 	if row.SessionKey != fixtureSession {
 		t.Errorf("session_key = %q, want %q", row.SessionKey, fixtureSession)
 	}
-	if !strings.Contains(row.Title, "temporality") {
-		t.Errorf("title = %q — 첫 프롬프트에서 파생된 제목이어야 한다", row.Title)
+	// 제목은 벤더가 준 것만 담는다. 이 픽스처는 OTel 이벤트만 있고 벤더 제목 경로
+	// (트랜스크립트·App Server)를 타지 않으므로 비어 있는 것이 맞다 (PROJ-124).
+	if row.Title != "" {
+		t.Errorf("title = %q — 벤더 제목이 없으면 비어 있어야 한다", row.Title)
 	}
 	if row.ProjectName != filepath.Base(fixturePath) {
 		t.Errorf("project_name = %q, want %q", row.ProjectName, filepath.Base(fixturePath))

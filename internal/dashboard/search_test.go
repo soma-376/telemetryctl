@@ -19,17 +19,11 @@ func seedSearch(f *fixture) {
 	f.write(store.Batch{
 		Sessions: []session.Session{
 			// 제목에만 있다
-			newSession("s-title", testNow.Add(-3*time.Hour), func(s *session.Session) {
-				s.Title = "Collector 전달 프록시 구현"
-			}),
+			newSession("s-title", testNow.Add(-3*time.Hour), title("Collector 전달 프록시 구현")),
 			// 파일 경로에만 있다
-			newSession("s-file", testNow.Add(-2*time.Hour), func(s *session.Session) {
-				s.Title = "관련 없는 제목"
-			}),
+			newSession("s-file", testNow.Add(-2*time.Hour), title("관련 없는 제목")),
 			// 원문에만 있다
-			newSession("s-content", at, func(s *session.Session) {
-				s.Title = "다른 작업"
-			}),
+			newSession("s-content", at, title("다른 작업")),
 		},
 		Events: []store.EventRecord{
 			toolRecord("s-file", "t-file", "call-file", testNow.Add(-2*time.Hour), 1, toolSpec{
@@ -93,7 +87,7 @@ func TestSearchMergesSourcesPerSession(t *testing.T) {
 	at := testNow.Add(-time.Hour)
 	f.write(store.Batch{
 		Sessions: []session.Session{
-			newSession("s-all", at, func(s *session.Session) { s.Title = "프록시 구현" }),
+			newSession("s-all", at, title("프록시 구현")),
 		},
 		Events: []store.EventRecord{
 			promptRecord("s-all", "t-all", at, 1, "프록시 코드를 고쳐줘"),
@@ -128,12 +122,10 @@ func TestSearchMergesSourcesPerSession(t *testing.T) {
 func TestSearchCoversWorkspacePath(t *testing.T) {
 	f := newFixture(t)
 	f.write(store.Batch{Sessions: []session.Session{
-		newSession("s-ws-a", testNow.Add(-2*time.Hour), func(s *session.Session) {
-			s.Title = "제목에는 없는 낱말"
+		newSession("s-ws-a", testNow.Add(-2*time.Hour), title("제목에는 없는 낱말"), func(s *session.Session) {
 			s.WorkspacePath = workspaceB
 		}),
-		newSession("s-ws-b", testNow.Add(-time.Hour), func(s *session.Session) {
-			s.Title = "제목에는 없는 낱말"
+		newSession("s-ws-b", testNow.Add(-time.Hour), title("제목에는 없는 낱말"), func(s *session.Session) {
 			s.WorkspacePath = workspaceA
 		}),
 	}})
@@ -231,8 +223,8 @@ func TestSearchMatchesSubstring(t *testing.T) {
 func TestSearchEscapesLikeWildcards(t *testing.T) {
 	f := newFixture(t)
 	f.write(store.Batch{Sessions: []session.Session{
-		newSession("s-a", testNow.Add(-2*time.Hour), func(s *session.Session) { s.Title = "a_b 처리" }),
-		newSession("s-b", testNow.Add(-time.Hour), func(s *session.Session) { s.Title = "axb 처리" }),
+		newSession("s-a", testNow.Add(-2*time.Hour), title("a_b 처리")),
+		newSession("s-b", testNow.Add(-time.Hour), title("axb 처리")),
 	}})
 
 	hits, err := f.reader.Search(context.Background(), SearchQuery{Text: "a_b"})

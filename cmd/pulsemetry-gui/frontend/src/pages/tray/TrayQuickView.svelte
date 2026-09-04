@@ -118,6 +118,6 @@
       onRequestQuit={requestQuit}
     />
   {/if}
-
+  <h1 class="text-6xl">{visible}</h1>
   <QuitDialog open={quitOpen} onClose={() => (quitOpen = false)} />
 </div>

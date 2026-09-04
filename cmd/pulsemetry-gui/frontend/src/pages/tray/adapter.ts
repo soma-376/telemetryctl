@@ -200,9 +200,8 @@ function startedText(startedAt: number): string {
 
 // toSession 은 한 세션을 목록 한 줄로 옮긴다.
 //
-// 부제가 시각으로 시작한다. 제목만으로는 줄이 구분되지 않는 경우가 흔하기 때문이다 —
-// 같은 프롬프트를 반복 실행하면 제목이 같고, 원문도 파일도 못 잡은 세션은 벤더별 고정
-// 문구("claude_code 세션")를 받는다. 그러면 서로 다른 세션이 화면에서 똑같아 보인다.
+// 부제가 시각으로 시작한다. 제목만으로는 줄이 구분되지 않는 경우가 흔하기 때문이다.
+// 실제 제목이 아직 없으면 DB의 NULL이 빈 문자열로 오므로 화면에서 벤더명으로 폴백한다.
 function toSession(s: RecentSession): TraySession {
   const agentId = toAgentId(s.vendor);
   const parts: string[] = [];
@@ -216,8 +215,7 @@ function toSession(s: RecentSession): TraySession {
   return {
     id: String(s.id),
     agentId,
-    // 제목이 아직 붙지 않은 세션이 있다. 폴더 이름이라도 보여 주는 편이 빈 줄보다 낫다.
-    title: s.title || s.project_name || "제목 없음",
+    title: s.title.trim() || `${AGENT_NAMES[agentId]} 세션`,
     sub: parts.join(" · "),
     live: s.status === "running",
   };

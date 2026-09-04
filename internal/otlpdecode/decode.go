@@ -267,6 +267,9 @@ func (d *decoder) logRecord(base carrier, rec *logspb.LogRecord) {
 // emit 은 벤더·installation_id·sequence 를 채우고 검증을 통과한 이벤트만 결과에 넣는다.
 func (d *decoder) emit(ev event.Event, c *carrier) bool {
 	ev.Vendor = vendorOf(c.serviceName, ev.Name, d.opt.Vendor)
+	// Codex의 conversation.id가 App Server thread ID다. session.id는 다른 실행
+	// 범위의 식별자일 수 있으므로 둘 다 왔을 때 conversation.id를 우선한다.
+	ev.SessionID = c.sessionIDFor(ev.Vendor)
 	ev.InstallationID = d.opt.InstallationID
 	applyContentMeasures(&ev.Measure, c)
 	if err := ev.Validate(); err != nil {
