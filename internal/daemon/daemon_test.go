@@ -75,8 +75,9 @@ func TestEndToEndWalkthroughProducesScreenRows(t *testing.T) {
 	if vendor != "claude_code" {
 		t.Errorf("vendor_id = %q, want claude_code", vendor)
 	}
-	if !strings.Contains(title.String, "temporality") {
-		t.Errorf("title = %q, want 첫 프롬프트에서 파생된 제목", title.String)
+	// 제목은 벤더가 준 것만 담는다. OTel 만으로는 채워지지 않으므로 NULL 이 맞다 (PROJ-124).
+	if title.Valid {
+		t.Errorf("title = %q, want NULL — 벤더 제목 경로를 타지 않았다", title.String)
 	}
 	// ADR 0010 이 로컬 저장을 허용한 식별 정보다. 이것이 비면 작업 폴더 열기가 성립하지 않는다.
 	if workspace.String != fixturePath {

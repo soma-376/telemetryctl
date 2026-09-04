@@ -26,10 +26,6 @@ type state struct {
 	userAccountID string
 	terminalType  string
 
-	// 첫 프롬프트에서 뽑은 파생 문자열. 본문은 여기 남기지 않는다.
-	promptTitle   string
-	promptSummary string
-
 	activeSeconds       float64
 	costUSD             float64
 	inputTokens         int64
@@ -153,11 +149,6 @@ func (s *state) observe(e event.Event) {
 func (s *state) apply(in Input) {
 	e := in.Event
 
-	if in.Content.Kind == event.ContentPrompt && s.promptTitle == "" {
-		if t, sum := deriveFromPrompt(in.Content.Body); t != "" {
-			s.promptTitle, s.promptSummary = t, sum
-		}
-	}
 	// 응답 이벤트는 벤더마다 이름이 달라 이름으로 잡지 않는다. response_length 가
 	// 설정됐다는 것이 곧 응답이 있었다는 뜻이다. 안 보내는 벤더는 responses=0 이 된다.
 	if e.Signal == event.SignalLog {
@@ -379,11 +370,13 @@ func (s *state) applyMCP(e event.Event) {
 	}
 }
 
-// session 은 현재 상태를 출력 타입으로 옮긴다. 제목은 여기서 파생한다 — 파일 목록이
-// 늘어날 때마다 다시 만들 필요 없이 조회 시점의 상태로 한 번만 계산된다.
+// session 은 현재 상태를 출력 타입으로 옮긴다.
+//
+// 제목은 여기서 만들지 않는다. 우리가 유도한 제목(첫 프롬프트·파일 목록·벤더 상수)은
+// 전부 걷어냈고, sessions.title 은 벤더가 준 제목만 담는다 — 없으면 NULL 이고 무엇을
+// 대신 그릴지는 표시 계층이 정한다 (PROJ-124).
 func (s *state) session() Session {
 	files := s.fileRows()
-	title, source, summary := s.title(files)
 
 	end := s.last
 	if v, ok := s.ended.Get(); ok {
@@ -398,9 +391,6 @@ func (s *state) session() Session {
 		EndedAt:     s.ended,
 		Status:      s.status,
 
-		Title:       title,
-		TitleSource: source,
-		Summary:     summary,
 		ProjectHash: s.projectHash,
 		ProjectName: s.projectName,
 
@@ -485,15 +475,4 @@ func (s *state) mcpRows() []MCPUsage {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ServerName < out[j].ServerName })
 	return out
-}
-
-// title 은 계획서의 3단계 폴백을 그대로 따른다.
-func (s *state) title(files []File) (string, TitleSource, string) {
-	if s.promptTitle != "" {
-		return s.promptTitle, TitleFromPrompt, s.promptSummary
-	}
-	if t := filesTitle(files); t != "" {
-		return t, TitleFromFiles, ""
-	}
-	return fallbackTitle(s.vendor), TitleFromFallback, ""
 }
