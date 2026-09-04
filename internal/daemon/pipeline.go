@@ -15,6 +15,7 @@ import (
 	"github.com/your-org/pulsemetry/internal/receiver"
 	"github.com/your-org/pulsemetry/internal/session"
 	"github.com/your-org/pulsemetry/internal/store"
+	"github.com/your-org/pulsemetry/internal/vendor"
 )
 
 // pipeline 은 이 단계의 **직렬화 지점**이다.
@@ -41,6 +42,10 @@ type pipeline struct {
 	fwd *forward.Forwarder
 	log *log.Logger
 	now func() time.Time
+	// 제목 보강기는 벤더마다 출처가 달라 따로 둔다 — Codex 는 App Server 스레드 이름,
+	// Claude Code 는 로컬 트랜스크립트다 (ADR 0017·0018).
+	titles       sessionTitleRefresher
+	claudeTitles sessionTitleRefresher
 
 	// batchEvents 는 크기 기준 flush 임계값이다.
 	batchEvents int
@@ -182,6 +187,8 @@ func newPipeline(cfg pipelineConfig) *pipeline {
 		fwd:          cfg.Forwarder,
 		log:          cfg.Logger,
 		now:          cfg.Now,
+		titles:       cfg.Titles,
+		claudeTitles: cfg.ClaudeTitles,
 		batchEvents:  cfg.BatchEvents,
 		writeTimeout: cfg.WriteTimeout,
 		pruneTimeout: cfg.PruneTimeout,
@@ -205,8 +212,14 @@ type pipelineConfig struct {
 	WriteTimeout time.Duration
 	PruneTimeout time.Duration
 	SessionTTL   time.Duration
+	Titles       sessionTitleRefresher
+	ClaudeTitles sessionTitleRefresher
 	// DedupCapacity 는 배선 단계 중복 제거 창의 크기다. 0 이면 기본값.
 	DedupCapacity int
+}
+
+type sessionTitleRefresher interface {
+	Enqueue(string, bool)
 }
 
 // Consume 은 receiver.Sink 구현이다. 수신기 워커(2개)가 동시에 부른다.
@@ -374,7 +387,7 @@ func (p *pipeline) ingest(b receiver.Batch) {
 // contentPriority 는 한 이벤트에 여러 원문이 붙었을 때 조립기에 넘길 한 건의 우선순위다.
 //
 // session.Input.Content 는 한 건뿐인데 tool_result 로그는 tool_input 과 tool_result 를
-// 함께 싣는다. 조립기가 원문을 쓰는 곳은 제목·요약 휴리스틱(첫 사용자 프롬프트)뿐이므로
+// 함께 싣는다. 조립기가 원문을 쓰는 곳은 제목 휴리스틱(첫 사용자 프롬프트)뿐이므로
 // prompt 를 최우선으로 둔다. 여기서 고르지 않은 원문도 store.EventRecord.Contents 에는
 // 전부 실려 event_content 에 저장되므로 잃는 것은 없다.
 var contentPriority = []event.ContentKind{
@@ -479,6 +492,24 @@ func (p *pipeline) flush(sessions []session.Session) {
 	p.pending = nil
 	p.dirty = false
 	p.recordFlushTime()
+	// 벤더 판정은 vendor 패키지가 단일 출처다. 저장된 vendor_id 가 정규화 전 이름
+	// (codex_exec·claude_code_desktop 등)일 수 있어 여기서 다시 옮긴다.
+	for _, s := range sessions {
+		id, ok := vendor.Normalize(s.Vendor)
+		if !ok {
+			continue
+		}
+		switch id {
+		case vendor.Codex:
+			if p.titles != nil {
+				p.titles.Enqueue(s.SessionID, s.EndedAt.Valid())
+			}
+		case vendor.ClaudeCode:
+			if p.claudeTitles != nil {
+				p.claudeTitles.Enqueue(s.SessionID, s.EndedAt.Valid())
+			}
+		}
+	}
 }
 
 // recordFlushTime 은 meta.last_rollup_at 을 갱신한다.

@@ -76,6 +76,29 @@ func (f *fixture) write(b store.Batch) {
 	if _, err := f.db.Write(context.Background(), b); err != nil {
 		f.t.Fatalf("store.Write: %v", err)
 	}
+	flushTitles(f.t, f.db)
+}
+
+// pendingTitles 는 title() 이 예약한 벤더 제목이다.
+//
+// 조립기는 제목을 만들지 않으므로 스냅샷으로는 제목을 넣을 수 없다 (PROJ-124).
+// 실제 경로와 같게 쓰기 뒤에 UPDATE 로 넣는다.
+var pendingTitles = map[string]string{}
+
+// title 은 세션에 벤더 제목을 예약하는 mod 다.
+func title(v string) func(*session.Session) {
+	return func(s *session.Session) { pendingTitles[s.SessionID] = v }
+}
+
+func flushTitles(t *testing.T, db *store.DB) {
+	t.Helper()
+	for key, v := range pendingTitles {
+		if _, err := db.SQL().ExecContext(context.Background(),
+			`UPDATE sessions SET title = ? WHERE session_key = ?`, v, key); err != nil {
+			t.Fatalf("제목 주입: %v", err)
+		}
+	}
+	pendingTitles = map[string]string{}
 }
 
 // sessionID 는 (vendor, session_key) 의 대리 키다.
@@ -105,7 +128,6 @@ func newSession(key string, started time.Time, mods ...func(*session.Session)) s
 		LastEventAt:   sec + 600,
 		EndedAt:       event.Some(sec + 600),
 		Status:        session.StatusCompleted,
-		Title:         "인증 토큰 검증 프록시",
 		WorkspacePath: workspaceA,
 		ActiveSeconds: 120,
 	}

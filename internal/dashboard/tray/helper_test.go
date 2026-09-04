@@ -94,7 +94,6 @@ func newSession(key string, started time.Time, mods ...func(*session.Session)) s
 		LastEventAt:   sec + 600,
 		EndedAt:       event.Some(sec + 600),
 		Status:        session.StatusCompleted,
-		Title:         "인증 토큰 검증 프록시",
 		WorkspacePath: workspaceA,
 		ActiveSeconds: 120,
 	}

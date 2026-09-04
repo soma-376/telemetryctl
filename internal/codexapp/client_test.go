@@ -32,6 +32,32 @@ func TestClient초기화하고프로세스를재사용한다(t *testing.T) {
 	}
 }
 
+func TestClient는턴없이스레드제목만읽는다(t *testing.T) {
+	client := New(Options{Command: helperCommand("normal")})
+	t.Cleanup(func() { _ = client.Close() })
+
+	got, err := client.ThreadName(context.Background(), "thread-1")
+	if err != nil {
+		t.Fatalf("스레드 제목 조회: %v", err)
+	}
+	if got != "벤더가 정한 제목" {
+		t.Fatalf("스레드 제목 = %q", got)
+	}
+}
+
+func TestClient는제목이없으면빈문자열을준다(t *testing.T) {
+	client := New(Options{Command: helperCommand("no-user")})
+	t.Cleanup(func() { _ = client.Close() })
+
+	got, err := client.ThreadName(context.Background(), "thread-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Fatalf("스레드 제목 = %q", got)
+	}
+}
+
 func TestClient는컨텍스트취소를따른다(t *testing.T) {
 	client := New(Options{Command: helperCommand("hang")})
 	t.Cleanup(func() { _ = client.Close() })
@@ -78,7 +104,7 @@ func TestCodexAppHelperProcess(t *testing.T) {
 		return
 	}
 	mode := os.Args[len(os.Args)-1]
-	if mode != "normal" && mode != "hang" && mode != "malformed" {
+	if mode != "normal" && mode != "hang" && mode != "malformed" && mode != "no-user" {
 		return
 	}
 	s := bufio.NewScanner(os.Stdin)
@@ -87,6 +113,9 @@ func TestCodexAppHelperProcess(t *testing.T) {
 		var req struct {
 			ID     *int64 `json:"id"`
 			Method string `json:"method"`
+			Params struct {
+				IncludeTurns bool `json:"includeTurns"`
+			} `json:"params"`
 		}
 		_ = json.Unmarshal(s.Bytes(), &req)
 		if req.ID == nil {
@@ -107,6 +136,16 @@ func TestCodexAppHelperProcess(t *testing.T) {
 			}
 			requests++
 			fmt.Printf("{\"id\":%d,\"result\":{\"rateLimits\":{\"planType\":\"plus\",\"primary\":{\"usedPercent\":%d,\"windowDurationMins\":300,\"resetsAt\":2000000000}}}}\n", *req.ID, requests*10)
+		case "thread/read":
+			if req.Params.IncludeTurns {
+				fmt.Printf("{\"id\":%d,\"error\":{\"message\":\"turns must not be requested\"}}\n", *req.ID)
+				continue
+			}
+			if mode == "no-user" {
+				fmt.Printf("{\"id\":%d,\"result\":{\"thread\":{\"id\":\"thread-1\"}}}\n", *req.ID)
+				continue
+			}
+			fmt.Printf("{\"id\":%d,\"result\":{\"thread\":{\"id\":\"thread-1\",\"name\":\" 벤더가 정한 제목 \"}}}\n", *req.ID)
 		}
 	}
 	os.Exit(0)

@@ -410,7 +410,7 @@ NULL 일 수 있어서 한쪽만 COALESCE 하면 그런 세션이 첫 페이지�
 | `sessions_started`·`active_seconds` | `sessions` | `started_at` |
 
 **v3 에 출처가 없어 항상 0 인 필드**: `Totals` 의 `api_errors`·`retries`·`commits`·
-`pull_requests`, `SessionRow` 의 같은 셋과 `responses`·`title_source`·`summary`.
+`pull_requests`, `SessionRow` 의 같은 셋과 `responses`.
 지우지 않는 이유는 ADR 0009 가 `abandoned`·`handoff` 를 남긴 것과 같다 — 지우면 GUI TypeScript
 바인딩과 `stats --json`·`sessions --json` 출력이 깨진다.
 
@@ -1331,7 +1331,7 @@ ls ~/.config/systemd/user 2>/dev/null | grep -i pulsemetry || echo "OK: 등록�
 | 한계 | 내용·완화 |
 |---|---|
 | **파일별 라인 배분이 근사** | `claude_code.lines_of_code.count` 메트릭에는 파일명이 없다. `tool_result` 의 `tool_input` 에서 파일을 얻고 같은 시각의 증분을 귀속시키므로, 한 응답에서 여러 파일을 고치면 배분이 근사가 된다. **세션 합계(`sessions.lines_added`)는 메트릭에서 직접 받아 정확하고 파일별 배분만 근사다.** v3 의 `file_changes.additions`·`deletions` 는 이 근사를 저장하지 않고 `NULL` 로 둔다 — 스키마 문서가 "미관측은 `NULL`" 이라고 못 박았고, 근사값을 관측값처럼 담는 것보다 없는 편이 낫다. 조립기 안의 배분(`lineLedger`)은 세션 합계 검증용으로 남아 있고 `Σ배분 ≤ total` 불변식을 지킨다 |
-| **제목 품질** | `prompt_head`(첫 프롬프트 첫 문장 60자) → `files` → `fallback` 3단계 휴리스틱이다. 화면 예시(`인증 토큰 검증 및 Collector 전달 프록시 구현`) 수준은 나오지 않는다. `title_source` 컬럼이 출처를 남기므로 후속 교체가 스키마 변경 없이 가능하고, `SessionRow.TitleSource` 로 화면이 출처를 표시할 수 있다 |
+| **제목 품질** | `sessions.title`은 **벤더가 만든 제목만** 담는다(ADR 0018). Codex는 App Server의 `thread.name`(ADR 0017), Claude Code는 트랜스크립트의 `ai-title`이다. 조립기는 제목을 만들지 않으므로 그 경로가 없는 벤더는 NULL 이고, 화면이 `title → project_name → 벤더명` 순으로 폴백한다 |
 | **`abandoned` 오판 가능** | "마지막 툴 이벤트가 실패이고 이후 성공 없음" 이라는 휴리스틱이다. **화면 필터로만 쓰고 지표로 쓰지 않는다.** 판정 근거는 세션 마감 로그(`s.Diag.StatusReason`)에 남는다 |
 | **데몬 미실행 중 유실** | 위 첫 문단. PROJ-55 의 자동 실행 등록이 대부분을 막지만, 등록할 수 없는 환경과 영구 실패는 남는다 |
 | **Windows 는 자동 실행 등록이 없다** | `autostart` 명령이 `ErrUnsupportedPlatform` 으로 알리고 `telemetryctl daemon` 직접 실행을 안내한다. 작업 스케줄러 등록은 PROJ-56 이다. **경고가 아니라 정보로 출력한다** — 실패한 것이 없기 때문이다 |
