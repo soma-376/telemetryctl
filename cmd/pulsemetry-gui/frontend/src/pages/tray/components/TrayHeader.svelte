@@ -15,6 +15,7 @@
     trayState,
     syncing = false,
     fetching = false,
+    disconnected = false,
     onRefresh,
   }: {
     /** 스냅샷을 마지막으로 받은 시각(ms, TanStack 의 dataUpdatedAt). 0 이면 아직 못 받았다. */
@@ -24,6 +25,8 @@
     syncing?: boolean;
     /** 폴링을 포함해 조회가 나가 있다. */
     fetching?: boolean;
+    /** 데몬에 닿지 못하는 상태다. 본문은 이미 대체됐고 헤더도 그 사실을 말한다. */
+    disconnected?: boolean;
     onRefresh?: () => Promise<void> | void;
   } = $props();
 
@@ -71,6 +74,11 @@
   // 상태 줄. 아직 첫 조회가 끝나지 않았으면(undefined) 초록 점을 켜지 않는다 —
   // 확인하지 않은 것을 "모니터링 중" 이라고 말하면 안 된다.
   const status = $derived.by(() => {
+    // 데몬에 못 닿으면 수집 상태를 말할 수 없다. 마지막으로 알던 값을 그대로 두면
+    // "모니터링 중" 이라고 거짓말하게 된다.
+    if (disconnected) {
+      return { text: "연결 끊김", color: "var(--color-warning)" };
+    }
     switch (trayState) {
       case TrayState.StateMonitoring:
         return { text: "모니터링 중", color: "var(--color-success)" };
@@ -100,10 +108,14 @@
     <Dot size={6} color={status.color} />
     <span class="truncate">{status.text}</span>
   </span>
+  <!-- 끊겼으면 시각을 비운다. 마지막으로 받은 시각을 그대로 두면 방금 조회한 것처럼
+       보이는데, 실제로는 그때 이후로 아무것도 못 받고 있다. -->
   <span class="flex-none whitespace-nowrap" style="font-size:12px;color:#b3aba0"
-    >{busy ? "조회 중" : synced}</span
+    >{disconnected ? "" : busy ? "조회 중" : synced}</span
   >
 
+  <!-- 닿지 못하는 동안 새로고침은 의미가 없다. 재시도는 본문의 재연결이 맡는다. -->
+  {#if !disconnected}
   <button
     type="button"
     disabled={busy}
@@ -124,6 +136,8 @@
         : 'none'};transform-origin:50% 50%"
     />
   </button>
+  {/if}
+
   <button
     type="button"
     title="퀵뷰 닫기"
