@@ -19,6 +19,12 @@ func (a *App) bind(app *application.App, main, quick *application.WebviewWindow)
 
 func (a *App) GetAppInfo() AppInfo { return AppInfo{Name: "Pulsemetry", Version: "development"} }
 
+// IsTrayVisible 은 WebView가 다시 만들어졌을 때도 네이티브 퀵뷰의 현재 상태를 복구하게 한다.
+// tray:shown/tray:hidden은 상태 변경 알림일 뿐이므로 마운트 시점의 상태 원본이 될 수 없다.
+func (a *App) IsTrayVisible() bool {
+	return a.quick != nil && a.quick.IsVisible()
+}
+
 // OpenMainWindow 는 퀵뷰를 닫고 메인 창을 앞으로 가져온다 (퀵뷰 "Pulsemetry 열기").
 func (a *App) OpenMainWindow() {
 	if a.quick != nil {

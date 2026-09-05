@@ -5,6 +5,7 @@ import {
 } from "@tanstack/svelte-query";
 import { Dashboard, type TrayQuery, type TraySnapshot } from "$lib/bindings";
 import { TRAY_STALE_MS } from "./client";
+import { noteFailure, noteSuccess } from "$lib/domain/reconnect.svelte";
 
 // 트레이 스냅샷의 조회·갱신을 한곳에 모은다 (ADR 0015).
 //
@@ -41,12 +42,20 @@ export function trayRefreshMutation(q: TrayQuery) {
 // 받은 스냅샷을 조회 캐시로 밀어 넣는 것은 같다 — 그래야 갱신 결과가 곧 화면이 된다.
 //
 // 실패해도 캐시를 건드리지 않는다. 데몬이 꺼졌다고 과거 화면까지 지울 이유가 없다.
+//
+// 성공·실패를 연결 상태에도 알린다. **갱신은 조회보다 훨씬 자주 온다** — 창을 열 때마다
+// 나가므로, 이것을 세지 않으면 데몬이 꺼진 것을 폴링 주기(60초)만큼 늦게 안다. 시도 한 번에
+// 정확히 한 번씩 불리므로 중복 집계도 없다.
 function trayCommand(run: () => Promise<TraySnapshot>) {
   const client = useQueryClient();
   return createMutation(() => ({
     mutationFn: run,
     onSuccess(snapshot: TraySnapshot) {
       client.setQueryData(TRAY_KEY, snapshot);
+      noteSuccess();
+    },
+    onError() {
+      noteFailure();
     },
   }));
 }

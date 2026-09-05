@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Events } from "@wailsio/runtime";
+  import { onMount } from "svelte";
   import RecentSessions from "./components/RecentSessions.svelte";
   import TrayFooter from "./components/TrayFooter.svelte";
   import TrayHeader from "./components/TrayHeader.svelte";
@@ -7,6 +8,7 @@
   import VendorLimits from "./components/VendorLimits.svelte";
   import QuitDialog from "$lib/components/dialog/QuitDialog.svelte";
   import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import DaemonDown from "$lib/components/DaemonDown.svelte";
   import { TrayState, type TrayQuery } from "$lib/bindings";
   import { localTimeZone } from "$lib/utils/timezone";
   import {
@@ -14,7 +16,14 @@
     trayRefreshMutation,
     traySyncMutation,
   } from "$lib/query/tray";
+  import {
+    bindRetry,
+    noteFailure,
+    noteSuccess,
+    reconnect,
+  } from "$lib/domain/reconnect.svelte";
   import { toTrayView } from "./adapter";
+  import { isTrayVisible } from "$lib/ipc/app";
 
   let settingsOpen = $state(false);
   let quitOpen = $state(false);
@@ -36,21 +45,56 @@
   const sync = traySyncMutation(QUERY);
   const refresh = trayRefreshMutation(QUERY);
 
+  let visibilitySync = 0;
+  async function syncVisibility() {
+    const currentSync = ++visibilitySync;
+    const current = await isTrayVisible();
+    // 마운트 조회와 show/hide 조회가 겹쳐도 늦게 끝난 과거 응답이 최신 상태를 덮지 않는다.
+    if (currentSync === visibilitySync) visible = current;
+  }
+
+  // show/hide 이벤트는 상태 전이만 알려준다. 절전 복귀로 WebView가 다시 만들어질 때
+  // 네이티브 창은 계속 보이는 상태라 새 show 이벤트가 없으므로 현재 상태를 직접 복구한다.
+  onMount(() => {
+    void syncVisibility();
+  });
+
   $effect(() => {
     const offShow = Events.On("tray:shown", () => {
-      visible = true;
+      void syncVisibility();
       // 창이 열린 순간은 갱신을 건다. 폴링은 읽기만 한다 — 폴링까지 갱신으로 두면 창을
       // 열어둔 채 두는 것만으로 벤더 호출이 계속 나간다 (ADR 0014).
       sync.mutate();
     });
     const offHide = Events.On("tray:hidden", () => {
-      visible = false;
+      void syncVisibility();
     });
     return () => {
+      visibilitySync++;
       visible = false;
       offShow();
       offHide();
     };
+  });
+
+  // 조회의 성공·실패를 연결 상태에 알린다.
+  //
+  // 이벤트 시각(dataUpdatedAt·errorUpdatedAt)으로 판정하는 이유는 **한 사건을 한 번만**
+  // 세기 위해서다. isError 같은 불리언을 보면 다른 이유로 이 효과가 다시 돌 때마다 실패가
+  // 중복 집계되어 끊김 판정이 실제보다 빨라진다.
+  let seenErrorAt = 0;
+  let seenDataAt = 0;
+  $effect(() => {
+    // 재시도는 조회를 다시 부르는 것이다. 데몬을 띄우는 경로는 GUI 에 없다.
+    bindRetry(() => tray.refetch());
+    if (tray.errorUpdatedAt > seenErrorAt) {
+      seenErrorAt = tray.errorUpdatedAt;
+      noteFailure();
+    }
+    if (tray.dataUpdatedAt > seenDataAt) {
+      seenDataAt = tray.dataUpdatedAt;
+      noteSuccess();
+    }
   });
 
   // 창 열기가 벤더 조회까지 갈 수 있어(ADR 0014) 수십 초가 걸릴 수 있다. 그동안 헤더가 낡은
@@ -77,6 +121,7 @@
     trayState={shown?.monitoring.state}
     {syncing}
     {fetching}
+    disconnected={reconnect.down}
     onRefresh={async () => {
       // 헤더가 이 약속을 기다려 스피너 최소 표시 시간을 맞춘다. 스냅샷은 캐시로 들어가므로
       // (query/tray.ts) 여기서 받을 것이 없다.
@@ -85,7 +130,11 @@
   />
 
   <main class="tray-scroll min-h-0 flex-1 overflow-y-auto">
-    {#if tray.isPending}
+    <!-- 끊김을 가장 먼저 본다. 캐시에 마지막 스냅샷이 남아 있어(ADR 0015) 아래 갈래는
+         "데이터가 있다" 로 보이지만, 그것은 지금의 사실이 아니다. -->
+    {#if reconnect.down}
+      <DaemonDown />
+    {:else if tray.isPending}
       <!-- 첫 조회. 로컬 SQLite 조회라 보통 한 프레임 안에 끝나므로 스켈레톤을 두지 않는다.
            깜빡임을 만드는 쪽이 기다림보다 눈에 띈다. -->
     {:else if !shown}
