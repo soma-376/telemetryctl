@@ -222,3 +222,154 @@ func TestContentDisabledKeepsSessionAndUsageQueries(t *testing.T) {
 		t.Fatalf("tool_calls = %d행, want 1", n)
 	}
 }
+
+// ── 유휴 스윕 (PROJ-67) ─────────────────────────────────────────────────────
+
+// 스윕의 존재 이유다. 조립기 메모리에 없는 세션 — 데몬 재시작 전에 돌던 세션 — 도
+// 마감되어야 한다. 여기서는 조립기를 아예 거치지 않고 DB 에 직접 만든 행으로 그 상황을
+// 재현한다.
+func TestCloseIdleSessionsClosesSessionsAssemblerNeverSaw(t *testing.T) {
+	db := openTestDB(t)
+	sec := event.SecFromTime(baseTime)
+	mustWrite(t, db, Batch{Events: []EventRecord{
+		evrec("claude_code.api_request", baseTime, 1, sess("sess-1")),
+	}})
+
+	n, err := db.CloseIdleSessions(context.Background(), sec+600)
+	if err != nil {
+		t.Fatalf("CloseIdleSessions: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("마감한 세션 = %d개, want 1", n)
+	}
+	// 마감 시각은 감지 시각(컷오프)이 아니라 마지막 활동이다. 컷오프를 쓰면 모든 세션의
+	// 소요 시간에 유휴 임계값이 유령처럼 붙는다.
+	if got := scanOne(t, db, `SELECT ended_at FROM sessions`); got != int64(sec) {
+		t.Fatalf("ended_at = %v, want %d", got, int64(sec))
+	}
+}
+
+// 컷오프 경계와 이미 마감된 세션·근거 없는 세션의 처리를 한자리에서 고정한다.
+func TestCloseIdleSessionsScope(t *testing.T) {
+	sec := int64(event.SecFromTime(baseTime))
+
+	tests := []struct {
+		name    string
+		setup   func(t *testing.T, db *DB)
+		cutoff  event.UnixSec
+		wantN   int
+		wantEnd any
+	}{
+		{
+			// 컷오프와 같은 시각은 아직 유휴가 아니다. 부등호가 < 라 경계가 열려 있다.
+			name: "활동이 컷오프와 같으면 마감하지 않는다",
+			setup: func(t *testing.T, db *DB) {
+				mustWrite(t, db, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}})
+			},
+			cutoff:  event.UnixSec(sec),
+			wantN:   0,
+			wantEnd: nil,
+		},
+		{
+			// 마감 뒤 낙오 이벤트가 활동 시각을 미는 것은 정상 경로다. 그때마다 마감 시각이
+			// 뒤로 끌려가면 안 되므로 이미 마감된 세션은 아예 후보가 아니어야 한다.
+			name: "이미 마감된 세션은 다시 건드리지 않는다",
+			setup: func(t *testing.T, db *DB) {
+				closed := newSession("sess-1", baseTime)
+				closed.EndedAt = someSec(closed.StartedAt + 60)
+				mustWrite(t, db, Batch{Sessions: []session.Session{closed}})
+				mustWrite(t, db, Batch{Events: []EventRecord{
+					evrec("claude_code.api_request", baseTime.Add(11*time.Minute), 1, sess("sess-1")),
+				}})
+			},
+			cutoff:  event.UnixSec(sec + 86400),
+			wantN:   0,
+			wantEnd: sec + 60,
+		},
+		{
+			// 판정할 근거가 없는 행은 손대지 않는다. 근거 없이 마감하면 되살릴 방법이 없다.
+			name: "last_activity_at 이 NULL 이면 마감하지 않는다",
+			setup: func(t *testing.T, db *DB) {
+				mustWrite(t, db, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}})
+				mustExecTest(t, db, `UPDATE sessions SET last_activity_at = NULL`)
+			},
+			cutoff:  event.UnixSec(sec + 86400),
+			wantN:   0,
+			wantEnd: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := openTestDB(t)
+			tt.setup(t, db)
+
+			n, err := db.CloseIdleSessions(context.Background(), tt.cutoff)
+			if err != nil {
+				t.Fatalf("CloseIdleSessions: %v", err)
+			}
+			if n != tt.wantN {
+				t.Fatalf("마감한 세션 = %d개, want %d", n, tt.wantN)
+			}
+			if got := scanOne(t, db, `SELECT ended_at FROM sessions`); got != tt.wantEnd {
+				t.Fatalf("ended_at = %v, want %v", got, tt.wantEnd)
+			}
+		})
+	}
+}
+
+// 스윕이 조립기보다 공격적으로 닫으면 매 틱 왕복이 난다 — 스윕이 닫고, 다음 스냅샷이
+// (조립기는 여전히 running 이라 믿으므로) 도로 열고, 다시 스윕이 닫는다. 컷오프가 조립기
+// 임계값보다 느슨하기만 하면 스윕이 닫는 것은 조립기가 이미 닫았을 것들뿐이라 충돌이 없다.
+func TestCloseIdleSessionsDoesNotFightAssembler(t *testing.T) {
+	const idle = 10 * time.Minute
+	db := openTestDB(t)
+	asm := session.New(session.WithIdleThreshold(idle))
+	asm.Add(session.Input{Event: newEvent("claude_code.api_request", baseTime, 1)})
+
+	// 조립기가 아직 살아 있다고 보는 시점. 스윕 컷오프는 그보다 느슨해야 한다.
+	now := event.SecFromTime(baseTime.Add(idle - time.Minute))
+	asm.Advance(now)
+	mustWrite(t, db, Batch{Sessions: asm.Snapshot()})
+
+	cutoff := now - event.UnixSec(idle/time.Second)
+	n, err := db.CloseIdleSessions(context.Background(), cutoff)
+	if err != nil {
+		t.Fatalf("CloseIdleSessions: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("조립기가 진행 중이라 보는 세션을 스윕이 %d개 마감했다 — 다음 스냅샷이 도로 연다", n)
+	}
+}
+
+func TestApplyLifecycleStartsEndsAndReopensWithoutActivity(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	start := event.SecFromTime(baseTime)
+	if err := db.ApplyLifecycle(ctx, "codex", "thr-1", start, false); err != nil {
+		t.Fatal(err)
+	}
+	var started int64
+	var ended, activity any
+	if err := db.SQL().QueryRow(`SELECT started_at, ended_at, last_activity_at FROM sessions WHERE session_key='thr-1'`).Scan(&started, &ended, &activity); err != nil {
+		t.Fatal(err)
+	}
+	if started != int64(start) || ended != nil || activity != nil {
+		t.Fatalf("start = %d/%v/%v", started, ended, activity)
+	}
+	end := start + 60
+	if err := db.ApplyLifecycle(ctx, "codex", "thr-1", end, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := scanOne(t, db, `SELECT ended_at FROM sessions WHERE session_key='thr-1'`); got != int64(end) {
+		t.Fatalf("ended_at=%v", got)
+	}
+	if err := db.ApplyLifecycle(ctx, "codex", "thr-1", start+120, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := scanOne(t, db, `SELECT ended_at FROM sessions WHERE session_key='thr-1'`); got != nil {
+		t.Fatalf("resume ended_at=%v", got)
+	}
+	if got := scanOne(t, db, `SELECT started_at FROM sessions WHERE session_key='thr-1'`); got != int64(start) {
+		t.Fatalf("started_at=%v", got)
+	}
+}
