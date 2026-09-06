@@ -427,3 +427,72 @@ func TestEndHookLeavesLastActivity(t *testing.T) {
 		t.Fatalf("last_activity_at = %v, want %d", got, int64(at))
 	}
 }
+
+// 훅 마감은 데몬 재시작을 넘어야 한다. 조립기의 hookEnded 는 메모리에만 있어, 재시작 뒤
+// 마감 이전 시각의 낙오 배치가 오면 조립기가 그 세션을 처음 보는 진행 중 세션으로 만들고
+// 그 스냅샷이 훅이 기록한 종료 시각을 지웠다.
+func TestHookEndSurvivesRestartStraggler(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	at := event.SecFromTime(baseTime)
+
+	mustWrite(t, db, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}})
+	endedAt := at + 600
+	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-1", endedAt, true); err != nil {
+		t.Fatalf("ApplyLifecycle: %v", err)
+	}
+
+	// 재시작한 조립기가 낙오 이벤트로 만든 스냅샷 — 마감을 모르고 진행 중이라 말한다.
+	straggler := newSession("sess-1", baseTime)
+	straggler.LastEventAt = endedAt - 60
+	mustWrite(t, db, Batch{Sessions: []session.Session{straggler}})
+
+	if got := scanOne(t, db, `SELECT ended_at FROM sessions`); got != int64(endedAt) {
+		t.Fatalf("ended_at = %v, want %d — 낙오 배치가 훅 마감을 지웠다", got, int64(endedAt))
+	}
+}
+
+// 마감보다 뒤인 활동은 진짜 재개다. 훅 마감을 고집하면 도는 세션이 영원히 완료로 남는다.
+func TestHookEndYieldsToLaterActivity(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	at := event.SecFromTime(baseTime)
+
+	mustWrite(t, db, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}})
+	endedAt := at + 600
+	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-1", endedAt, true); err != nil {
+		t.Fatalf("ApplyLifecycle: %v", err)
+	}
+
+	revived := newSession("sess-1", baseTime)
+	revived.LastEventAt = endedAt + 60
+	revived.EndedAt = event.Opt[event.UnixSec]{}
+	mustWrite(t, db, Batch{Sessions: []session.Session{revived}})
+
+	if got := scanOne(t, db, `SELECT ended_at FROM sessions`); got != nil {
+		t.Fatalf("ended_at = %v, want nil — 마감 뒤 활동인데 되살아나지 않았다", got)
+	}
+	if got := scanOne(t, db, `SELECT hook_ended FROM sessions`); got != int64(0) {
+		t.Fatalf("hook_ended = %v, want 0 — 되살아난 세션이 훅 보호를 달고 있다", got)
+	}
+}
+
+// 시작 훅은 명시적 재개라 언제나 마감을 되돌린다.
+func TestStartHookClearsHookEnd(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	at := event.SecFromTime(baseTime)
+
+	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-1", at+600, true); err != nil {
+		t.Fatalf("ApplyLifecycle(end): %v", err)
+	}
+	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-1", at+900, false); err != nil {
+		t.Fatalf("ApplyLifecycle(start): %v", err)
+	}
+	if got := scanOne(t, db, `SELECT ended_at FROM sessions`); got != nil {
+		t.Fatalf("ended_at = %v, want nil", got)
+	}
+	if got := scanOne(t, db, `SELECT hook_ended FROM sessions`); got != int64(0) {
+		t.Fatalf("hook_ended = %v, want 0", got)
+	}
+}

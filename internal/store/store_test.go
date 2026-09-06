@@ -145,7 +145,7 @@ func TestSchemaV3Columns(t *testing.T) {
 		"sessions": {
 			"id", "vendor_id", "session_key", "title", "workspace_path", "user_email",
 			"user_account_id", "terminal_type", "started_at", "ended_at", "last_activity_at",
-			"active_time_sec",
+			"hook_ended", "active_time_sec",
 		},
 		"turns": {
 			"id", "session_id", "turn_key", "turn_index", "client_version", "started_at",

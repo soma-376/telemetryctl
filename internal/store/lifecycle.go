@@ -42,10 +42,14 @@ func (d *DB) CloseIdleSessions(ctx context.Context, idleBefore event.UnixSec) (i
 	return int(n), nil
 }
 
-const endLifecycleSQL = `INSERT INTO sessions (vendor_id, session_key, ended_at)
-VALUES (?,?,?)
+// endLifecycleSQL 은 hook_ended 를 세워 이 마감이 명시적 신호였음을 남긴다. 그 표시가
+// 없으면 데몬이 재시작한 뒤 낙오 OTel 배치가 마감을 지운다 — 조립기의 hookEnded 는
+// 메모리에만 있어 재시작을 넘지 못한다.
+const endLifecycleSQL = `INSERT INTO sessions (vendor_id, session_key, ended_at, hook_ended)
+VALUES (?,?,?,1)
 ON CONFLICT(vendor_id, session_key) DO UPDATE SET
-  ended_at = COALESCE(sessions.ended_at, excluded.ended_at)`
+  ended_at   = COALESCE(sessions.ended_at, excluded.ended_at),
+  hook_ended = 1`
 
 // startLifecycleSQL 은 last_activity_at 도 채운다. 종료 훅은 채우지 않는다 — 마감된
 // 세션은 스윕 대상이 아니고, 넣으면 마감보다 활동이 뒤인 행이 생긴다.
@@ -62,7 +66,8 @@ ON CONFLICT(vendor_id, session_key) DO UPDATE SET
                          COALESCE(excluded.started_at, sessions.started_at)),
   last_activity_at = MAX(COALESCE(sessions.last_activity_at, excluded.last_activity_at),
                          COALESCE(excluded.last_activity_at, sessions.last_activity_at)),
-  ended_at         = NULL`
+  ended_at         = NULL,
+  hook_ended       = 0`
 
 // ApplyLifecycle 는 명시적인 벤더 훅으로 세션을 열거나 닫는다.
 func (d *DB) ApplyLifecycle(ctx context.Context, vendor, sessionID string, at event.UnixSec, end bool) error {

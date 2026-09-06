@@ -166,7 +166,25 @@ ON CONFLICT(vendor_id, session_key) DO UPDATE SET
 // active_time_sec 는 반대로 단조 증가다. 데몬이 재시작하면 조립기는 그 세션의 활동 시간을
 // 0 부터 다시 세므로, 새 값을 그대로 쓰면 이미 기록된 시간이 줄어든다. 활동 시간은 세션
 // 안에서 줄어들 수 없는 값이라 MAX 로 지킨다.
-const upsertSessionSQL = sessionUpsertHead + `  ended_at         = excluded.ended_at,
+//
+// 예외가 하나 있다 — 명시적 훅 마감은 스냅샷을 이긴다 (hookClosedStands).
+
+// hookClosedStands 는 명시적 훅 마감이 스냅샷을 이겨야 하는 조건이다.
+//
+// state.observe 의 재개 규칙(`!hookEnded || ts > ended`)을 SQL 로 옮긴 것이다. 조립기는
+// 같은 판단을 메모리로 하지만 그 상태는 재시작을 넘지 못한다 — 데몬이 다시 뜬 뒤 마감
+// 이전 시각의 낙오 배치가 도착하면 조립기는 그 세션을 처음 보는 진행 중 세션으로 만들고,
+// 그 스냅샷이 훅이 기록한 정확한 종료 시각을 지운다.
+//
+// 마감보다 **뒤**인 활동은 통과시킨다. 그것은 세션이 실제로 되살아났다는 뜻이라 훅
+// 마감을 고집하면 도는 세션이 영원히 완료로 남는다.
+const hookClosedStands = `sessions.hook_ended = 1
+   AND sessions.ended_at IS NOT NULL
+   AND COALESCE(excluded.last_activity_at, 0) <= sessions.ended_at`
+
+const upsertSessionSQL = sessionUpsertHead + `  ended_at         = CASE WHEN ` + hookClosedStands + `
+                          THEN sessions.ended_at ELSE excluded.ended_at END,
+  hook_ended       = CASE WHEN ` + hookClosedStands + ` THEN 1 ELSE 0 END,
   active_time_sec  = MAX(COALESCE(excluded.active_time_sec, sessions.active_time_sec),
                          COALESCE(sessions.active_time_sec, excluded.active_time_sec))
 RETURNING id`
@@ -175,6 +193,7 @@ RETURNING id`
 // 모르므로 두 컬럼을 **건드리지 않는다**. 스냅샷 규칙을 여기에도 쓰면, 스냅샷 없이 이벤트만
 // 저장되는 틱마다 마감된 세션의 ended_at 이 NULL 로 지워진다.
 const seedSessionSQL = sessionUpsertHead + `  ended_at         = sessions.ended_at,
+  hook_ended       = sessions.hook_ended,
   active_time_sec  = sessions.active_time_sec
 RETURNING id`
 
