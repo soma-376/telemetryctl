@@ -484,3 +484,65 @@ func TestPruneKeepsMetaAndPromotedFields(t *testing.T) {
 		t.Errorf("tool_calls.error_type = %v", got)
 	}
 }
+
+// 화면(dashboard.lastActivityExpr)은 서브쿼리를 걷어내고 컬럼만 본다. 쓰기 경로가 만든
+// 행에 대해 두 식이 같은 답을 내는지 대조한다 — 어긋나면 화면의 "마지막 활동" 이 보존
+// 판정과 갈린다.
+func TestLastActivityColumnMatchesSubquery(t *testing.T) {
+	const withSubquery = `MAX(
+  COALESCE(sessions.ended_at, 0),
+  COALESCE(sessions.started_at, 0),
+  COALESCE((SELECT MAX(COALESCE(e.occurred_at, t.ended_at, t.started_at))
+              FROM turns t LEFT JOIN events e ON e.turn_id = t.id
+             WHERE t.session_id = sessions.id), 0))`
+	const withColumn = `MAX(
+  COALESCE(sessions.ended_at, 0),
+  COALESCE(sessions.started_at, 0),
+  COALESCE(sessions.last_activity_at, 0))`
+
+	db := openTestDB(t)
+	ctx := context.Background()
+	at := event.SecFromTime(baseTime)
+
+	// 이벤트가 달린 세션.
+	seedUsage(t, db, baseTime)
+	// 스냅샷만 있고 이벤트가 없는 세션.
+	mustWrite(t, db, Batch{Sessions: []session.Session{newSession("sess-snap", baseTime)}})
+	// 마감된 세션 + 그보다 늦은 낙오 이벤트.
+	closed := newSession("sess-closed", baseTime)
+	closed.EndedAt = someSec(closed.StartedAt + 60)
+	mustWrite(t, db, Batch{Sessions: []session.Session{closed}})
+	mustWrite(t, db, Batch{Events: []EventRecord{
+		evrec("claude_code.api_request", baseTime.Add(30*time.Minute), 1, sess("sess-closed")),
+	}})
+	// 훅으로만 열린 세션.
+	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-hook", at, false); err != nil {
+		t.Fatalf("ApplyLifecycle: %v", err)
+	}
+
+	rows, err := db.SQL().QueryContext(ctx,
+		`SELECT session_key, `+withSubquery+`, `+withColumn+` FROM sessions ORDER BY session_key`)
+	if err != nil {
+		t.Fatalf("대조 조회: %v", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	n := 0
+	for rows.Next() {
+		var key string
+		var sub, col int64
+		if err := rows.Scan(&key, &sub, &col); err != nil {
+			t.Fatalf("스캔: %v", err)
+		}
+		if sub != col {
+			t.Errorf("%s: 서브쿼리 = %d, 컬럼 = %d", key, sub, col)
+		}
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("행 순회: %v", err)
+	}
+	if n < 4 {
+		t.Fatalf("대조한 세션 = %d개, 픽스처가 안 들어갔다", n)
+	}
+}

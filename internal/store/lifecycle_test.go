@@ -332,7 +332,7 @@ func TestCloseIdleSessionsDoesNotFightAssembler(t *testing.T) {
 	}
 }
 
-func TestApplyLifecycleStartsEndsAndReopensWithoutActivity(t *testing.T) {
+func TestApplyLifecycleStartsEndsAndReopens(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	start := event.SecFromTime(baseTime)
@@ -344,7 +344,8 @@ func TestApplyLifecycleStartsEndsAndReopensWithoutActivity(t *testing.T) {
 	if err := db.SQL().QueryRow(`SELECT started_at, ended_at, last_activity_at FROM sessions WHERE session_key='thr-1'`).Scan(&started, &ended, &activity); err != nil {
 		t.Fatal(err)
 	}
-	if started != int64(start) || ended != nil || activity != nil {
+	// 시작 훅은 last_activity_at 을 바닥값으로 깐다 (startLifecycleSQL).
+	if started != int64(start) || ended != nil || activity != int64(start) {
 		t.Fatalf("start = %d/%v/%v", started, ended, activity)
 	}
 	end := start + 60
@@ -362,5 +363,67 @@ func TestApplyLifecycleStartsEndsAndReopensWithoutActivity(t *testing.T) {
 	}
 	if got := scanOne(t, db, `SELECT started_at FROM sessions WHERE session_key='thr-1'`); got != int64(start) {
 		t.Fatalf("started_at=%v", got)
+	}
+}
+
+// 훅으로 열리고 OTel 이벤트가 한 건도 없는 세션 — 프롬프트 없이 바로 닫은 경우 — 도
+// 스윕이 마감할 수 있어야 한다. last_activity_at 이 NULL 이면 스윕이 건너뛴다.
+func TestStartHookSeedsLastActivity(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	at := event.SecFromTime(baseTime)
+
+	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-hook", at, false); err != nil {
+		t.Fatalf("ApplyLifecycle: %v", err)
+	}
+	if got := scanOne(t, db, `SELECT last_activity_at FROM sessions`); got != int64(at) {
+		t.Fatalf("last_activity_at = %v, want %d", got, int64(at))
+	}
+
+	n, err := db.CloseIdleSessions(ctx, at+600)
+	if err != nil {
+		t.Fatalf("CloseIdleSessions: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("마감한 세션 = %d개, want 1 — 훅으로만 열린 세션이 영원히 running 이다", n)
+	}
+}
+
+// 재개 훅이 활동 시각을 밀지 않으면 ended_at 을 NULL 로 되돌리자마자 다음 스윕이 도로 닫는다.
+func TestResumeHookPushesLastActivityForward(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	at := event.SecFromTime(baseTime)
+
+	mustWrite(t, db, Batch{Sessions: []session.Session{newSession("sess-hook", baseTime)}})
+	resumed := at + 3600
+	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-hook", resumed, false); err != nil {
+		t.Fatalf("ApplyLifecycle: %v", err)
+	}
+
+	if got := scanOne(t, db, `SELECT last_activity_at FROM sessions`); got != int64(resumed) {
+		t.Fatalf("last_activity_at = %v, want %d", got, int64(resumed))
+	}
+	n, err := db.CloseIdleSessions(ctx, resumed-600)
+	if err != nil {
+		t.Fatalf("CloseIdleSessions: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("방금 재개한 세션을 스윕이 마감했다")
+	}
+}
+
+// 종료 훅은 활동 시각을 건드리지 않는다. 밀면 마감보다 활동이 뒤인 행이 생긴다.
+func TestEndHookLeavesLastActivity(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	at := event.SecFromTime(baseTime)
+
+	mustWrite(t, db, Batch{Sessions: []session.Session{newSession("sess-hook", baseTime)}})
+	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-hook", at+3600, true); err != nil {
+		t.Fatalf("ApplyLifecycle: %v", err)
+	}
+	if got := scanOne(t, db, `SELECT last_activity_at FROM sessions`); got != int64(at) {
+		t.Fatalf("last_activity_at = %v, want %d", got, int64(at))
 	}
 }

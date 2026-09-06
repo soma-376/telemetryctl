@@ -42,8 +42,29 @@ func (d *DB) CloseIdleSessions(ctx context.Context, idleBefore event.UnixSec) (i
 	return int(n), nil
 }
 
-// ApplyLifecycle 는 명시적인 벤더 훅으로 세션을 열거나 닫는다. 훅은 활동 신호가 아니므로
-// last_activity_at 은 건드리지 않는다.
+const endLifecycleSQL = `INSERT INTO sessions (vendor_id, session_key, ended_at)
+VALUES (?,?,?)
+ON CONFLICT(vendor_id, session_key) DO UPDATE SET
+  ended_at = COALESCE(sessions.ended_at, excluded.ended_at)`
+
+// startLifecycleSQL 은 last_activity_at 도 채운다. 종료 훅은 채우지 않는다 — 마감된
+// 세션은 스윕 대상이 아니고, 넣으면 마감보다 활동이 뒤인 행이 생긴다.
+//
+// 채워야 하는 이유가 둘이다. 훅으로 열리고 OTel 이벤트가 한 건도 없는 세션은 컬럼이
+// NULL 이라 유휴 스윕이 건너뛰어 영원히 running 으로 남는다. 그리고 재개(source=resume)
+// 때 옛 값을 그대로 두면 ended_at 을 NULL 로 되돌리자마자 다음 스윕이 도로 닫는다.
+//
+// MAX 라 훅이 활동 시각을 뒤로 되돌리지는 못한다.
+const startLifecycleSQL = `INSERT INTO sessions (vendor_id, session_key, started_at, ended_at, last_activity_at)
+VALUES (?,?,?,NULL,?)
+ON CONFLICT(vendor_id, session_key) DO UPDATE SET
+  started_at       = MIN(COALESCE(sessions.started_at, excluded.started_at),
+                         COALESCE(excluded.started_at, sessions.started_at)),
+  last_activity_at = MAX(COALESCE(sessions.last_activity_at, excluded.last_activity_at),
+                         COALESCE(excluded.last_activity_at, sessions.last_activity_at)),
+  ended_at         = NULL`
+
+// ApplyLifecycle 는 명시적인 벤더 훅으로 세션을 열거나 닫는다.
 func (d *DB) ApplyLifecycle(ctx context.Context, vendor, sessionID string, at event.UnixSec, end bool) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -54,15 +75,15 @@ func (d *DB) ApplyLifecycle(ctx context.Context, vendor, sessionID string, at ev
 ON CONFLICT(vendor) DO UPDATE SET first_seen=MIN(first_seen,excluded.first_seen), last_seen=MAX(last_seen,excluded.last_seen)`, vendor, int64(at), int64(at)); err != nil {
 		return fmt.Errorf("store: lifecycle vendor: %w", err)
 	}
-	var q string
+	q := startLifecycleSQL
 	if end {
-		q = `INSERT INTO sessions(vendor_id,session_key,ended_at) VALUES(?,?,?)
-ON CONFLICT(vendor_id,session_key) DO UPDATE SET ended_at=COALESCE(sessions.ended_at,excluded.ended_at)`
-	} else {
-		q = `INSERT INTO sessions(vendor_id,session_key,started_at,ended_at) VALUES(?,?,?,NULL)
-ON CONFLICT(vendor_id,session_key) DO UPDATE SET started_at=MIN(COALESCE(sessions.started_at,excluded.started_at),COALESCE(excluded.started_at,sessions.started_at)), ended_at=NULL`
+		q = endLifecycleSQL
 	}
-	if _, err := tx.ExecContext(ctx, q, vendor, sessionID, int64(at)); err != nil {
+	args := []any{vendor, sessionID, int64(at)}
+	if !end {
+		args = append(args, int64(at))
+	}
+	if _, err := tx.ExecContext(ctx, q, args...); err != nil {
 		return fmt.Errorf("store: lifecycle session: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

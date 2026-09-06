@@ -42,6 +42,13 @@ type writer struct {
 
 type sessionRef struct{ vendor, key string }
 
+func maxSec(a, b event.UnixSec) event.UnixSec {
+	if b > a {
+		return b
+	}
+	return a
+}
+
 type turnRef struct {
 	sessionID int64
 	key       string
@@ -212,6 +219,20 @@ func (s sessionSeed) args() []any {
 // 스냅샷이 먼저인 이유는 그것이 세션 생명주기의 정본이기 때문이다. 이벤트 씨앗이 먼저
 // 들어가면 같은 배치 안에서 UPDATE 가 한 번 더 돈다.
 func (w *writer) writeSessions(b Batch) error {
+	// 같은 배치의 이벤트가 스냅샷보다 늦을 수 있다. 아래 이벤트 루프는 스냅샷이 이미
+	// 처리한 세션을 건너뛰므로, 여기서 미리 접어 두지 않으면 그 시각이 유실된다.
+	eventSeen := map[sessionRef]event.UnixSec{}
+	for _, rec := range b.Events {
+		e := rec.Event
+		if e.SessionID == "" {
+			continue
+		}
+		ref := sessionRef{e.Vendor, e.SessionID}
+		if ts := e.TS.Sec(); ts > eventSeen[ref] {
+			eventSeen[ref] = ts
+		}
+	}
+
 	for _, s := range b.Sessions {
 		if s.SessionID == "" {
 			return errors.New("store: session_key 가 빈 세션")
@@ -233,7 +254,7 @@ func (w *writer) writeSessions(b Batch) error {
 			terminalType:   s.TerminalType,
 			startedAt:      nullSec(s.StartedAt),
 			endedAt:        optSec(s.EndedAt),
-			lastActivityAt: nullSec(s.LastEventAt),
+			lastActivityAt: nullSec(maxSec(s.LastEventAt, eventSeen[sessionRef{s.Vendor, s.SessionID}])),
 			activeTime:     active,
 			lifecycle:      true,
 		}
