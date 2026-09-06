@@ -247,7 +247,7 @@ func (r *Reader) Home(ctx context.Context, q HomeQuery) (HomeSummary, error) {
 	if sum.ActiveAgents, sum.ActiveSessions, err = activeAgents(ctx, db); err != nil {
 		return HomeSummary{}, err
 	}
-	if sum.Recent, sum.RecentTruncated, err = recentSessions(ctx, db, day, q.RecentLimit); err != nil {
+	if sum.Recent, sum.RecentTruncated, err = recentSessions(ctx, db, day, q.RecentLimit, false); err != nil {
 		return HomeSummary{}, err
 	}
 	return sum, nil
@@ -432,6 +432,10 @@ type RecentQuery struct {
 	TZ    string `json:"tz"`
 	Date  string `json:"date"`
 	Limit int    `json:"limit"`
+	// AnyDate 는 날짜로 자르지 않고 가장 최근 세션을 달라는 뜻이다. 트레이가 쓴다 —
+	// 그 화면은 하루의 기록이 아니라 "지금 무엇이 도나" 를 묻는다 (trayRecentSessionsSQL).
+	// Date 는 그때도 응답의 표시용으로 쓰인다.
+	AnyDate bool `json:"any_date"`
 }
 
 // RecentActivity 는 진행 중인 세션과 최근 세션 목록이다.
@@ -473,33 +477,53 @@ func (r *Reader) RecentActivity(ctx context.Context, q RecentQuery) (RecentActiv
 	if out.ActiveAgents, out.ActiveSessions, err = activeAgents(ctx, db); err != nil {
 		return RecentActivity{}, err
 	}
-	if out.Sessions, out.Truncated, err = recentSessions(ctx, db, day, q.Limit); err != nil {
+	if out.Sessions, out.Truncated, err = recentSessions(ctx, db, day, q.Limit, q.AnyDate); err != nil {
 		return RecentActivity{}, err
 	}
 	return out, nil
 }
 
-// recentSessionsSQL 은 선택 날짜에 **시작한** 세션이다.
+// recentSessionsHead 는 Home 과 트레이가 공유하는 SELECT 다.
 //
-// 상태와 마지막 활동 시각은 sessions.go 의 식을 그대로 쓴다. 두 화면이 다른 식을 쓰면
-// 같은 세션이 Home 에서는 진행 중, Activity 에서는 완료로 보인다.
-//
-// 정렬 2순위가 id 인 이유도 sessions.go 와 같다 — started_at 이 같은 세션들의 순서가
-// 흔들리면 잘리는 지점이 새로고침마다 달라진다.
-var recentSessionsSQL = `SELECT s.id, s.session_key, s.vendor_id, COALESCE(s.title,''),
+// **공유하는 것은 값이지 범위가 아니다.** 상태와 마지막 활동 시각은 sessions.go 의 식을
+// 그대로 쓴다 — 두 화면이 다른 식을 쓰면 같은 세션이 Home 에서는 진행 중, Activity 에서는
+// 완료로 보인다. 어느 세션을 어떤 순서로 보여줄지는 화면마다 묻는 질문이 달라 아래에서
+// 각자 정한다.
+var recentSessionsHead = `SELECT s.id, s.session_key, s.vendor_id, COALESCE(s.title,''),
   COALESCE(s.workspace_path,''), COALESCE(s.started_at,0), ` + lastActivityExpr + `,
   s.ended_at, ` + statusExpr + `, COALESCE(s.active_time_sec,0)
 FROM sessions s
-WHERE s.started_at IS NOT NULL AND s.started_at >= ? AND s.started_at < ?
+WHERE s.started_at IS NOT NULL`
+
+// recentSessionsSQL 은 Home 이 묻는 "그날 무엇을 했나" 다. 선택 날짜에 **시작한** 세션만
+// 본다 — 과거 날짜를 보는데 지금 도는 세션이 끼어들면 그날의 기록이 아니게 된다.
+//
+// 정렬 2순위가 id 인 이유는 sessions.go 와 같다 — started_at 이 같은 세션들의 순서가
+// 흔들리면 잘리는 지점이 새로고침마다 달라진다.
+var recentSessionsSQL = recentSessionsHead + `
+  AND s.started_at >= ? AND s.started_at < ?
 ORDER BY s.started_at DESC, s.id DESC LIMIT ?`
+
+// trayRecentSessionsSQL 은 트레이가 묻는 "지금 무엇이 도나" 다.
+//
+// **날짜로 자르지 않는다.** 트레이는 하루의 기록이 아니라 가장 최근 세션들을 보여주는
+// 자리다. 날짜를 걸면 자정을 넘긴 직후 목록이 비고, 어제 시작해 지금도 도는 세션이
+// activeAgentsSQL 이 세는 "진행 중" 카운트에는 잡히면서 목록에서는 빠져 한 스냅샷 안의
+// 두 값이 어긋난다.
+//
+// 진행 중을 위로 올린다. SQLite 에서 `ended_at IS NULL` 은 1/0 이라 DESC 면 진행 중이
+// 먼저 온다. 목록이 상한으로 잘리므로 정렬은 자르기 전인 여기서 해야 한다 — 프런트가
+// 받은 만큼만 정렬하면 상한 밖으로 밀린 진행 중 세션은 영영 올라오지 못한다.
+var trayRecentSessionsSQL = recentSessionsHead + `
+ORDER BY (s.ended_at IS NULL) DESC, s.started_at DESC, s.id DESC LIMIT ?`
 
 // recentSessions 는 선택 날짜의 최근 세션 요약이다.
 //
 // 비용·토큰은 목록을 확정한 뒤 그 세션들의 llm_calls 를 한 번 더 읽어 채운다. 목록 질의에
 // 상관 서브쿼리로 붙이지 않는 이유는 가격표 산정이 SQL 로 표현되지 않기 때문이다 —
 // 보고값이 없는 호출의 단가는 Go 쪽 표에만 있다 (internal/pricing).
-func recentSessions(ctx context.Context, db sqlQuerier, tr timeRange, limit int) ([]RecentSession, bool, error) {
-	out, truncated, err := scanRecentSessions(ctx, db, tr, limit)
+func recentSessions(ctx context.Context, db sqlQuerier, tr timeRange, limit int, anyDate bool) ([]RecentSession, bool, error) {
+	out, truncated, err := scanRecentSessions(ctx, db, tr, limit, anyDate)
 	if err != nil {
 		return nil, false, err
 	}
@@ -511,13 +535,17 @@ func recentSessions(ctx context.Context, db sqlQuerier, tr timeRange, limit int)
 	return out, truncated, nil
 }
 
-func scanRecentSessions(ctx context.Context, db sqlQuerier, tr timeRange, limit int) (out []RecentSession, truncated bool, err error) {
+func scanRecentSessions(ctx context.Context, db sqlQuerier, tr timeRange, limit int, anyDate bool) (out []RecentSession, truncated bool, err error) {
 	const op = "최근 세션 조회"
 	out = []RecentSession{}
 
 	want := clampLimit(limit, defaultRecentSessions, maxRecentSessions)
 	// 상한 +1 을 받아 "더 있다" 를 별도 질의 없이 판정한다 (sessions.go 의 타임라인과 같은 수법).
-	rows, err := db.QueryContext(ctx, recentSessionsSQL, tr.StartSec(), tr.EndSec(), want+1)
+	query, args := recentSessionsSQL, []any{tr.StartSec(), tr.EndSec(), want + 1}
+	if anyDate {
+		query, args = trayRecentSessionsSQL, []any{want + 1}
+	}
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, false, queryErr(op, err)
 	}

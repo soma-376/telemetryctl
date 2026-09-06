@@ -664,3 +664,39 @@ func TestServiceHomeDelegates(t *testing.T) {
 		t.Errorf("예상 비용 = %v, want %v", got.Cost.Total.USD, 6.3+2.5)
 	}
 }
+
+// 트레이는 하루의 기록이 아니라 가장 최근 세션을 보여주는 자리다. 날짜로 자르면 자정을
+// 넘긴 직후 목록이 비고, 어제부터 도는 세션이 activeAgents 카운트에는 잡히면서 목록에서는
+// 빠져 한 스냅샷 안의 두 값이 어긋난다.
+func TestRecentActivityAnyDateIgnoresDayBoundary(t *testing.T) {
+	f := newFixture(t)
+	yesterday := testNow.Add(-26 * time.Hour)
+	f.write(store.Batch{Sessions: []session.Session{
+		newSession("s-yesterday", yesterday),
+		newSession("s-yesterday-live", yesterday.Add(time.Minute), running),
+	}})
+
+	day, err := f.reader.RecentActivity(context.Background(), RecentQuery{TZ: seoul})
+	if err != nil {
+		t.Fatalf("RecentActivity: %v", err)
+	}
+	if len(day.Sessions) != 0 {
+		t.Fatalf("날짜 범위 조회에 어제 세션이 들어왔다: %d건", len(day.Sessions))
+	}
+
+	any, err := f.reader.RecentActivity(context.Background(), RecentQuery{TZ: seoul, AnyDate: true})
+	if err != nil {
+		t.Fatalf("RecentActivity(AnyDate): %v", err)
+	}
+	if len(any.Sessions) != 2 {
+		t.Fatalf("세션 = %d건, want 2 — 날짜로 잘렸다", len(any.Sessions))
+	}
+	// 진행 중이 위다. 목록이 상한으로 잘리므로 정렬은 자르기 전인 SQL 에서 해야 한다.
+	if any.Sessions[0].SessionKey != "s-yesterday-live" {
+		t.Fatalf("첫 세션 = %q, want s-yesterday-live (진행 중 우선)", any.Sessions[0].SessionKey)
+	}
+	// 진행 중 카운트와 목록이 같은 세션을 말해야 한다.
+	if any.ActiveSessions != 1 {
+		t.Fatalf("ActiveSessions = %d, want 1", any.ActiveSessions)
+	}
+}
