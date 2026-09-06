@@ -32,10 +32,16 @@ CREATE TABLE sessions (
   terminal_type TEXT,
   started_at INTEGER,
   ended_at INTEGER,
+  last_activity_at INTEGER,
   active_time_sec INTEGER,
   UNIQUE (vendor_id, session_key)
 );
 CREATE INDEX ix_sessions_started ON sessions (started_at);
+
+-- 유휴 마감 스윕이 유일하게 쓰는 인덱스다. 부분 인덱스인 것이 핵심이다 — 스윕의 대상은
+-- 언제나 진행 중인 세션뿐인데, 그 수는 전체 세션의 극히 일부다. 조건 없이 걸면 400일치
+-- 마감 세션이 전부 인덱스에 들어와 쓸모없이 커진다.
+CREATE INDEX ix_sessions_open_activity ON sessions (last_activity_at) WHERE ended_at IS NULL;
 
 CREATE TABLE turns (
   id INTEGER PRIMARY KEY,

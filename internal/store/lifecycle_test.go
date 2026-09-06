@@ -120,6 +120,64 @@ func TestSessionStartedAtKeepsEarliest(t *testing.T) {
 	}
 }
 
+// last_activity_at 은 started_at 의 거울상이다 — 가장 늦은 관측이고, 늦게 도착한 오래된
+// 배치가 마지막 활동을 과거로 되돌리면 유휴 스윕이 살아 있는 세션을 마감한다.
+func TestSessionLastActivityKeepsLatest(t *testing.T) {
+	db := openTestDB(t)
+	late := newSession("sess-1", baseTime)
+	early := newSession("sess-1", baseTime.Add(-time.Hour))
+
+	mustWrite(t, db, Batch{Sessions: []session.Session{late}})
+	mustWrite(t, db, Batch{Sessions: []session.Session{early}})
+
+	want := int64(event.SecFromTime(baseTime))
+	if got := scanOne(t, db, `SELECT last_activity_at FROM sessions`); got != want {
+		t.Fatalf("last_activity_at = %v, want %d", got, want)
+	}
+}
+
+// 조립기 스냅샷 없이 이벤트만 저장되는 틱에도 활동 시각은 올라가야 한다. ended_at 과 달리
+// "이 시각에 활동이 있었다" 는 이벤트 하나만으로 알 수 있기 때문이다 (sessionUpsertHead).
+// 이것이 빠지면 조립기가 놓친 세션의 활동 시각이 멈춰 유휴 스윕이 오판한다.
+func TestSessionLastActivityFollowsEventSeed(t *testing.T) {
+	db := openTestDB(t)
+	mustWrite(t, db, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}})
+
+	later := baseTime.Add(30 * time.Minute)
+	mustWrite(t, db, Batch{Events: []EventRecord{
+		evrec("claude_code.api_request", later, 1, sess("sess-1")),
+	}})
+
+	want := int64(event.SecFromTime(later))
+	if got := scanOne(t, db, `SELECT last_activity_at FROM sessions`); got != want {
+		t.Fatalf("last_activity_at = %v, want %d — 이벤트 씨앗이 활동 시각을 안 올렸다", got, want)
+	}
+}
+
+// 마감된 세션에 낙오 이벤트가 도착하는 것은 정상 경로다 (exporter 배치 지연). 그때 활동
+// 시각만 오르고 마감은 그대로여야 한다 — 이벤트 씨앗이 ended_at 을 건드리면 마감된 세션이
+// 화면에서 되살아난다 (seedSessionSQL).
+func TestSessionLateEventMovesActivityNotEnd(t *testing.T) {
+	db := openTestDB(t)
+	closed := newSession("sess-1", baseTime)
+	closed.EndedAt = someSec(closed.StartedAt + 600)
+	mustWrite(t, db, Batch{Sessions: []session.Session{closed}})
+
+	straggler := baseTime.Add(11 * time.Minute)
+	mustWrite(t, db, Batch{Events: []EventRecord{
+		evrec("claude_code.api_request", straggler, 1, sess("sess-1")),
+	}})
+
+	wantEnd := int64(event.SecFromTime(baseTime)) + 600
+	if got := scanOne(t, db, `SELECT ended_at FROM sessions`); got != wantEnd {
+		t.Fatalf("ended_at = %v, want %d — 낙오 이벤트가 마감을 흔들었다", got, wantEnd)
+	}
+	wantActivity := int64(event.SecFromTime(straggler))
+	if got := scanOne(t, db, `SELECT last_activity_at FROM sessions`); got != wantActivity {
+		t.Fatalf("last_activity_at = %v, want %d", got, wantActivity)
+	}
+}
+
 // 원문 저장을 꺼도 세션·사용량 화면은 동작해야 한다 (PROJ-86 구현 경계).
 // 원문은 turns.prompt_text 하나뿐이고 집계는 승격 테이블에서 나오므로 서로 독립이다.
 func TestContentDisabledKeepsSessionAndUsageQueries(t *testing.T) {

@@ -127,17 +127,28 @@ func (w *writer) writeVendors(b Batch) error {
 // 정상 경로다.
 //
 // started_at 은 가장 이른 관측이다. 세션이 언제 시작했는지는 늦게 도착한 배치가 바꿀 수 없다.
+//
+// last_activity_at 은 그 거울상이다 — 가장 늦은 관측이고, 늦게 도착한 **오래된** 배치가
+// 마지막 활동을 과거로 되돌릴 수 없다. exporter 배치가 섞여 도착하는 것이 정상 경로이므로
+// (state.observe 의 같은 주석) 두 컬럼 다 도착 순서에 기대지 않는다.
+//
+// 이 컬럼이 여기 head 에 있는 것이 중요하다. **두 UPSERT 가 모두 갱신한다.** ended_at 은
+// 세션이 끝났는지를 아는 조립기 스냅샷만 쓸 수 있지만, "이 시각에 활동이 있었다" 는
+// 이벤트 하나만 봐도 알 수 있다. 이벤트 씨앗을 빼먹으면 조립기가 놓친 세션의 활동 시각이
+// 영원히 멈춰, 유휴 스윕이 살아 있는 세션을 죽은 것으로 보고 마감한다.
 const sessionUpsertHead = `INSERT INTO sessions (
   vendor_id, session_key, workspace_path, user_email, user_account_id,
-  terminal_type, started_at, ended_at, active_time_sec
-) VALUES (?,?,?,?,?,?,?,?,?)
+  terminal_type, started_at, ended_at, last_activity_at, active_time_sec
+) VALUES (?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(vendor_id, session_key) DO UPDATE SET
-  workspace_path  = COALESCE(excluded.workspace_path,  sessions.workspace_path),
-  user_email      = COALESCE(excluded.user_email,      sessions.user_email),
-  user_account_id = COALESCE(excluded.user_account_id, sessions.user_account_id),
-  terminal_type   = COALESCE(excluded.terminal_type,   sessions.terminal_type),
-  started_at      = MIN(COALESCE(excluded.started_at, sessions.started_at),
-                        COALESCE(sessions.started_at, excluded.started_at)),
+  workspace_path   = COALESCE(excluded.workspace_path,  sessions.workspace_path),
+  user_email       = COALESCE(excluded.user_email,      sessions.user_email),
+  user_account_id  = COALESCE(excluded.user_account_id, sessions.user_account_id),
+  terminal_type    = COALESCE(excluded.terminal_type,   sessions.terminal_type),
+  started_at       = MIN(COALESCE(excluded.started_at, sessions.started_at),
+                         COALESCE(sessions.started_at, excluded.started_at)),
+  last_activity_at = MAX(COALESCE(excluded.last_activity_at, sessions.last_activity_at),
+                         COALESCE(sessions.last_activity_at, excluded.last_activity_at)),
 `
 
 // upsertSessionSQL 은 조립기 스냅샷용이다. **생명주기의 정본은 스냅샷 하나뿐이다.**
@@ -151,16 +162,16 @@ ON CONFLICT(vendor_id, session_key) DO UPDATE SET
 // active_time_sec 는 반대로 단조 증가다. 데몬이 재시작하면 조립기는 그 세션의 활동 시간을
 // 0 부터 다시 세므로, 새 값을 그대로 쓰면 이미 기록된 시간이 줄어든다. 활동 시간은 세션
 // 안에서 줄어들 수 없는 값이라 MAX 로 지킨다.
-const upsertSessionSQL = sessionUpsertHead + `  ended_at        = excluded.ended_at,
-  active_time_sec = MAX(COALESCE(excluded.active_time_sec, sessions.active_time_sec),
-                        COALESCE(sessions.active_time_sec, excluded.active_time_sec))
+const upsertSessionSQL = sessionUpsertHead + `  ended_at         = excluded.ended_at,
+  active_time_sec  = MAX(COALESCE(excluded.active_time_sec, sessions.active_time_sec),
+                         COALESCE(sessions.active_time_sec, excluded.active_time_sec))
 RETURNING id`
 
 // seedSessionSQL 은 이벤트 씨앗용이다. 이벤트 하나는 세션이 끝났는지 얼마나 활동했는지를
 // 모르므로 두 컬럼을 **건드리지 않는다**. 스냅샷 규칙을 여기에도 쓰면, 스냅샷 없이 이벤트만
 // 저장되는 틱마다 마감된 세션의 ended_at 이 NULL 로 지워진다.
-const seedSessionSQL = sessionUpsertHead + `  ended_at        = sessions.ended_at,
-  active_time_sec = sessions.active_time_sec
+const seedSessionSQL = sessionUpsertHead + `  ended_at         = sessions.ended_at,
+  active_time_sec  = sessions.active_time_sec
 RETURNING id`
 
 // sessionSeed 는 sessions 한 행에 쓸 값이다. 이벤트에서 오는 최소 씨앗과 조립기 스냅샷의
@@ -173,9 +184,10 @@ type sessionSeed struct {
 	userAccountID string
 	terminalType  string
 
-	startedAt  any
-	endedAt    any
-	activeTime any
+	startedAt      any
+	endedAt        any
+	lastActivityAt any
+	activeTime     any
 
 	// lifecycle 은 이 씨앗이 세션 생명주기(ended_at · active_time_sec)의 정본인지다.
 	// 조립기 스냅샷만 true 다 — 이벤트 하나는 세션이 끝났는지 모른다.
@@ -194,7 +206,7 @@ func (s sessionSeed) args() []any {
 	return []any{
 		s.vendor, s.key, nullStr(s.workspacePath),
 		nullStr(s.userEmail), nullStr(s.userAccountID), nullStr(s.terminalType),
-		s.startedAt, s.endedAt, s.activeTime,
+		s.startedAt, s.endedAt, s.lastActivityAt, s.activeTime,
 	}
 }
 
@@ -224,8 +236,11 @@ func (w *writer) writeSessions(b Batch) error {
 			terminalType:  s.TerminalType,
 			startedAt:     nullSec(s.StartedAt),
 			endedAt:       optSec(s.EndedAt),
-			activeTime:    active,
-			lifecycle:     true,
+			// 조립기가 아는 마지막 관측이다. 마감 여부와 무관하게 늘 채운다 — 마감된
+			// 세션도 "언제까지 살아 있었나" 를 알아야 보존 판정이 선다.
+			lastActivityAt: nullSec(s.LastEventAt),
+			activeTime:     active,
+			lifecycle:      true,
 		}
 		if _, err := w.sessionID(seed); err != nil {
 			return err
@@ -247,7 +262,10 @@ func (w *writer) writeSessions(b Batch) error {
 			userEmail:     e.Attr.UserEmail,
 			userAccountID: e.Attr.UserAccountID,
 			terminalType:  e.Attr.TerminalType,
-			startedAt:     nullSec(e.TS.Sec()),
+			// 이벤트 하나에게 이 시각은 시작이자 마지막 활동이다. 어느 쪽인지는 UPSERT 의
+			// MIN·MAX 가 기존 값과 대조해 정한다.
+			startedAt:      nullSec(e.TS.Sec()),
+			lastActivityAt: nullSec(e.TS.Sec()),
 		}
 		if _, err := w.sessionID(seed); err != nil {
 			return err

@@ -62,6 +62,7 @@ func TestSchemaNamedIndexesAndForeignKeys(t *testing.T) {
 	indexes := []string{
 		"ux_turns_virtual", "ix_events_name", "ix_llm_turn", "ix_fc_tool",
 		"ix_tool_calls_turn", "ix_turns_session", "ix_sessions_started",
+		"ix_sessions_open_activity",
 	}
 	for _, name := range indexes {
 		var n int
@@ -90,6 +91,17 @@ func TestSchemaNamedIndexesAndForeignKeys(t *testing.T) {
 	}
 	if unique != 1 || partial != 1 {
 		t.Fatalf("ux_turns_virtual = unique %d, partial %d", unique, partial)
+	}
+
+	// 유휴 스윕 인덱스가 부분 인덱스인 것은 성능 취향이 아니라 의도다. 조건이 빠지면
+	// 400일치 마감 세션이 전부 들어와 스윕이 볼 일 없는 행으로 인덱스가 채워진다.
+	if err := db.SQL().QueryRowContext(ctx, `
+		SELECT partial FROM pragma_index_list('sessions') WHERE name = 'ix_sessions_open_activity'`).
+		Scan(&partial); err != nil {
+		t.Fatalf("ix_sessions_open_activity 속성 조회: %v", err)
+	}
+	if partial != 1 {
+		t.Fatalf("ix_sessions_open_activity partial = %d, want 1", partial)
 	}
 
 	fks := map[string]map[string]int{
@@ -134,7 +146,8 @@ func TestSchemaV3Columns(t *testing.T) {
 		"vendors": {"vendor", "first_seen", "last_seen", "status"},
 		"sessions": {
 			"id", "vendor_id", "session_key", "title", "workspace_path", "user_email",
-			"user_account_id", "terminal_type", "started_at", "ended_at", "active_time_sec",
+			"user_account_id", "terminal_type", "started_at", "ended_at", "last_activity_at",
+			"active_time_sec",
 		},
 		"turns": {
 			"id", "session_id", "turn_key", "turn_index", "client_version", "started_at",
