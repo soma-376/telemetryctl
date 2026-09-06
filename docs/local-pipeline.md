@@ -1317,9 +1317,11 @@ ls ~/.config/systemd/user 2>/dev/null | grep -i pulsemetry || echo "OK: 등록�
 
 Codex 로컬 배선은 사용자 훅 배열을 보존하면서 `SessionStart`와 `SessionEnd`에
 현재 설치 바이너리의 절대 경로로 `hook codex` command handler를 하나씩 설치한다. 사용자 PATH는
-바꾸지 않는다. 이 숨은 CLI 명령은 stdin JSON에서 `session_id`와 이벤트 종류만 읽어 OS 로컬 토큰을
-붙인 loopback API로 전달한다. Codex timeout은 최대 3초, 내부 HTTP는 750ms이며, 데몬이 꺼져 있거나
-요청이 실패해도 항상 성공으로 끝나 Codex 종료를 막지 않는다.
+바꾸지 않는다. 사용자 지정 데이터 디렉터리는 `--data-dir` 절대 경로로 함께 기록한다. 이 숨은 CLI
+명령은 stdin JSON에서 `session_id`와 이벤트 종류만 읽어 OS 로컬 토큰을 붙인 loopback API로
+전달한다. Codex timeout은 최대 3초, 내부 HTTP는 750ms이며, 데몬이 꺼져 있거나 요청이 실패해도
+항상 성공으로 끝나 Codex 종료를 막지 않는다. `go run` 임시 파일은 영구 설정에 등록하지 않으며,
+개발 환경에서는 `task cli:built -- local enable`을 쓴다.
 
 시작 훅은 `sessions.started_at`의 최솟값을 보존하면서 `ended_at`을 비우고, 종료 훅은
 `ended_at`을 기록한다. 시작·재개 훅은 OTel이 아직 없는 세션도 스윕할 수 있도록

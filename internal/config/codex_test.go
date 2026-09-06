@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -224,13 +223,14 @@ timeout = 9
 func TestMergeCodexLifecycleHookUsesAbsoluteExecutableAndMaximumTimeout(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	executable := filepath.Join(t.TempDir(), "Pulsemetry App", "pulsemetry.exe")
+	dataDir := filepath.Join(t.TempDir(), "Pulsemetry Data")
 	local := companyManifest()
 	local.OTLP.Endpoint = "http://localhost:4318"
 
-	if _, err := MergeCodexWithExecutable(path, local, "local-token", false, executable); err != nil {
+	if _, err := MergeCodexWithExecutable(path, local, "local-token", false, executable, dataDir); err != nil {
 		t.Fatal(err)
 	}
-	wantCommand, err := codexHookCommand(executable)
+	wantCommand, err := codexHookCommand(executable, dataDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,15 +251,14 @@ func TestMergeCodexLifecycleHookUsesAbsoluteExecutableAndMaximumTimeout(t *testi
 		if got := handlers[0]["timeout"]; got != codexHookTimeoutSeconds {
 			t.Errorf("%s timeout = %v, want %d", eventName, got, codexHookTimeoutSeconds)
 		}
-		_, hasWindows := handlers[0]["commandWindows"]
-		if hasWindows != (runtime.GOOS == "windows") {
-			t.Errorf("%s commandWindows 존재 = %v, GOOS=%s", eventName, hasWindows, runtime.GOOS)
+		if _, hasWindows := handlers[0]["commandWindows"]; hasWindows {
+			t.Errorf("%s에 불필요한 commandWindows가 남았다", eventName)
 		}
 	}
 
 	// 업그레이드로 실행 경로가 달라져도 이전 Pulsemetry 훅을 회수해야 한다.
 	newExecutable := filepath.Join(t.TempDir(), "new", "pulsemetry.exe")
-	if _, err := MergeCodexWithExecutable(path, companyManifest(), "company-token", false, newExecutable); err != nil {
+	if _, err := MergeCodexWithExecutable(path, companyManifest(), "company-token", false, newExecutable, dataDir); err != nil {
 		t.Fatal(err)
 	}
 	if hooks, ok := readTOML(t, path)["hooks"]; ok {
@@ -290,11 +289,11 @@ timeout = 1
 	local := companyManifest()
 	local.OTLP.Endpoint = "http://localhost:4318"
 	executable := filepath.Join(t.TempDir(), "new", "pulsemetry.exe")
-	if _, err := MergeCodexWithExecutable(path, local, "local-token", false, executable); err != nil {
+	if _, err := MergeCodexWithExecutable(path, local, "local-token", false, executable, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	wantCommand, err := codexHookCommand(executable)
+	wantCommand, err := codexHookCommand(executable, "")
 	if err != nil {
 		t.Fatal(err)
 	}

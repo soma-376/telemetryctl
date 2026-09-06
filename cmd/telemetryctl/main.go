@@ -264,6 +264,11 @@ func runEnroll(stdout, stderr io.Writer, args []string, reg autostartRegistrar) 
 		fmt.Fprintln(stderr, "오류: enrollment 서버 URL 이 없습니다. --server 또는 PULSEMETRY_SERVER 를 지정하세요.")
 		return 2
 	}
+	hookExecutable, err := currentHookExecutable()
+	if err != nil {
+		fmt.Fprintln(stderr, "오류:", err)
+		return 1
+	}
 
 	hostname, _ := os.Hostname()
 	enr, err := enrollment.Enroll(srv, contract.EnrollRequest{
@@ -284,6 +289,7 @@ func runEnroll(stdout, stderr io.Writer, args []string, reg autostartRegistrar) 
 		return 1
 	}
 	opts.ServerURL = srv
+	opts.HookExecutable = hookExecutable
 
 	// 로컬 파이프라인은 기본으로 배선된다 (PROJ-45, ADR 0006). 토큰을 얻지 못해도 enroll 을
 	// 실패시키지 않는다 — 이것은 한 줄 설치 부트스트랩이 타는 경로라, 키링을 못 여는 환경

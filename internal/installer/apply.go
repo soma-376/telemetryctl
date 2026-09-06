@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/your-org/pulsemetry/internal/config"
@@ -23,6 +24,9 @@ type Options struct {
 	BackupDir  string
 	ServerURL  string
 	Force      bool
+	// HookExecutable 은 Codex command hook이 실행할 설치 바이너리의 절대 경로다.
+	// 로컬 배선에서 비어 있으면 PATH 의존 훅을 만들지 않고 실패한다.
+	HookExecutable string
 
 	// IngestToken 은 로컬 수신기의 loopback bearer 토큰이다. 비어 있으면 로컬 배선을
 	// 건너뛰고 회사 Collector 직결로 설치한다 (PROJ-45 이전 동작).
@@ -52,12 +56,51 @@ type applyStep struct {
 
 // mergeCodexInstalled 는 Codex command hook이 셸 PATH에 의존하지 않게 한다. 설치·재배선·
 // 재연결이 모두 같은 함수를 써야 이전 절대 경로 훅을 교체하거나 제거할 수 있다.
-func mergeCodexInstalled(path string, manifest *contract.Manifest, token string, force bool) (config.Result, error) {
-	executable, err := os.Executable()
-	if err != nil {
-		return config.Result{}, fmt.Errorf("Pulsemetry 실행 경로 확인 실패: %w", err)
+func mergeCodexInstalled(path string, manifest *contract.Manifest, token string, force bool, executable, dataDir string) (config.Result, error) {
+	if isLocalEndpoint(manifest.OTLP.Endpoint) && executable == "" {
+		var err error
+		executable, err = os.Executable()
+		if err != nil {
+			return config.Result{}, fmt.Errorf("Pulsemetry 실행 경로 확인 실패: %w", err)
+		}
+		// installer를 직접 쓰는 GUI 경로도 go run 임시 파일을 영구 설정에 남기지 않는다.
+		// Go 테스트 바이너리는 같은 디렉터리를 쓰므로 .test 실행 파일만 예외다.
+		if isGoRunPath(executable) {
+			if strings.Contains(strings.ToLower(filepath.Base(executable)), ".test") {
+				// 테스트는 실제 파일을 실행하지 않고 설정 병합만 검증한다. Pulsemetry 이름을
+				// 써야 disable의 예약 명령 판정도 운영과 같은 경로를 탄다.
+				executable = filepath.Join(filepath.Dir(executable), "pulsemetry.exe")
+			} else {
+				return config.Result{}, errors.New("go run 임시 바이너리는 Codex hook에 등록할 수 없다")
+			}
+		}
 	}
-	return config.MergeCodexWithExecutable(path, manifest, token, force, executable)
+	return config.MergeCodexWithExecutable(path, manifest, token, force, executable, dataDir)
+}
+
+func isLocalEndpoint(endpoint string) bool {
+	return strings.HasPrefix(endpoint, "http://localhost:")
+}
+
+func isGoRunPath(path string) bool {
+	tempDir, err := filepath.Abs(os.TempDir())
+	if err != nil {
+		return false
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(tempDir, absPath)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	for _, part := range strings.FieldsFunc(rel, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if strings.HasPrefix(strings.ToLower(part), "go-build") {
+			return true
+		}
+	}
+	return false
 }
 
 // Apply backs up all existing vendor files, synchronizes managed OTel keys,
@@ -121,9 +164,12 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 		Local:    local,
 	}
 
+	mergeCodex := func(path string, manifest *contract.Manifest, token string, force bool) (config.Result, error) {
+		return mergeCodexInstalled(path, manifest, token, force, opts.HookExecutable, local.DataDir)
+	}
 	steps := []applyStep{
 		{tool: "claude", path: opts.ClaudePath, merge: config.MergeClaude},
-		{tool: "codex", path: opts.CodexPath, merge: mergeCodexInstalled},
+		{tool: "codex", path: opts.CodexPath, merge: mergeCodex},
 	}
 	prepared := make([]applyStep, 0, len(steps))
 	backupTime := time.Now().UTC()

@@ -86,6 +86,10 @@ type LocalOptions struct {
 	// IngestToken 은 로컬 수신기의 loopback bearer 토큰이다. EnableLocal 에 필수다.
 	// **회사 telemetry token 이 아니다** — receiver.EnsureToken 이 만들어 준다.
 	IngestToken string
+	// HookExecutable 은 Codex hook이 실행할 설치 바이너리의 절대 경로다.
+	HookExecutable string
+	// DataDir 는 hook이 runtime.json을 찾을 절대 경로다. 비우면 기존 상태값을 유지한다.
+	DataDir string
 }
 
 // LocalReport 는 재배선 결과다. 토큰은 어떤 필드에도 담기지 않는다 (§4.5).
@@ -253,7 +257,12 @@ func EnableLocal(opts LocalOptions) (*LocalReport, error) {
 		report.TelemetryTokenStashed = found
 	}
 
-	results, restore, err := remergeTargets(state, &local, opts.IngestToken, opts.BackupDir)
+	hookDataDir := opts.DataDir
+	if hookDataDir == "" {
+		hookDataDir = state.Local.DataDir
+	}
+	results, restore, err := remergeTargets(state, &local, opts.IngestToken, opts.BackupDir,
+		opts.HookExecutable, hookDataDir)
 	if err != nil {
 		return nil, err
 	}
@@ -262,6 +271,7 @@ func EnableLocal(opts LocalOptions) (*LocalReport, error) {
 	previous := state.Local
 	state.Local.Enabled = true
 	state.Local.ListenPort = port
+	state.Local.DataDir = hookDataDir
 	if err := SaveState(opts.StatePath, state); err != nil {
 		// 상태를 못 남기면 벤더 설정만 로컬을 가리킨 채 아무도 그 사실을 모르게 된다.
 		// 설정을 되돌려 놓고 실패로 끝내는 편이 낫다.
@@ -303,7 +313,8 @@ func DisableLocal(opts LocalOptions) (*LocalReport, error) {
 				"`telemetryctl reconnect` 를 실행하면 서버에서 토큰을 재발급받아 회사 설정으로 되돌린다")
 	}
 
-	results, restore, err := remergeTargets(state, &state.Manifest, token, opts.BackupDir)
+	results, restore, err := remergeTargets(state, &state.Manifest, token, opts.BackupDir,
+		opts.HookExecutable, state.Local.DataDir)
 	if err != nil {
 		return nil, err
 	}
@@ -399,7 +410,7 @@ func stashTelemetryToken(state *State, ingestToken string) (bool, error) {
 //
 // Apply 와 같은 순서를 따른다: 전부 백업 → 순서대로 병합 → 하나라도 실패하면 이미 쓴 것을
 // 역순으로 복구. 반환된 restore 는 호출자가 그 뒤 단계(상태 저장)에서 실패했을 때 쓴다.
-func remergeTargets(state *State, m *contract.Manifest, token, backupDir string) ([]config.Result, func() error, error) {
+func remergeTargets(state *State, m *contract.Manifest, token, backupDir, hookExecutable, hookDataDir string) ([]config.Result, func() error, error) {
 	dir := backupDir
 	if dir == "" {
 		env, err := hostenv.Detect()
@@ -458,7 +469,7 @@ func remergeTargets(state *State, m *contract.Manifest, token, backupDir string)
 		case "claude":
 			result, err = config.MergeClaude(s.path, m, token, false)
 		case "codex":
-			result, err = mergeCodexInstalled(s.path, m, token, false)
+			result, err = mergeCodexInstalled(s.path, m, token, false, hookExecutable, hookDataDir)
 		}
 		if err != nil {
 			if restoreErr := restore(); restoreErr != nil {

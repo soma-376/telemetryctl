@@ -41,26 +41,33 @@ const (
 
 var codexLifecycleEvents = []string{"SessionStart", "SessionEnd"}
 
-func codexHookCommand(executable string) (string, error) {
+func quoteHookArg(value string) string {
+	if runtime.GOOS == "windows" {
+		return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
+	}
+	return `'` + strings.ReplaceAll(value, `'`, `'"'"'`) + `'`
+}
+
+func codexHookCommand(executable, dataDir string) (string, error) {
 	if executable == "" {
 		return codexLegacyHookCommand, nil
 	}
 	if !filepath.IsAbs(executable) {
 		return "", fmt.Errorf("Codex hook 실행 경로가 절대 경로가 아님: %q", executable)
 	}
-	// 설치 경로는 현재 OS의 경로라 그 OS 셸에 맞춰 한 번만 인용한다.
-	if runtime.GOOS == "windows" {
-		return `"` + strings.ReplaceAll(executable, `"`, `\"`) + `" hook codex`, nil
+	command := quoteHookArg(executable) + " hook codex"
+	if dataDir != "" {
+		if !filepath.IsAbs(dataDir) {
+			return "", fmt.Errorf("Codex hook 데이터 경로가 절대 경로가 아님: %q", dataDir)
+		}
+		command += " --data-dir " + quoteHookArg(dataDir)
 	}
-	return `'` + strings.ReplaceAll(executable, `'`, `'"'"'`) + `' hook codex`, nil
+	return command, nil
 }
 
 func codexHookHandler(command string) map[string]any {
 	handler := map[string]any{
 		"type": "command", "command": command, "timeout": codexHookTimeoutSeconds,
-	}
-	if runtime.GOOS == "windows" {
-		handler["commandWindows"] = command
 	}
 	return handler
 }
@@ -77,10 +84,16 @@ func sameCodexHook(v map[string]any, desired string) bool {
 	// 절대 경로는 업그레이드로 달라질 수 있다. 예약한 서브커맨드와 pulsemetry 실행
 	// 파일 이름이 함께 맞는 handler만 이전 설치의 것으로 인정한다.
 	trimmed := strings.TrimSpace(command)
-	if !strings.HasSuffix(trimmed, " hook codex") {
+	marker := " hook codex"
+	markerAt := strings.LastIndex(trimmed, marker)
+	if markerAt < 0 {
 		return false
 	}
-	trimmed = strings.TrimSpace(strings.TrimSuffix(trimmed, " hook codex"))
+	tail := strings.TrimSpace(trimmed[markerAt+len(marker):])
+	if tail != "" && !strings.HasPrefix(tail, "--data-dir ") {
+		return false
+	}
+	trimmed = strings.TrimSpace(trimmed[:markerAt])
 	trimmed = strings.Trim(strings.TrimSpace(trimmed), `"'`)
 	base := strings.ToLower(filepath.Base(trimmed))
 	return base == "pulsemetry" || base == "pulsemetry.exe"
@@ -237,13 +250,13 @@ func cloneHeaders(h map[string]any) map[string]any {
 
 // MergeCodex authoritatively synchronizes only Pulsemetry-managed [otel] keys.
 func MergeCodex(path string, m *contract.Manifest, token string, force bool) (Result, error) {
-	return MergeCodexWithExecutable(path, m, token, force, "")
+	return MergeCodexWithExecutable(path, m, token, force, "", "")
 }
 
 // MergeCodexWithExecutable 는 로컬 lifecycle 훅에 PATH 대신 현재 설치 바이너리의 절대
 // 경로를 쓴다. executable은 회사 직결에서도 받아 두어 local disable이 이전 훅을 찾는다.
-func MergeCodexWithExecutable(path string, m *contract.Manifest, token string, _ bool, executable string) (Result, error) {
-	hookCommand, err := codexHookCommand(executable)
+func MergeCodexWithExecutable(path string, m *contract.Manifest, token string, _ bool, executable, dataDir string) (Result, error) {
+	hookCommand, err := codexHookCommand(executable, dataDir)
 	if err != nil {
 		return Result{}, err
 	}

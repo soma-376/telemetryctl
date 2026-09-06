@@ -13,7 +13,10 @@ OTel 유휴 마감만으로는 데몬 재시작 전 세션과 정상 종료 시�
 
 - 로컬 배선 시 Codex의 `SessionStart`·`SessionEnd`에 동기 command hook을 설치한다.
 - command는 설치 중인 Pulsemetry 바이너리의 **절대 경로**와 숨은 `hook codex` 명령으로
-  stdin을 인증된 loopback HTTP에 전달한다. 사용자 PATH는 변경하지 않는다.
+  stdin을 인증된 loopback HTTP에 전달한다. 사용자 PATH는 변경하지 않는다. 데이터 디렉터리가
+  정해져 있으면 `--data-dir` 절대 경로도 command에 고정한다.
+- `go run`의 임시 실행 파일은 영구 훅 경로로 등록하지 않는다. 개발 중 설정 변경은 빌드
+  산출물로 실행한다.
 - Codex가 허용하는 SessionEnd 최대 예산 3초를 handler timeout으로 쓰되, 내부 HTTP 왕복은
   750ms로 제한해 종료를 오래 붙잡지 않는다.
 - 시작 훅은 `started_at`의 최솟값을 보존하고 `ended_at`을 NULL로 만들어 재개한다.

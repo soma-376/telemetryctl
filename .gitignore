@@ -23,6 +23,9 @@ coverage.*
 # Backups created by pulsemetry
 *.pulsemetry-backup.*
 
+# 임시 Go 빌드 캐시. 실수로 커밋하면 수십만 파일이 들어온다.
+/.tmp-go-cache/
+
 # Python cache
 __pycache__/
 *.pyc
