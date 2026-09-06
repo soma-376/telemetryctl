@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted — 부분 대체: [ADR 0020](0020-세션-시작-훅을-유휴-판정의-활동-바닥값으로-쓴다.md)이 `last_activity_at` 갱신 결정을 대체한다. 나머지 결정은 유효하다.
 
 ## Context
 
@@ -12,12 +12,15 @@ OTel 유휴 마감만으로는 데몬 재시작 전 세션과 정상 종료 시�
 ## Decision
 
 - 로컬 배선 시 Codex의 `SessionStart`·`SessionEnd`에 동기 command hook을 설치한다.
-- command는 숨은 `pulsemetry hook codex` 명령으로 stdin을 인증된 loopback HTTP에 전달한다.
+- command는 설치 중인 Pulsemetry 바이너리의 **절대 경로**와 숨은 `hook codex` 명령으로
+  stdin을 인증된 loopback HTTP에 전달한다. 사용자 PATH는 변경하지 않는다.
+- Codex가 허용하는 SessionEnd 최대 예산 3초를 handler timeout으로 쓰되, 내부 HTTP 왕복은
+  750ms로 제한해 종료를 오래 붙잡지 않는다.
 - 시작 훅은 `started_at`의 최솟값을 보존하고 `ended_at`을 NULL로 만들어 재개한다.
-- 종료 훅은 `ended_at`을 기록한다. `last_activity_at`은 OTel 이벤트만 갱신한다.
+- **대체됨(ADR 0020)** — 종료 훅은 `ended_at`을 기록한다. `last_activity_at`은 OTel 이벤트만 갱신한다.
 - 훅 누락은 `last_activity_at` 기반 SQL 유휴 스윕이 복구한다.
-- 예약 command 서명(`type=command`, `command=pulsemetry hook codex`)과 정확히 일치하는 개별
-  handler만 관리하고 사용자 훅은 보존한다.
+- 예약 command 서명(`type=command`, Pulsemetry 실행 파일 + `hook codex`)과 일치하는 개별
+  handler만 관리하고 사용자 훅은 보존한다. 구버전 상대 명령도 제거 대상으로 인정한다.
 
 ## Alternatives Considered
 

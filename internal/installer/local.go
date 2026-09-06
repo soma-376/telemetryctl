@@ -458,7 +458,7 @@ func remergeTargets(state *State, m *contract.Manifest, token, backupDir string)
 		case "claude":
 			result, err = config.MergeClaude(s.path, m, token, false)
 		case "codex":
-			result, err = config.MergeCodex(s.path, m, token, false)
+			result, err = mergeCodexInstalled(s.path, m, token, false)
 		}
 		if err != nil {
 			if restoreErr := restore(); restoreErr != nil {

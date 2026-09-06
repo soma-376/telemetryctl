@@ -1316,17 +1316,19 @@ ls ~/.config/systemd/user 2>/dev/null | grep -i pulsemetry || echo "OK: 등록�
 ### 7.8 Codex 세션 수명주기 훅
 
 Codex 로컬 배선은 사용자 훅 배열을 보존하면서 `SessionStart`와 `SessionEnd`에
-`pulsemetry hook codex` command handler를 하나씩 설치한다. 이 숨은 CLI 명령은 stdin JSON에서
-`session_id`와 이벤트 종류만 읽어 OS 로컬 토큰을 붙인 loopback API로 전달한다. 데몬이 꺼져 있거나
+현재 설치 바이너리의 절대 경로로 `hook codex` command handler를 하나씩 설치한다. 사용자 PATH는
+바꾸지 않는다. 이 숨은 CLI 명령은 stdin JSON에서 `session_id`와 이벤트 종류만 읽어 OS 로컬 토큰을
+붙인 loopback API로 전달한다. Codex timeout은 최대 3초, 내부 HTTP는 750ms이며, 데몬이 꺼져 있거나
 요청이 실패해도 항상 성공으로 끝나 Codex 종료를 막지 않는다.
 
 시작 훅은 `sessions.started_at`의 최솟값을 보존하면서 `ended_at`을 비우고, 종료 훅은
-`ended_at`을 기록한다. 훅은 활동 신호가 아니므로 `last_activity_at`은 바꾸지 않는다. 그 값은 계속
-OTel 이벤트를 저장할 때만 갱신되며, 종료 훅 누락은 유휴 세션 SQL 스윕이 보완한다(ADR 0019).
+`ended_at`을 기록한다. 시작·재개 훅은 OTel이 아직 없는 세션도 스윕할 수 있도록
+`last_activity_at`의 바닥값을 전진시키며, 종료 훅은 이를 바꾸지 않는다. 종료 훅 누락은 유휴 세션
+SQL 스윕이 보완한다(ADR 0019, ADR 0020).
 
-훅 소유권은 별도 state나 fingerprint 파일이 아니라 `type=command`와 예약 명령 문자열의 정확한
-일치로 판정한다. 따라서 재배선은 중복을 만들지 않고, 로컬 배선 해제는 사용자 handler를 남긴 채
-Pulsemetry handler만 제거한다.
+훅 소유권은 별도 state나 fingerprint 파일이 아니라 `type=command`, Pulsemetry 실행 파일 이름,
+예약 서브커맨드 `hook codex`의 일치로 판정한다. 따라서 경로가 바뀐 재배선도 중복을 만들지 않고,
+로컬 배선 해제는 사용자 handler를 남긴 채 Pulsemetry handler만 제거한다.
 
 ---
 

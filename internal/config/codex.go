@@ -3,6 +3,8 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -33,23 +35,59 @@ const (
 	codexLogsExporterKey    = "exporter"
 	codexMetricsExporterKey = "metrics_exporter"
 	codexTracesExporterKey  = "trace_exporter"
-	codexHookCommand        = "pulsemetry hook codex"
+	codexLegacyHookCommand  = "pulsemetry hook codex"
+	codexHookTimeoutSeconds = int64(3)
 )
 
 var codexLifecycleEvents = []string{"SessionStart", "SessionEnd"}
 
-func codexHookHandler() map[string]any {
-	return map[string]any{"type": "command", "command": codexHookCommand, "timeout": int64(1)}
+func codexHookCommand(executable string) (string, error) {
+	if executable == "" {
+		return codexLegacyHookCommand, nil
+	}
+	if !filepath.IsAbs(executable) {
+		return "", fmt.Errorf("Codex hook 실행 경로가 절대 경로가 아님: %q", executable)
+	}
+	// 설치 경로는 현재 OS의 경로라 그 OS 셸에 맞춰 한 번만 인용한다.
+	if runtime.GOOS == "windows" {
+		return `"` + strings.ReplaceAll(executable, `"`, `\"`) + `" hook codex`, nil
+	}
+	return `'` + strings.ReplaceAll(executable, `'`, `'"'"'`) + `' hook codex`, nil
 }
 
-func sameCodexHook(v map[string]any) bool {
+func codexHookHandler(command string) map[string]any {
+	handler := map[string]any{
+		"type": "command", "command": command, "timeout": codexHookTimeoutSeconds,
+	}
+	if runtime.GOOS == "windows" {
+		handler["commandWindows"] = command
+	}
+	return handler
+}
+
+func sameCodexHook(v map[string]any, desired string) bool {
 	typ, _ := v["type"].(string)
 	command, _ := v["command"].(string)
-	return typ == "command" && command == codexHookCommand
+	if typ != "command" {
+		return false
+	}
+	if command == desired || command == codexLegacyHookCommand {
+		return true
+	}
+	// 절대 경로는 업그레이드로 달라질 수 있다. 예약한 서브커맨드와 pulsemetry 실행
+	// 파일 이름이 함께 맞는 handler만 이전 설치의 것으로 인정한다.
+	trimmed := strings.TrimSpace(command)
+	if !strings.HasSuffix(trimmed, " hook codex") {
+		return false
+	}
+	trimmed = strings.TrimSpace(strings.TrimSuffix(trimmed, " hook codex"))
+	trimmed = strings.Trim(strings.TrimSpace(trimmed), `"'`)
+	base := strings.ToLower(filepath.Base(trimmed))
+	return base == "pulsemetry" || base == "pulsemetry.exe"
 }
 
 // mergeCodexHooks 는 이벤트 배열이나 사용자 handler를 소유하지 않고 우리 handler 하나만 관리한다.
-func mergeCodexHooks(root map[string]any, enabled bool) []string {
+func mergeCodexHooks(root map[string]any, enabled bool, command string) []string {
 	hooks, _ := root["hooks"].(map[string]any)
 	if hooks == nil {
 		hooks = map[string]any{}
@@ -57,37 +95,32 @@ func mergeCodexHooks(root map[string]any, enabled bool) []string {
 	managed := []string{}
 	for _, eventName := range codexLifecycleEvents {
 		groups, _ := hooks[eventName].([]map[string]any)
-		found := false
+		// 우리 handler 는 남기지 않고 아래에서 새로 넣는다 (mergeClaudeHooks 와 같은
+		// 규칙). 매칭된 것을 그대로 두면 이전 설치의 낡은 경로·timeout 이 병합을
+		// 몇 번 돌려도 영원히 남는다.
+		out := groups[:0]
 		for _, group := range groups {
 			handlers, _ := group["hooks"].([]map[string]any)
 			kept := handlers[:0]
 			for _, handler := range handlers {
-				if sameCodexHook(handler) {
-					found = true
-					if !enabled {
-						continue
-					}
+				if sameCodexHook(handler, command) {
+					continue
 				}
 				kept = append(kept, handler)
 			}
-			group["hooks"] = kept
-		}
-		if enabled && !found {
-			groups = append(groups, map[string]any{"hooks": []map[string]any{codexHookHandler()}})
-		}
-		out := groups[:0]
-		for _, group := range groups {
-			if handlers, _ := group["hooks"].([]map[string]any); len(handlers) > 0 {
+			if len(kept) > 0 {
+				group["hooks"] = kept
 				out = append(out, group)
 			}
+		}
+		if enabled {
+			out = append(out, map[string]any{"hooks": []map[string]any{codexHookHandler(command)}})
+			managed = append(managed, "hooks."+eventName+":"+command)
 		}
 		if len(out) == 0 {
 			delete(hooks, eventName)
 		} else {
 			hooks[eventName] = out
-		}
-		if enabled {
-			managed = append(managed, "hooks."+eventName+":"+codexHookCommand)
 		}
 	}
 	if len(hooks) == 0 {
@@ -203,7 +236,17 @@ func cloneHeaders(h map[string]any) map[string]any {
 }
 
 // MergeCodex authoritatively synchronizes only Pulsemetry-managed [otel] keys.
-func MergeCodex(path string, m *contract.Manifest, token string, _ bool) (Result, error) {
+func MergeCodex(path string, m *contract.Manifest, token string, force bool) (Result, error) {
+	return MergeCodexWithExecutable(path, m, token, force, "")
+}
+
+// MergeCodexWithExecutable 는 로컬 lifecycle 훅에 PATH 대신 현재 설치 바이너리의 절대
+// 경로를 쓴다. executable은 회사 직결에서도 받아 두어 local disable이 이전 훅을 찾는다.
+func MergeCodexWithExecutable(path string, m *contract.Manifest, token string, _ bool, executable string) (Result, error) {
+	hookCommand, err := codexHookCommand(executable)
+	if err != nil {
+		return Result{}, err
+	}
 	raw, existed, err := readFileIfExists(path)
 	if err != nil {
 		return Result{}, err
@@ -230,7 +273,7 @@ func MergeCodex(path string, m *contract.Manifest, token string, _ bool) (Result
 		otel[key] = value
 		managed = append(managed, "otel."+key)
 	}
-	managed = append(managed, mergeCodexHooks(root, isLocalEndpoint(m.OTLP.Endpoint))...)
+	managed = append(managed, mergeCodexHooks(root, isLocalEndpoint(m.OTLP.Endpoint), hookCommand)...)
 	sort.Strings(managed)
 	root["otel"] = otel
 	var out bytes.Buffer

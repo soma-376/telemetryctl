@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -217,5 +218,100 @@ timeout = 9
 	}
 	if _, ok := hooks["SessionEnd"]; ok {
 		t.Fatalf("Pulsemetry SessionEnd 잔재: %#v", hooks)
+	}
+}
+
+func TestMergeCodexLifecycleHookUsesAbsoluteExecutableAndMaximumTimeout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	executable := filepath.Join(t.TempDir(), "Pulsemetry App", "pulsemetry.exe")
+	local := companyManifest()
+	local.OTLP.Endpoint = "http://localhost:4318"
+
+	if _, err := MergeCodexWithExecutable(path, local, "local-token", false, executable); err != nil {
+		t.Fatal(err)
+	}
+	wantCommand, err := codexHookCommand(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := readTOML(t, path)
+	hooks, _ := root["hooks"].(map[string]any)
+	for _, eventName := range codexLifecycleEvents {
+		groups, _ := hooks[eventName].([]map[string]any)
+		if len(groups) != 1 {
+			t.Fatalf("%s groups = %d, want 1", eventName, len(groups))
+		}
+		handlers, _ := groups[0]["hooks"].([]map[string]any)
+		if len(handlers) != 1 {
+			t.Fatalf("%s handlers = %d, want 1", eventName, len(handlers))
+		}
+		if got := handlers[0]["command"]; got != wantCommand {
+			t.Errorf("%s command = %v, want %q", eventName, got, wantCommand)
+		}
+		if got := handlers[0]["timeout"]; got != codexHookTimeoutSeconds {
+			t.Errorf("%s timeout = %v, want %d", eventName, got, codexHookTimeoutSeconds)
+		}
+		_, hasWindows := handlers[0]["commandWindows"]
+		if hasWindows != (runtime.GOOS == "windows") {
+			t.Errorf("%s commandWindows 존재 = %v, GOOS=%s", eventName, hasWindows, runtime.GOOS)
+		}
+	}
+
+	// 업그레이드로 실행 경로가 달라져도 이전 Pulsemetry 훅을 회수해야 한다.
+	newExecutable := filepath.Join(t.TempDir(), "new", "pulsemetry.exe")
+	if _, err := MergeCodexWithExecutable(path, companyManifest(), "company-token", false, newExecutable); err != nil {
+		t.Fatal(err)
+	}
+	if hooks, ok := readTOML(t, path)["hooks"]; ok {
+		t.Fatalf("disable 후 절대 경로 훅 잔재: %#v", hooks)
+	}
+}
+
+func TestSameCodexHookRequiresReservedSubcommand(t *testing.T) {
+	handler := map[string]any{"type": "command", "command": `"C:\\Tools\\pulsemetry.exe" status`}
+	if sameCodexHook(handler, codexLegacyHookCommand) {
+		t.Fatal("hook codex가 아닌 사용자 Pulsemetry 명령을 우리 훅으로 판정했다")
+	}
+}
+
+// 매칭된 handler 를 그대로 두면 이전 설치의 낡은 경로·timeout 이 병합을 몇 번 돌려도
+// 남는다. 우리 것은 항상 걷어내고 새로 넣는다 (mergeClaudeHooks 와 같은 규칙).
+func TestMergeCodexReplacesStaleHookOnEnable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(`[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "pulsemetry hook codex"
+timeout = 1
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	local := companyManifest()
+	local.OTLP.Endpoint = "http://localhost:4318"
+	executable := filepath.Join(t.TempDir(), "new", "pulsemetry.exe")
+	if _, err := MergeCodexWithExecutable(path, local, "local-token", false, executable); err != nil {
+		t.Fatal(err)
+	}
+
+	wantCommand, err := codexHookCommand(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hooks, _ := readTOML(t, path)["hooks"].(map[string]any)
+	groups, _ := hooks["SessionStart"].([]map[string]any)
+	var handlers []map[string]any
+	for _, g := range groups {
+		hs, _ := g["hooks"].([]map[string]any)
+		handlers = append(handlers, hs...)
+	}
+	if len(handlers) != 1 {
+		t.Fatalf("handlers = %d, want 1 (낡은 것 잔존): %#v", len(handlers), handlers)
+	}
+	if got := handlers[0]["command"]; got != wantCommand {
+		t.Errorf("command = %v, want %q", got, wantCommand)
+	}
+	if got := handlers[0]["timeout"]; got != codexHookTimeoutSeconds {
+		t.Errorf("timeout = %v, want %d", got, codexHookTimeoutSeconds)
 	}
 }

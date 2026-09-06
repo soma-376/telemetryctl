@@ -50,6 +50,16 @@ type applyStep struct {
 	backup config.Backup
 }
 
+// mergeCodexInstalled 는 Codex command hook이 셸 PATH에 의존하지 않게 한다. 설치·재배선·
+// 재연결이 모두 같은 함수를 써야 이전 절대 경로 훅을 교체하거나 제거할 수 있다.
+func mergeCodexInstalled(path string, manifest *contract.Manifest, token string, force bool) (config.Result, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return config.Result{}, fmt.Errorf("Pulsemetry 실행 경로 확인 실패: %w", err)
+	}
+	return config.MergeCodexWithExecutable(path, manifest, token, force, executable)
+}
+
 // Apply backs up all existing vendor files, synchronizes managed OTel keys,
 // and restores previously modified files if any later operation fails.
 //
@@ -113,7 +123,7 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 
 	steps := []applyStep{
 		{tool: "claude", path: opts.ClaudePath, merge: config.MergeClaude},
-		{tool: "codex", path: opts.CodexPath, merge: config.MergeCodex},
+		{tool: "codex", path: opts.CodexPath, merge: mergeCodexInstalled},
 	}
 	prepared := make([]applyStep, 0, len(steps))
 	backupTime := time.Now().UTC()
