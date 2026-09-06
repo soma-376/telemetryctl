@@ -14,7 +14,11 @@ type state struct {
 	vendor      string
 	started     event.UnixSec
 	last        event.UnixSec
+	hasActivity bool
 	ended       event.Opt[event.UnixSec]
+	// hookEnded 는 명시적인 SessionEnd 훅으로 닫혔다는 뜻이다. 종료 전에 발생해 늦게
+	// 도착한 OTel 배치가 세션을 다시 여는 것을 막는다.
+	hookEnded   bool
 	status      Status
 	projectHash string
 	projectName string
@@ -84,6 +88,7 @@ func newState(e event.Event, watchFrom event.UnixNano) *state {
 		vendor:        e.Vendor,
 		started:       ts,
 		last:          ts,
+		hasActivity:   true,
 		status:        StatusRunning,
 		files:         make(map[string]*fileState),
 		mcp:           make(map[string]*MCPUsage),
@@ -96,6 +101,7 @@ func newState(e event.Event, watchFrom event.UnixNano) *state {
 // observe 는 어떤 이벤트든 공통으로 갱신하는 것을 처리한다.
 func (s *state) observe(e event.Event) {
 	ts := e.TS.Sec()
+	s.hasActivity = true
 	// 이벤트가 순서대로 온다고 가정하지 않는다. exporter 배치가 섞이면 첫 도착이
 	// 가장 이른 이벤트가 아니다.
 	if ts < s.started {
@@ -104,13 +110,14 @@ func (s *state) observe(e event.Event) {
 	if ts > s.last {
 		s.last = ts
 	}
-	if s.ended.Valid() {
+	if s.ended.Valid() && (!s.hookEnded || ts > s.ended.Or(0)) {
 		// 같은 session.id 재등장 — 마감을 되돌리고 진행 중으로 되돌린다.
 		// 늦게 도착한 낙오 이벤트여서 여전히 유휴라면 다음 Advance 가 즉시 다시 마감한다.
 		// ended_at 은 last_event_at 이라 낙오 이벤트가 마감 시각을 흔들지도 않는다.
 		s.ended = event.Opt[event.UnixSec]{}
 		s.status = StatusRunning
 		s.statusReason = ""
+		s.hookEnded = false
 		s.reopens++
 	}
 	if s.vendor == "" {

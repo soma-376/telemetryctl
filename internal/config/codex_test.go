@@ -169,3 +169,53 @@ func TestMergeCodexLocalHeaderIsManaged(t *testing.T) {
 		t.Errorf("disable 후에도 %s 가 남았다 — 회사 Collector 로 잔재가 나간다", LocalIngestHeader)
 	}
 }
+
+func TestMergeCodexLifecycleHooksPreserveUserHooksAndRemoveOnlyOurs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(`[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "my-session-logger"
+timeout = 9
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	local := companyManifest()
+	local.OTLP.Endpoint = "http://localhost:4318"
+	if _, err := MergeCodex(path, local, "local-token", false); err != nil {
+		t.Fatal(err)
+	}
+	root := readTOML(t, path)
+	features, _ := root["features"].(map[string]any)
+	if features["hooks"] != true {
+		t.Fatalf("features.hooks = %v", features["hooks"])
+	}
+	hooks, _ := root["hooks"].(map[string]any)
+	start, _ := hooks["SessionStart"].([]map[string]any)
+	if len(start) != 2 {
+		t.Fatalf("SessionStart groups = %d, want 2: %#v", len(start), start)
+	}
+	if _, err := MergeCodex(path, local, "local-token", false); err != nil {
+		t.Fatal(err)
+	}
+	hooks, _ = readTOML(t, path)["hooks"].(map[string]any)
+	start, _ = hooks["SessionStart"].([]map[string]any)
+	if len(start) != 2 {
+		t.Fatalf("재병합 후 groups = %d, want 2", len(start))
+	}
+	if _, err := MergeCodex(path, companyManifest(), "company-token", false); err != nil {
+		t.Fatal(err)
+	}
+	hooks, _ = readTOML(t, path)["hooks"].(map[string]any)
+	start, _ = hooks["SessionStart"].([]map[string]any)
+	if len(start) != 1 {
+		t.Fatalf("disable 후 groups = %d, want user group 1: %#v", len(start), start)
+	}
+	handlers, _ := start[0]["hooks"].([]map[string]any)
+	if len(handlers) != 1 || handlers[0]["command"] != "my-session-logger" {
+		t.Fatalf("사용자 hook이 바뀜: %#v", handlers)
+	}
+	if _, ok := hooks["SessionEnd"]; ok {
+		t.Fatalf("Pulsemetry SessionEnd 잔재: %#v", hooks)
+	}
+}

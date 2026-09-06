@@ -11,6 +11,7 @@ import (
 
 	"github.com/your-org/pulsemetry/internal/event"
 	"github.com/your-org/pulsemetry/internal/forward"
+	"github.com/your-org/pulsemetry/internal/localapi"
 	"github.com/your-org/pulsemetry/internal/otlpdecode"
 	"github.com/your-org/pulsemetry/internal/receiver"
 	"github.com/your-org/pulsemetry/internal/session"
@@ -85,11 +86,14 @@ const (
 	// 닫힌 채널에 보내면 select 안이라도 panic 이기 때문이다 — 종료와 Consume 이
 	// 겹칠 여지를 아예 없앤다.
 	cmdFinal
+	cmdLifecycle
 )
 
 type command struct {
-	kind  cmdKind
-	batch receiver.Batch
+	kind      cmdKind
+	batch     receiver.Batch
+	lifecycle localapi.LifecycleEvent
+	done      chan error
 }
 
 // counters 는 바깥(종료 요약·후속 status 명령)에서 읽는 집계다. 값은 담지 않고 개수만이다.
@@ -202,6 +206,29 @@ func newPipeline(cfg pipelineConfig) *pipeline {
 	return p
 }
 
+// SubmitLifecycle 는 동기 command hook의 입력을 파이프라인 소유 고루틴에서 저장한다.
+func (p *pipeline) SubmitLifecycle(ctx context.Context, lifecycle localapi.LifecycleEvent) error {
+	if err := lifecycle.Validate(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	select {
+	case p.cmds <- command{kind: cmdLifecycle, lifecycle: lifecycle, done: done}:
+	case <-p.done:
+		return errors.New("daemon: 파이프라인이 이미 종료됨")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-done:
+		return err
+	case <-p.done:
+		return errors.New("daemon: 파이프라인이 이미 종료됨")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 type pipelineConfig struct {
 	DB           *store.DB
 	Forwarder    *forward.Forwarder
@@ -306,6 +333,20 @@ func (p *pipeline) run() {
 			p.finalFlush()
 			close(p.done)
 			return
+		case cmdLifecycle:
+			at := event.SecFromTime(p.now())
+			ctx, cancel := context.WithTimeout(context.Background(), p.writeTimeout)
+			err := p.db.ApplyLifecycle(ctx, c.lifecycle.Vendor, c.lifecycle.SessionID,
+				at, c.lifecycle.End)
+			cancel()
+			if err == nil {
+				if c.lifecycle.End {
+					p.asm.EndLifecycle(c.lifecycle.SessionID, at)
+				} else {
+					p.asm.StartLifecycle(c.lifecycle.SessionID, c.lifecycle.Vendor, at)
+				}
+			}
+			c.done <- err
 		}
 	}
 }

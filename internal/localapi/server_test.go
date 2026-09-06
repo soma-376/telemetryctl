@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/your-org/pulsemetry/internal/dashboard/tray"
@@ -25,6 +26,31 @@ func (f *fakeSource) Snapshot(_ context.Context, q tray.Query) (tray.Snapshot, e
 type fakeRefresher struct {
 	calls  int
 	manual int
+}
+
+type fakeHookSink struct{ got LifecycleEvent }
+
+func (f *fakeHookSink) SubmitLifecycle(_ context.Context, e LifecycleEvent) error {
+	f.got = e
+	return nil
+}
+
+func TestServerAcceptsLifecycleHook(t *testing.T) {
+	hooks := &fakeHookSink{}
+	srv := httptest.NewServer(NewServer(&fakeRefresher{}, &fakeSource{}, hooks))
+	defer srv.Close()
+	resp, err := http.Post(srv.URL+SessionEndPath, "application/json",
+		strings.NewReader(`{"vendor":"codex","session_id":"thr-1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	if hooks.got.SessionID != "thr-1" || !hooks.got.End {
+		t.Fatalf("got=%+v", hooks.got)
+	}
 }
 
 func (f *fakeRefresher) RefreshAuto(context.Context) error {

@@ -33,7 +33,92 @@ const (
 	codexLogsExporterKey    = "exporter"
 	codexMetricsExporterKey = "metrics_exporter"
 	codexTracesExporterKey  = "trace_exporter"
+	codexHookCommand        = "pulsemetry hook codex"
 )
+
+var codexLifecycleEvents = []string{"SessionStart", "SessionEnd"}
+
+func codexHookHandler() map[string]any {
+	return map[string]any{"type": "command", "command": codexHookCommand, "timeout": int64(1)}
+}
+
+func sameCodexHook(v map[string]any) bool {
+	typ, _ := v["type"].(string)
+	command, _ := v["command"].(string)
+	return typ == "command" && command == codexHookCommand
+}
+
+// mergeCodexHooks 는 이벤트 배열이나 사용자 handler를 소유하지 않고 우리 handler 하나만 관리한다.
+func mergeCodexHooks(root map[string]any, enabled bool) []string {
+	hooks, _ := root["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
+	managed := []string{}
+	for _, eventName := range codexLifecycleEvents {
+		groups, _ := hooks[eventName].([]map[string]any)
+		found := false
+		for _, group := range groups {
+			handlers, _ := group["hooks"].([]map[string]any)
+			kept := handlers[:0]
+			for _, handler := range handlers {
+				if sameCodexHook(handler) {
+					found = true
+					if !enabled {
+						continue
+					}
+				}
+				kept = append(kept, handler)
+			}
+			group["hooks"] = kept
+		}
+		if enabled && !found {
+			groups = append(groups, map[string]any{"hooks": []map[string]any{codexHookHandler()}})
+		}
+		out := groups[:0]
+		for _, group := range groups {
+			if handlers, _ := group["hooks"].([]map[string]any); len(handlers) > 0 {
+				out = append(out, group)
+			}
+		}
+		if len(out) == 0 {
+			delete(hooks, eventName)
+		} else {
+			hooks[eventName] = out
+		}
+		if enabled {
+			managed = append(managed, "hooks."+eventName+":"+codexHookCommand)
+		}
+	}
+	if len(hooks) == 0 {
+		delete(root, "hooks")
+	} else {
+		root["hooks"] = hooks
+	}
+	// features.hooks 는 켤 때 쓰는 값이 아니라 **끌 때 지워야 하는 값**이다. 켜는 분기만
+	// 두면 local disable 이 훅 handler 는 걷어내면서 이 스위치를 남겨, 우리를 제거한 뒤에도
+	// Codex 의 훅 기능이 켜진 채로 남는다. 바로 위 hooks 테이블이 비면 지우는 것과 같은
+	// 대칭이다 — 관리 키는 되돌릴 수 있어야 소유했다고 말할 수 있다.
+	features, _ := root["features"].(map[string]any)
+	if enabled {
+		if features == nil {
+			features = map[string]any{}
+		}
+		features["hooks"] = true
+		root["features"] = features
+		managed = append(managed, "features.hooks")
+		return managed
+	}
+	if features != nil {
+		delete(features, "hooks")
+		if len(features) == 0 {
+			delete(root, "features")
+		} else {
+			root["features"] = features
+		}
+	}
+	return managed
+}
 
 // codexSignalPaths 는 로컬 배선에서 시그널별 exporter 가 가리킬 경로다.
 //
@@ -148,6 +233,7 @@ func MergeCodex(path string, m *contract.Manifest, token string, _ bool) (Result
 		otel[key] = value
 		managed = append(managed, "otel."+key)
 	}
+	managed = append(managed, mergeCodexHooks(root, isLocalEndpoint(m.OTLP.Endpoint))...)
 	sort.Strings(managed)
 	root["otel"] = otel
 	var out bytes.Buffer

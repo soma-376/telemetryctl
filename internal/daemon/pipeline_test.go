@@ -10,10 +10,54 @@ import (
 	"testing"
 	"time"
 
+	"github.com/your-org/pulsemetry/internal/localapi"
 	"github.com/your-org/pulsemetry/internal/otlpdecode"
 	"github.com/your-org/pulsemetry/internal/receiver"
 	"github.com/your-org/pulsemetry/internal/store"
 )
+
+func TestLifecycleHookStartsEndsAndReopensSession(t *testing.T) {
+	db := openTestStore(t)
+	t.Cleanup(func() { _ = db.Close() })
+	now := time.Unix(fixtureUnix, 0).UTC()
+	p := newTestPipeline(t, db, &syncBuffer{}, func() time.Time { return now })
+	ctx := context.Background()
+	e := localapi.LifecycleEvent{Vendor: "codex", SessionID: "thr-hook", Source: "startup"}
+	if err := p.SubmitLifecycle(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	var started int64
+	var ended any
+	if err := db.SQL().QueryRow(`SELECT started_at, ended_at FROM sessions WHERE session_key='thr-hook'`).Scan(&started, &ended); err != nil {
+		t.Fatal(err)
+	}
+	if started != now.Unix() || ended != nil {
+		t.Fatalf("start=%d end=%v", started, ended)
+	}
+	now = now.Add(time.Minute)
+	e.End = true
+	if err := p.SubmitLifecycle(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SQL().QueryRow(`SELECT ended_at FROM sessions WHERE session_key='thr-hook'`).Scan(&ended); err != nil {
+		t.Fatal(err)
+	}
+	if ended != now.Unix() {
+		t.Fatalf("end=%v", ended)
+	}
+	now = now.Add(time.Minute)
+	e.End = false
+	e.Source = "resume"
+	if err := p.SubmitLifecycle(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SQL().QueryRow(`SELECT ended_at FROM sessions WHERE session_key='thr-hook'`).Scan(&ended); err != nil {
+		t.Fatal(err)
+	}
+	if ended != nil {
+		t.Fatalf("resume end=%v", ended)
+	}
+}
 
 // newTestPipeline 은 수신기 없이 파이프라인만 띄운다. 저장 실패·조립기 정리처럼
 // HTTP 를 거치지 않고 봐야 하는 경로를 위한 것이다.

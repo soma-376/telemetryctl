@@ -121,7 +121,7 @@ func (a *Assembler) Advance(now event.UnixSec) []Session {
 
 	var closed []Session
 	for _, s := range a.sessions {
-		if s.ended.Valid() || now-s.last < limit {
+		if s.ended.Valid() || !s.hasActivity || now-s.last < limit {
 			continue
 		}
 		a.close(s)
@@ -148,6 +148,34 @@ func (a *Assembler) Session(id string) (Session, bool) {
 		return Session{}, false
 	}
 	return s.session(), true
+}
+
+// StartLifecycle 는 명시적 시작·재개 훅을 조립기 상태에 반영한다.
+func (a *Assembler) StartLifecycle(sessionID, vendor string, at event.UnixSec) {
+	s := a.sessions[sessionID]
+	if s == nil {
+		e := event.Event{SessionID: sessionID, Vendor: vendor, TS: event.UnixNano(at) * event.UnixNano(time.Second)}
+		s = newState(e, e.TS)
+		s.last = 0
+		s.hasActivity = false
+		a.sessions[sessionID] = s
+	}
+	if s.started == 0 || at < s.started {
+		s.started = at
+	}
+	s.ended = event.Opt[event.UnixSec]{}
+	s.hookEnded = false
+	s.status = StatusRunning
+}
+
+// EndLifecycle 는 명시적 종료 훅을 이미 관측 중인 세션에 반영한다. 조립기가 모르는
+// 세션은 store가 직접 닫고, 여기에는 만들지 않아 이후 스냅샷이 덮어쓰지 않게 한다.
+func (a *Assembler) EndLifecycle(sessionID string, at event.UnixSec) {
+	if s := a.sessions[sessionID]; s != nil {
+		s.ended = event.Some(at)
+		s.hookEnded = true
+		s.status = StatusCompleted
+	}
 }
 
 // Prune 은 before 이전에 마감된 세션을 조립기 메모리에서 지우고 지운 개수를 돌려준다.

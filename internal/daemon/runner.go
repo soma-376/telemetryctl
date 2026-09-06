@@ -454,7 +454,7 @@ func (d *daemon) startReceiver() error {
 		Logger:    d.log,
 		Decode:    otlpdecode.Options{InstallationID: d.state.InstallationID},
 		Now:       d.opts.Now,
-		LocalAPI:  localapi.NewServer(d.limits, tray.NewBuilder(d.query)),
+		LocalAPI:  localapi.NewServer(d.limits, tray.NewBuilder(d.query), d.pipe),
 	})
 	if err != nil {
 		return fmt.Errorf("로컬 수신기 기동: %w", err)

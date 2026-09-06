@@ -5,6 +5,7 @@
 //	POST /v1/metrics · /v1/logs · /v1/traces
 //	GET  /healthz    (인증 없음, status 명령이 사용)
 //	GET  /v1/tray · POST /v1/tray/refresh (인증된 로컬 GUI API)
+//	POST /v1/hooks/session-start · /session-end (인증된 벤더 수명주기 훅)
 //	그 외             404
 //
 // # 이 패키지가 지키는 상한선은 §5.4 다
@@ -48,6 +49,7 @@ const (
 	// LocalAPIPathPrefix 는 GUI 가 부르는 로컬 API 경로의 접두다. 개별 경로는
 	// internal/localapi 가 정하고, 여기서는 인증만 태워 그대로 넘긴다 (ServeHTTP).
 	LocalAPIPathPrefix = "/v1/tray"
+	HookAPIPathPrefix  = "/v1/hooks/"
 
 	// DefaultMaxBodyBytes 는 요청 본문 상한이다 (계획서 「수신기 설계」의 4 MiB).
 	// gzip 은 **압축 해제 후** 크기에 이 값을 건다 (body.go).
@@ -349,7 +351,7 @@ func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rc.serveHealth(w, r)
 		return
 	}
-	if strings.HasPrefix(r.URL.Path, LocalAPIPathPrefix) && rc.opt.LocalAPI != nil {
+	if (strings.HasPrefix(r.URL.Path, LocalAPIPathPrefix) || strings.HasPrefix(r.URL.Path, HookAPIPathPrefix)) && rc.opt.LocalAPI != nil {
 		if ok, reason := rc.authorize(r); !ok {
 			total := rc.stats.unauthorized.Add(1)
 			rc.logUnauthorized(reason, total)
