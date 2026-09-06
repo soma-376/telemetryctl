@@ -166,8 +166,11 @@ func claudeHookHandler(endpoint, path, token string) map[string]any {
 	}
 }
 
-// isClaudeHook 은 handler 가 우리 것인지 본다. URL 전체가 아니라 경로로 판정하는 이유는
-// 포트가 폴백으로 바뀌어도 예전에 쓴 handler 를 알아보고 지워야 하기 때문이다.
+// isClaudeHook 은 handler 가 우리 것인지 본다.
+//
+// 포트는 보지 않는다 — 폴백으로 바뀌어도 예전에 쓴 handler 를 알아보고 지워야 한다.
+// 대신 loopback 호스트와 경로를 함께 본다. 경로만 보면 `/v1/hooks/` 를 쓰는 남의
+// 서버(사내 감사 서비스 등)로 향하는 사용자 훅까지 우리 것으로 오인해 지운다.
 func isClaudeHook(v map[string]any) bool {
 	if typ, _ := v["type"].(string); typ != "http" {
 		return false
@@ -175,6 +178,9 @@ func isClaudeHook(v map[string]any) bool {
 	raw, _ := v["url"].(string)
 	parsed, err := url.Parse(raw)
 	if err != nil {
+		return false
+	}
+	if !isLocalEndpoint(parsed.Scheme + "://" + parsed.Host) {
 		return false
 	}
 	return strings.HasPrefix(parsed.Path, hookAPIPathPrefix)

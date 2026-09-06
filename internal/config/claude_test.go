@@ -419,3 +419,37 @@ func TestMergeClaudeHooks(t *testing.T) {
 		}
 	})
 }
+
+// 경로만 보면 /v1/hooks/ 를 쓰는 남의 서버로 향하는 사용자 훅까지 우리 것으로 오인한다.
+func TestMergeClaudeHooksKeepsRemoteUserHookOnSamePath(t *testing.T) {
+	const local = "http://localhost:4318"
+	remote := map[string]any{
+		"type": "http", "url": "https://mycorp.example.com/v1/hooks/audit",
+	}
+	root := map[string]any{"hooks": map[string]any{
+		"SessionEnd": []map[string]any{{"hooks": []map[string]any{remote}}},
+	}}
+
+	mergeClaudeHooks(root, local, "tok-1", true)
+
+	got := claudeHooks(t, root, "SessionEnd")
+	if len(got) != 2 {
+		t.Fatalf("handler = %d개, want 2 (사용자 것 + 우리 것): %#v", len(got), got)
+	}
+	var kept bool
+	for _, h := range got {
+		if u, _ := h["url"].(string); u == remote["url"] {
+			kept = true
+		}
+	}
+	if !kept {
+		t.Fatalf("남의 서버로 향하는 사용자 훅을 지웠다: %#v", got)
+	}
+
+	// disable 에서도 마찬가지다.
+	mergeClaudeHooks(root, "https://collector.example.com", "tok-1", false)
+	got = claudeHooks(t, root, "SessionEnd")
+	if len(got) != 1 || got[0]["url"] != remote["url"] {
+		t.Fatalf("disable 후 = %#v, want 사용자 훅만", got)
+	}
+}

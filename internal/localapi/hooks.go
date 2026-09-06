@@ -102,6 +102,12 @@ func DecodeHook(r io.Reader, vendorID string, end bool) (LifecycleEvent, error) 
 	if err := json.NewDecoder(r).Decode(&p); err != nil {
 		return LifecycleEvent{}, fmt.Errorf("hook 본문 파싱: %w", err)
 	}
+	// 별칭이 와도 정식 ID 로 옮겨 담는다. 원문을 그대로 두면 그 값이 sessions.vendor_id
+	// 로 저장되어, OTLP 가 정규화해 만든 같은 세션과 다른 행으로 갈린다.
+	canonical, ok := vendor.Normalize(vendorID)
+	if ok {
+		vendorID = string(canonical)
+	}
 	event := LifecycleEvent{
 		Vendor: vendorID, SessionID: p.SessionID, Source: p.Source, End: end,
 	}

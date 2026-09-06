@@ -192,3 +192,24 @@ func TestServerRefreshCarriesManualGrade(t *testing.T) {
 		})
 	}
 }
+
+// 별칭이 와도 정식 ID 로 저장해야 한다. 원문을 그대로 두면 OTLP 가 정규화해 만든
+// 같은 세션과 vendor_id 가 달라져 두 행으로 갈린다.
+func TestDecodeHookNormalizesVendorAlias(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"claude_code", "claude_code"},
+		{"claude-code", "claude_code"},
+		{"claude", "claude_code"},
+		{"codex_exec", "codex"},
+	}
+	for _, tt := range tests {
+		got, err := DecodeHook(
+			strings.NewReader(`{"session_id":"s1","hook_event_name":"SessionEnd"}`), tt.in, true)
+		if err != nil {
+			t.Fatalf("DecodeHook(%q): %v", tt.in, err)
+		}
+		if got.Vendor != tt.want {
+			t.Errorf("vendor(%q) = %q, want %q", tt.in, got.Vendor, tt.want)
+		}
+	}
+}

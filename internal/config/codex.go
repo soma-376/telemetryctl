@@ -136,12 +136,18 @@ func mergeCodexHooks(root map[string]any, enabled bool, command string) []string
 			hooks[eventName] = out
 		}
 	}
-	if len(hooks) == 0 {
+	// hooksEmpty 는 우리 handler 를 걷어낸 뒤 남은 훅이 하나도 없다는 뜻이다.
+	hooksEmpty := len(hooks) == 0
+	if hooksEmpty {
 		delete(root, "hooks")
 	} else {
 		root["hooks"] = hooks
 	}
-	// 끄는 분기가 있어야 local disable 이 이 스위치를 남기지 않는다.
+
+	// features.hooks 는 우리 키가 아니라 Codex 의 훅 기능 자체를 켜는 토글이다. 누가
+	// 켰는지 알 방법이 없으므로 소유권으로 판단하지 않고 **필요 여부**로 판단한다 —
+	// 남은 handler 가 하나도 없을 때만 끈다. 사용자 훅이 남았는데 끄면 그 훅이 통째로
+	// 죽고, 끄는 분기가 아예 없으면 local disable 이 스위치를 남긴다.
 	features, _ := root["features"].(map[string]any)
 	if enabled {
 		if features == nil {
@@ -152,7 +158,7 @@ func mergeCodexHooks(root map[string]any, enabled bool, command string) []string
 		managed = append(managed, "features.hooks")
 		return managed
 	}
-	if features != nil {
+	if features != nil && hooksEmpty {
 		delete(features, "hooks")
 		if len(features) == 0 {
 			delete(root, "features")

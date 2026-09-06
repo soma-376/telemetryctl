@@ -314,3 +314,39 @@ timeout = 1
 		t.Errorf("timeout = %v, want %d", got, codexHookTimeoutSeconds)
 	}
 }
+
+// features.hooks 는 Codex 의 훅 기능 자체를 켜는 토글이다. 사용자 handler 가 남았는데
+// 끄면 그 훅이 통째로 죽는다 — 남은 handler 가 없을 때만 끈다.
+func TestMergeCodexKeepsFeatureSwitchWhileUserHooksRemain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(`[features]
+hooks = true
+
+[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "my-session-logger"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	local := companyManifest()
+	local.OTLP.Endpoint = "http://localhost:4318"
+	if _, err := MergeCodex(path, local, "local-token", false); err != nil {
+		t.Fatal(err)
+	}
+	// 회사 직결로 되돌린다 — 우리 handler 는 빠지고 사용자 것만 남는다.
+	if _, err := MergeCodex(path, companyManifest(), "company-token", false); err != nil {
+		t.Fatal(err)
+	}
+
+	root := readTOML(t, path)
+	features, _ := root["features"].(map[string]any)
+	if features["hooks"] != true {
+		t.Fatalf("사용자 훅이 남았는데 features.hooks = %v — 그 훅이 죽는다", features["hooks"])
+	}
+	hooks, _ := root["hooks"].(map[string]any)
+	if _, ok := hooks["SessionStart"]; !ok {
+		t.Fatalf("사용자 훅이 사라졌다: %#v", hooks)
+	}
+}
