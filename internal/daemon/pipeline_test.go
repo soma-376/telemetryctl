@@ -280,7 +280,7 @@ func TestSweepClosesSessionsLostToRestart(t *testing.T) {
 	}
 
 	// 재시작. 새 파이프라인의 조립기는 이 세션을 모른다.
-	now = base.Add(time.Hour)
+	now = base.Add(first.asm.IdleThreshold() + time.Hour)
 	second := newTestPipeline(t, db, &syncBuffer{}, func() time.Time { return now })
 	second.submit(cmdSessions)
 	waitFor(t, "유휴 스윕", func() bool { return sessionEndedAt(t, db, "sess-restart") != nil })

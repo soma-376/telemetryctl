@@ -10,9 +10,17 @@ import (
 
 // 임계값은 관측 후 조정할 값이라 상수로 두되 Option 으로 바꿀 수 있게 한다 (ADR 0005 Follow-up).
 const (
-	// DefaultIdleThreshold 는 세션 마감 기준이다. Claude Code 의 로그 내보내기 주기가 5초,
-	// 메트릭이 60초이므로 10분이면 충분히 여유롭다.
-	DefaultIdleThreshold = 10 * time.Minute
+	// DefaultIdleThreshold 는 세션 마감 기준이다.
+	//
+	// 벤더 lifecycle 훅이 생기기 전에는 이것이 유일한 마감 수단이라 exporter 주기(로그
+	// 5초·메트릭 60초) 대비 여유만 보고 10분을 썼다. 지금은 훅이 정확한 종료 시각을
+	// 주므로 이 값은 **훅이 유실됐을 때만 쓰는 바닥**이다 — 크래시·강제 종료·OS 종료.
+	//
+	// 그래서 기준이 "exporter 주기" 에서 "사람이 자리를 비우는 시간" 으로 바뀐다. 점심과
+	// 긴 회의를 덮되, 훅을 놓친 세션이 진행 중으로 잘못 보이는 시간은 반나절 안쪽으로
+	// 묶는다. 유휴로 닫힌 세션은 이벤트가 다시 오면 되살아나므로(state.observe) 살아 있는
+	// 세션을 자르는 쪽의 대가가 더 작다.
+	DefaultIdleThreshold = 4 * time.Hour
 	// DefaultHandoffWindow 는 같은 프로젝트에서 다른 벤더로 넘어갔다고 볼 시간 창이다.
 	DefaultHandoffWindow = 30 * time.Minute
 )

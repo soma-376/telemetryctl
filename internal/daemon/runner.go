@@ -84,9 +84,11 @@ const (
 	DefaultShutdownTimeout = 15 * time.Second
 
 	// sessionMemoryTTL 은 마감된 세션을 조립기 메모리에 남겨 두는 기간이다.
-	// 유휴 임계값(10분)의 12배 — 늦게 도착한 이벤트가 세션을 되살릴 여유는 주되,
+	// 유휴 임계값의 2배 — 늦게 도착한 이벤트가 세션을 되살릴 여유는 주되,
 	// 보존 정책이 지운 타임라인을 스냅샷이 되살릴 여지는 남기지 않는 크기다.
-	sessionMemoryTTL = 2 * time.Hour
+	// **반드시 session.DefaultIdleThreshold 보다 커야 한다.** 작으면 마감되자마자
+	// 메모리에서 지워져 낙오 이벤트가 세션을 새로 시작한다.
+	sessionMemoryTTL = 8 * time.Hour
 
 	// storeWriteTimeout·storePruneTimeout 은 SQLite 호출 하나의 상한이다.
 	storeWriteTimeout = 5 * time.Second

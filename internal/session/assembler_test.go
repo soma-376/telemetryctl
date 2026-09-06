@@ -8,8 +8,12 @@ import (
 	"github.com/your-org/pulsemetry/internal/event"
 )
 
-// 유휴 10분 경계. 임계값이 한쪽으로 밀리면 진행 중 세션이 조기 마감돼 "3 agents active"가
+// 유휴 임계값 경계. 임계값이 한쪽으로 밀리면 진행 중 세션이 조기 마감돼 "3 agents active"가
 // 0 이 되거나, 끝난 세션이 영원히 running 으로 남는다.
+// idleSec 은 기본 유휴 임계값(초)이다. 테스트가 값을 하드코딩하면 임계값을 조정할 때마다
+// 무관한 테스트가 함께 깨진다.
+const idleSec = int64(DefaultIdleThreshold / time.Second)
+
 func TestIdleThresholdBoundary(t *testing.T) {
 	const start = 1_700_000_000
 
@@ -21,8 +25,8 @@ func TestIdleThresholdBoundary(t *testing.T) {
 	}{
 		{"직후", 0, StatusRunning, false},
 		{"9분59초", 599, StatusRunning, false},
-		{"정확히 10분", 600, StatusCompleted, true},
-		{"10분 1초", 601, StatusCompleted, true},
+		{"정확히 임계값", idleSec, StatusCompleted, true},
+		{"임계값 1초 뒤", idleSec + 1, StatusCompleted, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -43,7 +47,7 @@ func TestIdleThresholdBoundary(t *testing.T) {
 				t.Fatalf("EndedAt 설정 여부 = %v, want %v", ok, tt.ended)
 			}
 			// ended_at 은 마지막 이벤트 시각이다. 마감을 감지한 시각으로 두면
-			// 모든 세션 소요 시간에 유휴 10분이 유령처럼 붙는다.
+			// 모든 세션 소요 시간에 유휴 임계값이 유령처럼 붙는다.
 			if ok && end != start {
 				t.Fatalf("EndedAt = %d, want %d (마지막 이벤트 시각)", end, start)
 			}
@@ -65,7 +69,7 @@ func TestIdleThresholdIsConfigurable(t *testing.T) {
 	}
 }
 
-// 같은 session.id 가 마감 뒤에 다시 등장하는 경우. 사용자가 10분 넘게 생각하다 같은
+// 같은 session.id 가 마감 뒤에 다시 등장하는 경우. 사용자가 임계값 넘게 생각하다 같은
 // 대화를 이어가면 실제로 일어난다.
 func TestSessionReappearsAfterClose(t *testing.T) {
 	const start = 1_700_000_000
@@ -73,7 +77,7 @@ func TestSessionReappearsAfterClose(t *testing.T) {
 
 	a.Add(logEv("s1", "claude_code.user_prompt", start))
 	a.Add(metricEv("s1", "claude_code.cost.usage", start, 0.5))
-	a.Advance(start + 600)
+	a.Advance(start + event.UnixSec(idleSec))
 
 	if s, _ := a.Session("s1"); s.Status != StatusCompleted {
 		t.Fatalf("1차 마감 실패: %q", s.Status)
@@ -103,7 +107,7 @@ func TestSessionReappearsAfterClose(t *testing.T) {
 	}
 
 	// 2차 마감은 새 마지막 이벤트 기준이다.
-	a.Advance(resume + 600)
+	a.Advance(resume + event.UnixSec(idleSec))
 	s, _ = a.Session("s1")
 	if end, ok := s.EndedAt.Get(); !ok || end != resume {
 		t.Fatalf("2차 EndedAt = (%d, %v), want (%d, true)", end, ok, resume)
@@ -117,13 +121,13 @@ func TestStragglerEventDoesNotMoveEnd(t *testing.T) {
 	a := New()
 	a.Add(logEv("s1", "claude_code.user_prompt", start))
 	a.Add(logEv("s1", "claude_code.api_request", start+10))
-	a.Advance(start + 700)
+	a.Advance(start + event.UnixSec(idleSec) + 100)
 
 	a.Add(logEv("s1", "claude_code.api_request", start+5)) // 배치가 늦게 도착
 	if s, _ := a.Session("s1"); s.Status != StatusRunning {
 		t.Fatalf("낙오 이벤트로 되살아나지 않음: %q", s.Status)
 	}
-	a.Advance(start + 700)
+	a.Advance(start + event.UnixSec(idleSec) + 100)
 
 	s, _ := a.Session("s1")
 	if end, _ := s.EndedAt.Get(); end != start+10 {
@@ -199,7 +203,7 @@ func TestHandoffDetection(t *testing.T) {
 			a := New()
 			a.Add(logEv("first", "claude_code.user_prompt", start, first...))
 			a.Add(logEv("second", "claude_code.user_prompt", start+tt.gap, tt.second...))
-			a.Advance(event.UnixSec(start + tt.gap + 600))
+			a.Advance(event.UnixSec(start + tt.gap + idleSec))
 
 			got, _ := a.Session("first")
 			if got.Status != tt.want {
@@ -221,7 +225,7 @@ func TestHandoffWindowIsConfigurable(t *testing.T) {
 	a := New(WithHandoffWindow(time.Minute))
 	a.Add(logEv("first", "claude_code.user_prompt", start, project("/repo/x")))
 	a.Add(logEv("second", "claude_code.user_prompt", start+120, vendor("codex"), project("/repo/x")))
-	a.Advance(start + 1000)
+	a.Advance(start + event.UnixSec(idleSec) + 400)
 
 	if s, _ := a.Session("first"); s.Status != StatusCompleted {
 		t.Fatalf("창을 1분으로 줄였는데 2분 뒤 세션이 handoff 로 잡힘: %q", s.Status)
@@ -284,7 +288,7 @@ func TestAbandonedDetection(t *testing.T) {
 			for _, e := range tt.events {
 				a.Add(e)
 			}
-			a.Advance(start + 1000)
+			a.Advance(start + event.UnixSec(idleSec) + 400)
 
 			s, _ := a.Session("s1")
 			if s.Status != tt.want {
@@ -550,7 +554,7 @@ func TestHandoffOutranksAbandonedButKeepsBothReasons(t *testing.T) {
 	a.Add(logEv("first", "claude_code.tool_result", start,
 		project("/repo/x"), tool("Bash"), success(false)))
 	a.Add(logEv("second", "codex.user_prompt", start+300, vendor("codex"), project("/repo/x")))
-	a.Advance(start + 1200)
+	a.Advance(start + event.UnixSec(idleSec) + 600)
 
 	s, _ := a.Session("first")
 	if s.Status != StatusHandoff {
@@ -628,8 +632,8 @@ func TestPruneDropsOnlyClosedSessions(t *testing.T) {
 	const start = 1_700_000_000
 	a := New()
 	a.Add(logEv("done", "claude_code.user_prompt", start))
-	a.Advance(start + 600)
-	a.Add(logEv("live", "claude_code.user_prompt", start+600))
+	a.Advance(start + event.UnixSec(idleSec))
+	a.Add(logEv("live", "claude_code.user_prompt", start+idleSec))
 
 	if n := a.Prune(start + 1); n != 1 {
 		t.Fatalf("Prune = %d, want 1", n)
@@ -646,7 +650,7 @@ func TestAssembleBatchHelper(t *testing.T) {
 	const start = 1_700_000_000
 	got := Assemble([]Input{
 		logEv("s1", "claude_code.user_prompt", start, prompt("리시버 붙이기")),
-	}, start+600)
+	}, start+event.UnixSec(idleSec))
 
 	s := only(t, got)
 	if s.Status != StatusCompleted || s.Prompts != 1 {
