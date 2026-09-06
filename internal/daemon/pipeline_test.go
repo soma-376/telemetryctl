@@ -348,3 +348,46 @@ func sessionEndedAt(t *testing.T, db *store.DB, sessionID string) any {
 	}
 	return ended
 }
+
+// 실측된 flip-flop 회귀다. 훅으로만 열린 세션(OTel 활동 0)을 스윕이 닫은 뒤, 다음
+// 세션 틱의 스냅샷이 그 마감을 NULL 로 되살려 매 틱 마감↔재개가 반복됐다.
+func TestHookOnlySessionStaysClosedAfterSweep(t *testing.T) {
+	db := openTestStore(t)
+	t.Cleanup(func() { _ = db.Close() })
+
+	base := time.Unix(fixtureUnix, 0).UTC()
+	now := base
+	p := newTestPipeline(t, db, &syncBuffer{}, func() time.Time { return now })
+	ctx := context.Background()
+
+	e := localapi.LifecycleEvent{Vendor: "codex", SessionID: "hook-only", Source: "startup"}
+	if err := p.SubmitLifecycle(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+
+	// 유휴 임계값 너머로 민 뒤 세션 틱 — 스윕이 닫는다.
+	now = base.Add(p.asm.IdleThreshold() + time.Minute)
+	p.submit(cmdSessions)
+	waitFor(t, "스윕 마감", func() bool { return sessionEndedAt(t, db, "hook-only") != nil })
+	closedAt := sessionEndedAt(t, db, "hook-only")
+
+	closedN := p.Stats().SessionsClosed
+
+	// 세션 틱을 두 번 더 돌린다. SubmitLifecycle 은 동기라, 반환됐다는 것은 큐에 먼저
+	// 넣은 cmdSessions 가 모두 처리됐다는 뜻이다 (파이프라인 고루틴은 하나, 채널은 FIFO).
+	// flip-flop 은 틱 안에서 일어나 끝난 뒤의 ended_at 만 봐서는 안 보인다 — 스냅샷이
+	// 되살리고 스윕이 도로 닫아 값은 같아진다. 증상은 마감 카운터가 매 틱 자라는 것이다.
+	p.submit(cmdSessions)
+	p.submit(cmdSessions)
+	if err := p.SubmitLifecycle(ctx, localapi.LifecycleEvent{
+		Vendor: "codex", SessionID: "hook-other", Source: "startup"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := sessionEndedAt(t, db, "hook-only"); got != closedAt {
+		t.Fatalf("ended_at 이 흔들렸다: %v → %v", closedAt, got)
+	}
+	if got := p.Stats().SessionsClosed; got != closedN {
+		t.Fatalf("마감 카운터 = %d → %d — 스윕이 같은 세션을 매 틱 다시 닫는다 (flip-flop)", closedN, got)
+	}
+}

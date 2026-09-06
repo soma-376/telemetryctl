@@ -343,7 +343,7 @@ func (p *pipeline) run() {
 				if c.lifecycle.End {
 					p.asm.EndLifecycle(c.lifecycle.SessionID, at)
 				} else {
-					p.asm.StartLifecycle(c.lifecycle.SessionID, c.lifecycle.Vendor, at)
+					p.asm.StartLifecycle(c.lifecycle.SessionID, at)
 				}
 			}
 			c.done <- err

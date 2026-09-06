@@ -653,3 +653,48 @@ func TestAssembleBatchHelper(t *testing.T) {
 		t.Fatalf("Assemble 결과가 예상과 다름: %+v", s)
 	}
 }
+
+// 훅만 보고 조립기가 상태를 만들면, 활동 관측이 없는 세션의 스냅샷이 생명주기 정본
+// 행세를 하며 스윕이 닫은 DB 행을 매 틱 되살린다. 행은 store 가 직접 만든다.
+func TestStartLifecycleDoesNotCreateState(t *testing.T) {
+	a := New()
+	a.StartLifecycle("hook-only", 1_000)
+
+	if got := a.Snapshot(); len(got) != 0 {
+		t.Fatalf("스냅샷 = %d개, want 0: %+v", len(got), got)
+	}
+	if got := a.Advance(1_000_000); len(got) != 0 {
+		t.Fatalf("마감 = %d개, want 0", len(got))
+	}
+}
+
+// 유휴로 닫힌(아직 Prune 전) 세션을 재개 훅이 되살릴 때 last 도 밀어야 한다.
+// 안 밀면 다음 Advance 가 now-last ≥ limit 그대로라 즉시 도로 닫는다.
+func TestStartLifecycleReopensIdleClosedSession(t *testing.T) {
+	const start = int64(1_000_000)
+	a := New()
+	a.Add(logEv("s1", "claude_code.user_prompt", start))
+
+	idle := event.UnixSec(a.IdleThreshold() / time.Second)
+	if got := a.Advance(event.UnixSec(start) + idle); len(got) != 1 {
+		t.Fatalf("유휴 마감 = %d개, want 1", len(got))
+	}
+
+	resumed := event.UnixSec(start) + idle + 3600
+	a.StartLifecycle("s1", resumed)
+
+	if got := a.Advance(resumed + 1); len(got) != 0 {
+		t.Fatalf("재개 직후 Advance 가 도로 닫았다: %+v", got)
+	}
+	s, ok := a.Session("s1")
+	if !ok {
+		t.Fatal("세션이 없다")
+	}
+	if s.EndedAt.Valid() || s.Status != StatusRunning {
+		t.Fatalf("EndedAt=%v Status=%s, want 진행 중", s.EndedAt, s.Status)
+	}
+	// started 는 최초 시작을 지킨다 — 재개가 시작 시각을 밀면 안 된다.
+	if s.StartedAt != event.UnixSec(start) {
+		t.Fatalf("StartedAt = %d, want %d", s.StartedAt, start)
+	}
+}

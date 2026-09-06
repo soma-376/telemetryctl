@@ -10,12 +10,11 @@ import (
 // state 는 조립 중인 세션 하나의 내부 상태다. 조회 시점에 이벤트를 스캔하지 않도록
 // 수치를 이벤트 도착마다 증분 갱신한다 (ADR 0005).
 type state struct {
-	id          string
-	vendor      string
-	started     event.UnixSec
-	last        event.UnixSec
-	hasActivity bool
-	ended       event.Opt[event.UnixSec]
+	id      string
+	vendor  string
+	started event.UnixSec
+	last    event.UnixSec
+	ended   event.Opt[event.UnixSec]
 	// hookEnded 는 명시적인 SessionEnd 훅으로 닫혔다는 뜻이다. 종료 전에 발생해 늦게
 	// 도착한 OTel 배치가 세션을 다시 여는 것을 막는다.
 	hookEnded   bool
@@ -88,7 +87,6 @@ func newState(e event.Event, watchFrom event.UnixNano) *state {
 		vendor:        e.Vendor,
 		started:       ts,
 		last:          ts,
-		hasActivity:   true,
 		status:        StatusRunning,
 		files:         make(map[string]*fileState),
 		mcp:           make(map[string]*MCPUsage),
@@ -101,7 +99,6 @@ func newState(e event.Event, watchFrom event.UnixNano) *state {
 // observe 는 어떤 이벤트든 공통으로 갱신하는 것을 처리한다.
 func (s *state) observe(e event.Event) {
 	ts := e.TS.Sec()
-	s.hasActivity = true
 	// 이벤트가 순서대로 온다고 가정하지 않는다. exporter 배치가 섞이면 첫 도착이
 	// 가장 이른 이벤트가 아니다.
 	if ts < s.started {

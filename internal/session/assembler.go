@@ -125,7 +125,7 @@ func (a *Assembler) Advance(now event.UnixSec) []Session {
 
 	var closed []Session
 	for _, s := range a.sessions {
-		if s.ended.Valid() || !s.hasActivity || now-s.last < limit {
+		if s.ended.Valid() || now-s.last < limit {
 			continue
 		}
 		a.close(s)
@@ -154,22 +154,28 @@ func (a *Assembler) Session(id string) (Session, bool) {
 	return s.session(), true
 }
 
-// StartLifecycle 는 명시적 시작·재개 훅을 조립기 상태에 반영한다.
-func (a *Assembler) StartLifecycle(sessionID, vendor string, at event.UnixSec) {
+// StartLifecycle 는 명시적 시작·재개 훅을 **이미 관측 중인** 세션에 반영한다.
+//
+// 조립기가 모르는 세션에는 상태를 만들지 않는다 — EndLifecycle 과 같은 원칙이다.
+// 행은 store 가 직접 만들고(startLifecycleSQL), 활동 관측이 없는 세션을 조립기가
+// 소유하면 그 스냅샷이 생명주기 정본 행세를 하며 스윕이 닫은 세션을 매 틱 되살린다.
+func (a *Assembler) StartLifecycle(sessionID string, at event.UnixSec) {
 	s := a.sessions[sessionID]
 	if s == nil {
-		e := event.Event{SessionID: sessionID, Vendor: vendor, TS: event.UnixNano(at) * event.UnixNano(time.Second)}
-		s = newState(e, e.TS)
-		s.last = 0
-		s.hasActivity = false
-		a.sessions[sessionID] = s
+		return
 	}
 	if s.started == 0 || at < s.started {
 		s.started = at
 	}
+	// 재개도 활동이다. last 를 밀지 않으면 유휴로 닫혔던 세션을 재개한 직후 Advance 가
+	// 즉시 도로 닫는다 — startLifecycleSQL 이 last_activity_at 을 MAX 로 미는 것과 짝.
+	if at > s.last {
+		s.last = at
+	}
 	s.ended = event.Opt[event.UnixSec]{}
 	s.hookEnded = false
 	s.status = StatusRunning
+	s.statusReason = ""
 }
 
 // EndLifecycle 는 명시적 종료 훅을 이미 관측 중인 세션에 반영한다. 조립기가 모르는
