@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/your-org/pulsemetry/internal/event"
 	"github.com/your-org/pulsemetry/internal/localapi"
 	"github.com/your-org/pulsemetry/internal/otlpdecode"
 	"github.com/your-org/pulsemetry/internal/receiver"
@@ -259,4 +260,91 @@ func TestPipelineIgnoresCommandsAfterClose(t *testing.T) {
 	if !p.close(time.Now().Add(time.Second)) {
 		t.Error("close 를 두 번 부르면 안전해야 한다")
 	}
+}
+
+// PROJ-67 의 재현 절차다. 데몬을 껐다 켜면 조립기 맵이 비어 그 전에 돌던 세션을
+// Advance 가 볼 수 없다. DB 유휴 스윕이 그것을 마감해야 한다.
+func TestSweepClosesSessionsLostToRestart(t *testing.T) {
+	db := openTestStore(t)
+	t.Cleanup(func() { _ = db.Close() })
+
+	base := time.Unix(fixtureUnix, 0).UTC()
+	now := base
+	first := newTestPipeline(t, db, &syncBuffer{}, func() time.Time { return now })
+	feedSession(t, first, "sess-restart", base)
+	if !first.close(time.Now().Add(5 * time.Second)) {
+		t.Fatal("첫 파이프라인 종료 실패")
+	}
+	if got := sessionEndedAt(t, db, "sess-restart"); got != nil {
+		t.Fatalf("아직 유휴가 아닌데 마감됐다: %v", got)
+	}
+
+	// 재시작. 새 파이프라인의 조립기는 이 세션을 모른다.
+	now = base.Add(time.Hour)
+	second := newTestPipeline(t, db, &syncBuffer{}, func() time.Time { return now })
+	second.submit(cmdSessions)
+	waitFor(t, "유휴 스윕", func() bool { return sessionEndedAt(t, db, "sess-restart") != nil })
+
+	got := sessionEndedAt(t, db, "sess-restart")
+	if got == nil {
+		t.Fatal("재시작 뒤에도 running 으로 남았다 (PROJ-67)")
+	}
+	// 마감 시각은 컷오프가 아니라 마지막 활동이다.
+	if got != base.Unix() {
+		t.Fatalf("ended_at = %v, want %d", got, base.Unix())
+	}
+}
+
+// 조립기가 아직 진행 중이라 보는 세션을 스윕이 닫으면 다음 스냅샷이 도로 열어 왕복한다.
+func TestSweepDoesNotCloseSessionsAssemblerStillOwns(t *testing.T) {
+	db := openTestStore(t)
+	t.Cleanup(func() { _ = db.Close() })
+
+	base := time.Unix(fixtureUnix, 0).UTC()
+	now := base
+	p := newTestPipeline(t, db, &syncBuffer{}, func() time.Time { return now })
+	feedSession(t, p, "sess-live", base)
+
+	now = base.Add(p.asm.IdleThreshold() - time.Minute)
+	before := p.Stats().SessionsWritten
+	p.submit(cmdSessions)
+	waitFor(t, "세션 틱", func() bool { return p.Stats().SessionsWritten > before })
+
+	if got := sessionEndedAt(t, db, "sess-live"); got != nil {
+		t.Fatalf("조립기가 진행 중이라 보는 세션을 스윕이 마감했다: %v", got)
+	}
+}
+
+func feedSession(t *testing.T, p *pipeline, sessionID string, at time.Time) {
+	t.Helper()
+	if err := p.Consume(context.Background(), receiver.Batch{
+		Result: otlpdecode.Result{Events: []event.Event{{
+			Vendor: "claude_code", Name: "claude_code.api_request",
+			InstallationID: "install-1",
+			SessionID:      sessionID, Signal: event.SignalLog,
+			TS: event.NanoFromTime(at),
+		}}},
+	}); err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	p.submit(cmdSessions)
+	waitFor(t, "세션 저장 ("+sessionID+")", func() bool {
+		var n int
+		if err := p.db.SQL().QueryRow(
+			`SELECT COUNT(*) FROM sessions WHERE session_key = ?`, sessionID).Scan(&n); err != nil {
+			return false
+		}
+		return n == 1
+	})
+}
+
+func sessionEndedAt(t *testing.T, db *store.DB, sessionID string) any {
+	t.Helper()
+	var ended any
+	err := db.SQL().QueryRow(
+		`SELECT ended_at FROM sessions WHERE session_key = ?`, sessionID).Scan(&ended)
+	if err != nil {
+		t.Fatalf("ended_at 조회 (%s): %v", sessionID, err)
+	}
+	return ended
 }

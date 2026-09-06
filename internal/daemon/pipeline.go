@@ -490,6 +490,34 @@ func (p *pipeline) closeSessions() {
 		}
 	}
 
+	p.sweepIdleSessions(now)
+}
+
+// sweepIdleSessions 는 조립기 메모리 밖의 유휴 세션을 DB 에서 마감한다. 데몬을 재시작하면
+// 조립기 맵이 비어 그 전에 돌던 세션은 Advance 가 볼 수 없다 (PROJ-67).
+//
+// 컷오프를 조립기와 같은 임계값에서 뽑는 것이 중요하다. 스윕이 더 공격적이면 조립기가
+// 진행 중이라 믿는 세션을 닫고 다음 스냅샷이 도로 열어 매 틱 왕복한다.
+//
+// **반드시 flush 뒤다.** 앞에 두면 뒤따르는 스냅샷이 방금 찍은 마감을 덮어쓴다.
+func (p *pipeline) sweepIdleSessions(now event.UnixSec) {
+	idle := p.asm.IdleThreshold()
+	if idle <= 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), p.writeTimeout)
+	defer cancel()
+
+	n, err := p.db.CloseIdleSessions(ctx, now-event.UnixSec(idle/time.Second))
+	if err != nil {
+		// 다음 틱에 다시 돈다. UPDATE 하나라 부분 적용이 남지 않는다.
+		p.log.Printf("경고: 유휴 세션 마감 실패 (다음 틱에 재시도): %v", err)
+		return
+	}
+	if n > 0 {
+		p.counters.sessionsClosed.Add(int64(n))
+		p.log.Printf("유휴 세션 마감: %d개 (마지막 활동 %s 이전, 조립기 밖)", n, idle)
+	}
 }
 
 // flush 는 미저장 이벤트·롤업·세션 스냅샷을 한 트랜잭션으로 쓴다.

@@ -77,6 +77,10 @@ func New(opts ...Option) *Assembler {
 	return a
 }
 
+// IdleThreshold 는 Advance 가 쓰는 유휴 마감 임계값이다. DB 유휴 스윕이 조립기보다
+// 공격적으로 닫지 않도록 같은 값을 보고 컷오프를 잡는다.
+func (a *Assembler) IdleThreshold() time.Duration { return a.idle }
+
 // Add 는 이벤트 하나를 반영한다.
 //
 // session.id 가 없거나 events 의 NOT NULL 계약을 못 지키는 이벤트는 무시하고 false 를
