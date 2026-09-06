@@ -128,14 +128,11 @@ func (w *writer) writeVendors(b Batch) error {
 //
 // started_at 은 가장 이른 관측이다. 세션이 언제 시작했는지는 늦게 도착한 배치가 바꿀 수 없다.
 //
-// last_activity_at 은 그 거울상이다 — 가장 늦은 관측이고, 늦게 도착한 **오래된** 배치가
-// 마지막 활동을 과거로 되돌릴 수 없다. exporter 배치가 섞여 도착하는 것이 정상 경로이므로
-// (state.observe 의 같은 주석) 두 컬럼 다 도착 순서에 기대지 않는다.
+// last_activity_at 은 그 거울상인 MAX 다. 두 컬럼 다 도착 순서에 기대지 않는다.
 //
-// 이 컬럼이 여기 head 에 있는 것이 중요하다. **두 UPSERT 가 모두 갱신한다.** ended_at 은
-// 세션이 끝났는지를 아는 조립기 스냅샷만 쓸 수 있지만, "이 시각에 활동이 있었다" 는
-// 이벤트 하나만 봐도 알 수 있다. 이벤트 씨앗을 빼먹으면 조립기가 놓친 세션의 활동 시각이
-// 영원히 멈춰, 유휴 스윕이 살아 있는 세션을 죽은 것으로 보고 마감한다.
+// 이 컬럼이 head 에 있어 **두 UPSERT 가 모두 갱신한다.** ended_at 과 달리 "이 시각에
+// 활동이 있었다" 는 이벤트 하나만 봐도 알 수 있다. 이벤트 씨앗을 빼면 조립기가 놓친
+// 세션의 활동 시각이 멈춰 유휴 스윕이 살아 있는 세션을 마감한다.
 const sessionUpsertHead = `INSERT INTO sessions (
   vendor_id, session_key, workspace_path, user_email, user_account_id,
   terminal_type, started_at, ended_at, last_activity_at, active_time_sec
@@ -230,14 +227,12 @@ func (w *writer) writeSessions(b Batch) error {
 		}
 		seed := sessionSeed{
 			vendor: s.Vendor, key: s.SessionID,
-			workspacePath: s.WorkspacePath,
-			userEmail:     s.UserEmail,
-			userAccountID: s.UserAccountID,
-			terminalType:  s.TerminalType,
-			startedAt:     nullSec(s.StartedAt),
-			endedAt:       optSec(s.EndedAt),
-			// 조립기가 아는 마지막 관측이다. 마감 여부와 무관하게 늘 채운다 — 마감된
-			// 세션도 "언제까지 살아 있었나" 를 알아야 보존 판정이 선다.
+			workspacePath:  s.WorkspacePath,
+			userEmail:      s.UserEmail,
+			userAccountID:  s.UserAccountID,
+			terminalType:   s.TerminalType,
+			startedAt:      nullSec(s.StartedAt),
+			endedAt:        optSec(s.EndedAt),
 			lastActivityAt: nullSec(s.LastEventAt),
 			activeTime:     active,
 			lifecycle:      true,
@@ -262,8 +257,7 @@ func (w *writer) writeSessions(b Batch) error {
 			userEmail:     e.Attr.UserEmail,
 			userAccountID: e.Attr.UserAccountID,
 			terminalType:  e.Attr.TerminalType,
-			// 이벤트 하나에게 이 시각은 시작이자 마지막 활동이다. 어느 쪽인지는 UPSERT 의
-			// MIN·MAX 가 기존 값과 대조해 정한다.
+			// 이벤트 하나에게 이 시각은 시작이자 마지막 활동이다. MIN·MAX 가 갈라 준다.
 			startedAt:      nullSec(e.TS.Sec()),
 			lastActivityAt: nullSec(e.TS.Sec()),
 		}

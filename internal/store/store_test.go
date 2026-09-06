@@ -93,8 +93,6 @@ func TestSchemaNamedIndexesAndForeignKeys(t *testing.T) {
 		t.Fatalf("ux_turns_virtual = unique %d, partial %d", unique, partial)
 	}
 
-	// 유휴 스윕 인덱스가 부분 인덱스인 것은 성능 취향이 아니라 의도다. 조건이 빠지면
-	// 400일치 마감 세션이 전부 들어와 스윕이 볼 일 없는 행으로 인덱스가 채워진다.
 	if err := db.SQL().QueryRowContext(ctx, `
 		SELECT partial FROM pragma_index_list('sessions') WHERE name = 'ix_sessions_open_activity'`).
 		Scan(&partial); err != nil {

@@ -95,10 +95,7 @@ func mergeCodexHooks(root map[string]any, enabled bool) []string {
 	} else {
 		root["hooks"] = hooks
 	}
-	// features.hooks 는 켤 때 쓰는 값이 아니라 **끌 때 지워야 하는 값**이다. 켜는 분기만
-	// 두면 local disable 이 훅 handler 는 걷어내면서 이 스위치를 남겨, 우리를 제거한 뒤에도
-	// Codex 의 훅 기능이 켜진 채로 남는다. 바로 위 hooks 테이블이 비면 지우는 것과 같은
-	// 대칭이다 — 관리 키는 되돌릴 수 있어야 소유했다고 말할 수 있다.
+	// 끄는 분기가 있어야 local disable 이 이 스위치를 남기지 않는다.
 	features, _ := root["features"].(map[string]any)
 	if enabled {
 		if features == nil {

@@ -49,7 +49,11 @@ const (
 	// LocalAPIPathPrefix 는 GUI 가 부르는 로컬 API 경로의 접두다. 개별 경로는
 	// internal/localapi 가 정하고, 여기서는 인증만 태워 그대로 넘긴다 (ServeHTTP).
 	LocalAPIPathPrefix = "/v1/tray"
-	HookAPIPathPrefix  = "/v1/hooks/"
+	// HookAPIPathPrefix 아래는 벤더 lifecycle 훅이 POST 하는 경로다. localapi 가 핸들러를
+	// 붙이고 config 가 벤더 설정에 URL 을 쓴다. 세 곳이 같은 값을 봐야 해서 여기 모은다.
+	HookAPIPathPrefix    = "/v1/hooks/"
+	HookSessionStartPath = HookAPIPathPrefix + "session-start"
+	HookSessionEndPath   = HookAPIPathPrefix + "session-end"
 
 	// DefaultMaxBodyBytes 는 요청 본문 상한이다 (계획서 「수신기 설계」의 4 MiB).
 	// gzip 은 **압축 해제 후** 크기에 이 값을 건다 (body.go).

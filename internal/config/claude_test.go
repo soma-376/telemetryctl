@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/your-org/pulsemetry/internal/contract"
+	"github.com/your-org/pulsemetry/internal/receiver"
 )
 
 func companyManifest() *contract.Manifest {
@@ -298,4 +299,123 @@ func readJSON(t *testing.T, path string) map[string]any {
 		t.Fatalf("unmarshal %s: %v", path, err)
 	}
 	return root
+}
+
+// 복제한 경로 상수가 데몬 쪽과 어긋나면 훅이 404 로 조용히 사라진다.
+func TestClaudeHookPathsMatchDaemon(t *testing.T) {
+	if hookSessionStartPath != receiver.HookSessionStartPath {
+		t.Errorf("session-start = %q, daemon = %q", hookSessionStartPath, receiver.HookSessionStartPath)
+	}
+	if hookSessionEndPath != receiver.HookSessionEndPath {
+		t.Errorf("session-end = %q, daemon = %q", hookSessionEndPath, receiver.HookSessionEndPath)
+	}
+	if hookAPIPathPrefix != receiver.HookAPIPathPrefix {
+		t.Errorf("prefix = %q, receiver = %q", hookAPIPathPrefix, receiver.HookAPIPathPrefix)
+	}
+	for _, ev := range claudeLifecycleEvents {
+		if !strings.HasPrefix(ev.path, hookAPIPathPrefix) {
+			t.Errorf("%s 경로 %q 가 인증 접두 밖이다", ev.event, ev.path)
+		}
+	}
+}
+
+func claudeHooks(t *testing.T, root map[string]any, event string) []map[string]any {
+	t.Helper()
+	hooks, _ := root["hooks"].(map[string]any)
+	groups := toMapSlice(root, hooks[event])
+	var out []map[string]any
+	for _, g := range groups {
+		out = append(out, toMapSlice(root, g["hooks"])...)
+	}
+	return out
+}
+
+func TestMergeClaudeHooks(t *testing.T) {
+	const local = "http://localhost:4318"
+	userHook := func() map[string]any {
+		return map[string]any{"type": "command", "command": "my-own-script"}
+	}
+
+	t.Run("로컬 배선이면 두 이벤트에 http 훅을 건다", func(t *testing.T) {
+		root := map[string]any{}
+		mergeClaudeHooks(root, local, "tok-1", true)
+
+		for _, ev := range claudeLifecycleEvents {
+			got := claudeHooks(t, root, ev.event)
+			if len(got) != 1 {
+				t.Fatalf("%s handler = %d개", ev.event, len(got))
+			}
+			if typ, _ := got[0]["type"].(string); typ != "http" {
+				t.Errorf("%s type = %q", ev.event, typ)
+			}
+			wantURL := local + ev.path + "?vendor=claude_code"
+			if u, _ := got[0]["url"].(string); u != wantURL {
+				t.Errorf("%s url = %q, want %q", ev.event, u, wantURL)
+			}
+			headers, _ := got[0]["headers"].(map[string]any)
+			if headers["Authorization"] != "Bearer tok-1" {
+				t.Errorf("%s Authorization = %v", ev.event, headers["Authorization"])
+			}
+			// 이 헤더가 빠지면 receiver 가 401 을 준다.
+			if headers[LocalIngestHeader] != LocalIngestHeaderValue {
+				t.Errorf("%s 로컬 헤더 = %v", ev.event, headers[LocalIngestHeader])
+			}
+		}
+	})
+
+	t.Run("회사 직결이면 걸지 않는다", func(t *testing.T) {
+		root := map[string]any{}
+		if managed := mergeClaudeHooks(root, "https://collector.example.com", "tok-1", false); len(managed) != 0 {
+			t.Fatalf("managed = %v", managed)
+		}
+		if _, ok := root["hooks"]; ok {
+			t.Fatalf("hooks 가 생겼다: %v", root["hooks"])
+		}
+	})
+
+	t.Run("사용자 훅은 보존하고 우리 것만 지운다", func(t *testing.T) {
+		root := map[string]any{}
+		mergeClaudeHooks(root, local, "tok-1", true)
+		hooks, _ := root["hooks"].(map[string]any)
+		groups := toMapSlice(root, hooks["SessionEnd"])
+		groups = append(groups, map[string]any{"hooks": []map[string]any{userHook()}})
+		hooks["SessionEnd"] = groups
+
+		mergeClaudeHooks(root, local, "tok-1", false)
+
+		got := claudeHooks(t, root, "SessionEnd")
+		if len(got) != 1 {
+			t.Fatalf("handler = %d개, want 1 (사용자 것만)", len(got))
+		}
+		if got[0]["command"] != "my-own-script" {
+			t.Fatalf("남은 handler = %v", got[0])
+		}
+		if _, ok := hooks["SessionStart"]; ok {
+			t.Fatalf("우리 것뿐이던 SessionStart 가 안 지워졌다")
+		}
+	})
+
+	t.Run("포트가 바뀌어도 옛 handler 를 알아보고 하나만 남긴다", func(t *testing.T) {
+		root := map[string]any{}
+		mergeClaudeHooks(root, "http://localhost:9999", "old-tok", true)
+		// 파일에서 다시 읽으면 []any 다. 그 모양으로도 판정이 되어야 한다.
+		raw, err := json.Marshal(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reread := map[string]any{}
+		if err := json.Unmarshal(raw, &reread); err != nil {
+			t.Fatal(err)
+		}
+
+		mergeClaudeHooks(reread, local, "tok-1", true)
+
+		got := claudeHooks(t, reread, "SessionEnd")
+		if len(got) != 1 {
+			t.Fatalf("handler = %d개, want 1 — 옛 포트의 handler 가 남았다", len(got))
+		}
+		if u, _ := got[0]["url"].(string); !strings.Contains(u, "4318") {
+			t.Fatalf("url = %q", u)
+		}
+	})
 }

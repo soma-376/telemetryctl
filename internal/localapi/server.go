@@ -64,14 +64,12 @@ func NewServer(refresher LimitRefresher, trays TraySource, hookSinks ...HookSink
 				return
 			}
 			defer r.Body.Close() //nolint:errcheck
-			var event LifecycleEvent
-			dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
-			dec.DisallowUnknownFields()
-			if err := dec.Decode(&event); err != nil || event.Validate() != nil {
+			event, err := DecodeHook(
+				http.MaxBytesReader(w, r.Body, 64<<10), r.URL.Query().Get(paramVendor), end)
+			if err != nil {
 				http.Error(w, "invalid hook payload", http.StatusBadRequest)
 				return
 			}
-			event.End = end
 			if err := hooks.SubmitLifecycle(r.Context(), event); err != nil {
 				http.Error(w, "hook unavailable", http.StatusServiceUnavailable)
 				return

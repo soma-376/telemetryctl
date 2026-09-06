@@ -120,8 +120,8 @@ func TestSessionStartedAtKeepsEarliest(t *testing.T) {
 	}
 }
 
-// last_activity_at 은 started_at 의 거울상이다 — 가장 늦은 관측이고, 늦게 도착한 오래된
-// 배치가 마지막 활동을 과거로 되돌리면 유휴 스윕이 살아 있는 세션을 마감한다.
+// last_activity_at 은 started_at 의 거울상이다. 늦게 도착한 오래된 배치가 마지막 활동을
+// 과거로 되돌리면 유휴 스윕이 살아 있는 세션을 마감한다.
 func TestSessionLastActivityKeepsLatest(t *testing.T) {
 	db := openTestDB(t)
 	late := newSession("sess-1", baseTime)
@@ -136,9 +136,8 @@ func TestSessionLastActivityKeepsLatest(t *testing.T) {
 	}
 }
 
-// 조립기 스냅샷 없이 이벤트만 저장되는 틱에도 활동 시각은 올라가야 한다. ended_at 과 달리
-// "이 시각에 활동이 있었다" 는 이벤트 하나만으로 알 수 있기 때문이다 (sessionUpsertHead).
-// 이것이 빠지면 조립기가 놓친 세션의 활동 시각이 멈춰 유휴 스윕이 오판한다.
+// 스냅샷 없이 이벤트만 저장되는 틱에도 활동 시각은 올라가야 한다. 빠지면 조립기가 놓친
+// 세션의 활동 시각이 멈춰 유휴 스윕이 오판한다.
 func TestSessionLastActivityFollowsEventSeed(t *testing.T) {
 	db := openTestDB(t)
 	mustWrite(t, db, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}})
@@ -154,9 +153,7 @@ func TestSessionLastActivityFollowsEventSeed(t *testing.T) {
 	}
 }
 
-// 마감된 세션에 낙오 이벤트가 도착하는 것은 정상 경로다 (exporter 배치 지연). 그때 활동
-// 시각만 오르고 마감은 그대로여야 한다 — 이벤트 씨앗이 ended_at 을 건드리면 마감된 세션이
-// 화면에서 되살아난다 (seedSessionSQL).
+// 마감된 세션에 낙오 이벤트가 오면 활동 시각만 오르고 마감은 그대로여야 한다.
 func TestSessionLateEventMovesActivityNotEnd(t *testing.T) {
 	db := openTestDB(t)
 	closed := newSession("sess-1", baseTime)
@@ -225,9 +222,7 @@ func TestContentDisabledKeepsSessionAndUsageQueries(t *testing.T) {
 
 // ── 유휴 스윕 (PROJ-67) ─────────────────────────────────────────────────────
 
-// 스윕의 존재 이유다. 조립기 메모리에 없는 세션 — 데몬 재시작 전에 돌던 세션 — 도
-// 마감되어야 한다. 여기서는 조립기를 아예 거치지 않고 DB 에 직접 만든 행으로 그 상황을
-// 재현한다.
+// 스윕의 존재 이유다. 조립기를 거치지 않은 세션 — 데몬 재시작 전에 돌던 세션 — 도 마감된다.
 func TestCloseIdleSessionsClosesSessionsAssemblerNeverSaw(t *testing.T) {
 	db := openTestDB(t)
 	sec := event.SecFromTime(baseTime)
@@ -242,8 +237,7 @@ func TestCloseIdleSessionsClosesSessionsAssemblerNeverSaw(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("마감한 세션 = %d개, want 1", n)
 	}
-	// 마감 시각은 감지 시각(컷오프)이 아니라 마지막 활동이다. 컷오프를 쓰면 모든 세션의
-	// 소요 시간에 유휴 임계값이 유령처럼 붙는다.
+	// 마감 시각은 컷오프가 아니라 마지막 활동이다.
 	if got := scanOne(t, db, `SELECT ended_at FROM sessions`); got != int64(sec) {
 		t.Fatalf("ended_at = %v, want %d", got, int64(sec))
 	}
@@ -261,7 +255,7 @@ func TestCloseIdleSessionsScope(t *testing.T) {
 		wantEnd any
 	}{
 		{
-			// 컷오프와 같은 시각은 아직 유휴가 아니다. 부등호가 < 라 경계가 열려 있다.
+			// 부등호가 < 라 경계가 열려 있다.
 			name: "활동이 컷오프와 같으면 마감하지 않는다",
 			setup: func(t *testing.T, db *DB) {
 				mustWrite(t, db, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}})
@@ -271,8 +265,7 @@ func TestCloseIdleSessionsScope(t *testing.T) {
 			wantEnd: nil,
 		},
 		{
-			// 마감 뒤 낙오 이벤트가 활동 시각을 미는 것은 정상 경로다. 그때마다 마감 시각이
-			// 뒤로 끌려가면 안 되므로 이미 마감된 세션은 아예 후보가 아니어야 한다.
+			// 낙오 이벤트가 활동 시각을 밀어도 마감 시각이 끌려가면 안 된다.
 			name: "이미 마감된 세션은 다시 건드리지 않는다",
 			setup: func(t *testing.T, db *DB) {
 				closed := newSession("sess-1", baseTime)
@@ -287,7 +280,7 @@ func TestCloseIdleSessionsScope(t *testing.T) {
 			wantEnd: sec + 60,
 		},
 		{
-			// 판정할 근거가 없는 행은 손대지 않는다. 근거 없이 마감하면 되살릴 방법이 없다.
+			// 판정할 근거가 없는 행은 손대지 않는다.
 			name: "last_activity_at 이 NULL 이면 마감하지 않는다",
 			setup: func(t *testing.T, db *DB) {
 				mustWrite(t, db, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}})
@@ -317,16 +310,14 @@ func TestCloseIdleSessionsScope(t *testing.T) {
 	}
 }
 
-// 스윕이 조립기보다 공격적으로 닫으면 매 틱 왕복이 난다 — 스윕이 닫고, 다음 스냅샷이
-// (조립기는 여전히 running 이라 믿으므로) 도로 열고, 다시 스윕이 닫는다. 컷오프가 조립기
-// 임계값보다 느슨하기만 하면 스윕이 닫는 것은 조립기가 이미 닫았을 것들뿐이라 충돌이 없다.
+// 스윕이 조립기보다 공격적으로 닫으면 다음 스냅샷이 도로 열어 매 틱 왕복이 난다.
 func TestCloseIdleSessionsDoesNotFightAssembler(t *testing.T) {
 	const idle = 10 * time.Minute
 	db := openTestDB(t)
 	asm := session.New(session.WithIdleThreshold(idle))
 	asm.Add(session.Input{Event: newEvent("claude_code.api_request", baseTime, 1)})
 
-	// 조립기가 아직 살아 있다고 보는 시점. 스윕 컷오프는 그보다 느슨해야 한다.
+	// 조립기가 아직 살아 있다고 보는 시점.
 	now := event.SecFromTime(baseTime.Add(idle - time.Minute))
 	asm.Advance(now)
 	mustWrite(t, db, Batch{Sessions: asm.Snapshot()})

@@ -38,9 +38,7 @@ CREATE TABLE sessions (
 );
 CREATE INDEX ix_sessions_started ON sessions (started_at);
 
--- 유휴 마감 스윕이 유일하게 쓰는 인덱스다. 부분 인덱스인 것이 핵심이다 — 스윕의 대상은
--- 언제나 진행 중인 세션뿐인데, 그 수는 전체 세션의 극히 일부다. 조건 없이 걸면 400일치
--- 마감 세션이 전부 인덱스에 들어와 쓸모없이 커진다.
+-- 유휴 마감 스윕용. 부분 인덱스여야 400일치 마감 세션이 딸려 들어오지 않는다.
 CREATE INDEX ix_sessions_open_activity ON sessions (last_activity_at) WHERE ended_at IS NULL;
 
 CREATE TABLE turns (

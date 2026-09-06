@@ -39,8 +39,8 @@ func TestServerAcceptsLifecycleHook(t *testing.T) {
 	hooks := &fakeHookSink{}
 	srv := httptest.NewServer(NewServer(&fakeRefresher{}, &fakeSource{}, hooks))
 	defer srv.Close()
-	resp, err := http.Post(srv.URL+SessionEndPath, "application/json",
-		strings.NewReader(`{"vendor":"codex","session_id":"thr-1"}`))
+	resp, err := http.Post(srv.URL+SessionEndPath+"?vendor=codex", "application/json",
+		strings.NewReader(`{"session_id":"thr-1","hook_event_name":"SessionEnd","cwd":"/tmp"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

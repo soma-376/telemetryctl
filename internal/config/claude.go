@@ -3,9 +3,25 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"sort"
+	"strings"
 
 	"github.com/your-org/pulsemetry/internal/contract"
+	"github.com/your-org/pulsemetry/internal/vendor"
+)
+
+// 아래 셋은 localapi·receiver 의 같은 이름 상수와 값이 같아야 한다. 그 패키지를 import
+// 하지 않는 이유는 LocalIngestHeader 와 같다(의존성 방향, localheader.go). 어긋나면
+// claude_test.go 의 TestClaudeHookPathsMatchDaemon 이 잡는다.
+const (
+	hookAPIPathPrefix    = "/v1/hooks/"
+	hookSessionStartPath = "/v1/hooks/session-start"
+	hookSessionEndPath   = "/v1/hooks/session-end"
+
+	// claudeHookTimeoutSec 은 훅 HTTP 요청 상한이다. 데몬이 죽어 있으면 그만큼 세션
+	// 종료가 지연된다.
+	claudeHookTimeoutSec = 5
 )
 
 // claudeManagedEnvKeys 는 이 도구가 소유권을 주장하는 env 키 전부다.
@@ -120,6 +136,114 @@ func claudeHeaders(m *contract.Manifest, token string) string {
 	return headers
 }
 
+// claudeLifecycleEvents 는 우리가 거는 훅 이벤트와 그 경로다.
+//
+// SessionStart 에 matcher 를 두지 않는다. startup·resume·clear·compact·fork 가 전부
+// "세션이 살아 있다" 는 뜻이라 갈라 볼 이유가 없다.
+var claudeLifecycleEvents = []struct{ event, path string }{
+	{"SessionStart", hookSessionStartPath},
+	{"SessionEnd", hookSessionEndPath},
+}
+
+// claudeHookURL 은 훅이 POST 할 데몬 주소다. 포트는 OTLP endpoint 에서 파생한다 —
+// 수신기가 포트 폴백을 하면 둘 다 같이 움직여야 한다.
+func claudeHookURL(endpoint, path, vendorID string) string {
+	return strings.TrimRight(endpoint, "/") + path + "?vendor=" + vendorID
+}
+
+// claudeHookHandler 는 http 훅 하나다. Codex 와 달리 프로세스를 띄우지 않고 데몬으로
+// 직접 POST 한다. 헤더의 토큰은 리터럴이다 — 같은 파일의 OTEL_EXPORTER_OTLP_HEADERS 가
+// 이미 같은 값을 평문으로 담고 있어 노출이 늘지 않는다.
+func claudeHookHandler(endpoint, path, token string) map[string]any {
+	return map[string]any{
+		"type": "http",
+		"url":  claudeHookURL(endpoint, path, string(vendor.ClaudeCode)),
+		"headers": map[string]any{
+			"Authorization":   "Bearer " + token,
+			LocalIngestHeader: LocalIngestHeaderValue,
+		},
+		"timeout": claudeHookTimeoutSec,
+	}
+}
+
+// isClaudeHook 은 handler 가 우리 것인지 본다. URL 전체가 아니라 경로로 판정하는 이유는
+// 포트가 폴백으로 바뀌어도 예전에 쓴 handler 를 알아보고 지워야 하기 때문이다.
+func isClaudeHook(v map[string]any) bool {
+	if typ, _ := v["type"].(string); typ != "http" {
+		return false
+	}
+	raw, _ := v["url"].(string)
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(parsed.Path, hookAPIPathPrefix)
+}
+
+// mergeClaudeHooks 는 이벤트 배열이나 사용자 handler 를 소유하지 않고 우리 handler 하나만
+// 관리한다 (mergeCodexHooks 와 같은 규칙).
+func mergeClaudeHooks(root map[string]any, endpoint, token string, enabled bool) []string {
+	hooks, _ := root["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
+	managed := []string{}
+	for _, ev := range claudeLifecycleEvents {
+		groups := toMapSlice(root, hooks[ev.event])
+		want := claudeHookHandler(endpoint, ev.path, token)
+
+		out := groups[:0]
+		for _, group := range groups {
+			handlers := toMapSlice(root, group["hooks"])
+			kept := handlers[:0]
+			for _, handler := range handlers {
+				if isClaudeHook(handler) {
+					// 값이 낡았을 수 있으므로(포트·토큰) 남기지 않고 아래에서 새로 넣는다.
+					continue
+				}
+				kept = append(kept, handler)
+			}
+			if len(kept) > 0 {
+				group["hooks"] = kept
+				out = append(out, group)
+			}
+		}
+		if enabled {
+			out = append(out, map[string]any{"hooks": []map[string]any{want}})
+			managed = append(managed, "hooks."+ev.event+":"+ev.path)
+		}
+		if len(out) == 0 {
+			delete(hooks, ev.event)
+		} else {
+			hooks[ev.event] = out
+		}
+	}
+	if len(hooks) == 0 {
+		delete(root, "hooks")
+	} else {
+		root["hooks"] = hooks
+	}
+	return managed
+}
+
+// toMapSlice 는 JSON 에서 읽은 []any 와 우리가 만든 []map[string]any 를 같은 모양으로
+// 맞춘다. 파일에서 온 값은 언제나 []any 다.
+func toMapSlice(_ map[string]any, v any) []map[string]any {
+	switch typed := v.(type) {
+	case []map[string]any:
+		return typed
+	case []any:
+		out := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			if m, ok := item.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 func boolEnv(value bool) string {
 	if value {
 		return "1"
@@ -159,6 +283,7 @@ func MergeClaude(path string, m *contract.Manifest, token string, _ bool) (Resul
 		env[key] = value
 		keys = append(keys, "env."+key)
 	}
+	keys = append(keys, mergeClaudeHooks(root, m.OTLP.Endpoint, token, isLocalEndpoint(m.OTLP.Endpoint))...)
 	sort.Strings(keys)
 	root["env"] = env
 	out, err := json.MarshalIndent(root, "", "  ")
