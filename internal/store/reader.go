@@ -96,12 +96,8 @@ func OpenReadOnlyIfPresent(path string, opts ...Option) (*ReadOnly, error) {
 	return r, nil
 }
 
-// minReadableSchemaVersion 은 조회가 성립하는 최소 스키마 버전이다.
-//
-// 마이그레이션 v3 가 도메인 테이블을 전부 지우고 다시 만들었다 (ADR 0009). 그보다 낮은
-// DB 에는 지금의 조회가 읽을 테이블이 아예 없으므로, 절반만 마이그레이션된 상태
-// (마이그레이션 도중 크래시)도 "아직 읽을 수 없음" 으로 본다.
-const minReadableSchemaVersion = 3
+// minReadableSchemaVersion 은 단일 DDL 세대의 버전이다 (ADR 0012).
+const minReadableSchemaVersion = schemaVersion
 
 // schemaReadable 은 마이그레이션이 조회 가능한 지점까지 진행됐는지 본다.
 //

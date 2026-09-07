@@ -21,7 +21,7 @@ func TestOpenAppliesMigrations(t *testing.T) {
 		t.Fatalf("스키마 버전 = %d, want %d", got, want)
 	}
 
-	// meta 는 마이그레이션 러너가 유지하고, 나머지는 v3 DDL 의 도메인 테이블이다.
+	// meta 는 초기화 코드가 유지하고, 나머지는 schema.go의 도메인 테이블이다.
 	tables := []string{
 		"meta", "vendors", "sessions", "turns", "events", "llm_calls", "tool_calls", "file_changes",
 	}

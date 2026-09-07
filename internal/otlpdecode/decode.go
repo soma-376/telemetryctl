@@ -235,7 +235,9 @@ func (d *decoder) logRecord(base carrier, rec *logspb.LogRecord) {
 	c.applyAll(rec.GetAttributes())
 
 	name := rec.GetEventName()
-	if name == "" {
+	// 최신 Codex는 LogRecord.event_name에 Rust 소스 위치를, event.name 속성에
+	// 실제 도메인 이벤트(codex.sse_event 등)를 싣는다. 명시 속성이 있으면 우선한다.
+	if c.eventName != "" {
 		name = c.eventName
 	}
 	if kind, ok := bodyContentKind(name); ok {
