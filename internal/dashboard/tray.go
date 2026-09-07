@@ -33,6 +33,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/your-org/pulsemetry/internal/dashboard/tray"
 	"github.com/your-org/pulsemetry/internal/vendorlimit"
 )
 
@@ -207,15 +208,20 @@ type TrayMonitor struct {
 
 // NewTrayMonitor 는 r 을 보는 트레이 스냅샷 제공자를 만든다.
 //
-// 벤더 한도는 internal/vendorlimit 의 기본 구성으로 조회한다 — 홈 디렉터리는 hostenv 가
-// 판별하고 HTTP 클라이언트는 타임아웃이 걸린 기본값이다.
+// 벤더 한도는 SQLite에 저장된 최신 스냅샷을 읽는다 (ADR 0011).
+// GUI는 Collector나 Codex App Server를 만들지 않는다.
 func NewTrayMonitor(r *Reader) *TrayMonitor {
 	return &TrayMonitor{
 		reader:   r,
 		interval: DefaultTrayInterval,
 		now:      time.Now,
 		collect: func(ctx context.Context) vendorlimit.Snapshot {
-			return vendorlimit.Collect(ctx, vendorlimit.Options{})
+			if r != nil {
+				if db, ok := r.db(); ok {
+					return tray.VendorLimits(ctx, db, r.now())
+				}
+			}
+			return tray.VendorLimits(ctx, nil, time.Now())
 		},
 	}
 }
