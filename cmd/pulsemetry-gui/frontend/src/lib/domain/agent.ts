@@ -1,5 +1,4 @@
 import type { AgentId, AgentStyle } from "./agent.types";
-export type { AgentId, AgentStyle } from "./agent.types";
 
 export const AGENT_STYLE: Record<AgentId, AgentStyle> = {
   claude: { name: "Claude Code", glyph: "✳", fg: "var(--color-agent-claude)", bg: "var(--color-agent-claude-soft)", weight: 400, fontMd: 16, fontSm: 13 },

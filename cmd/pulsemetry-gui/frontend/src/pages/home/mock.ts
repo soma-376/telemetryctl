@@ -18,17 +18,17 @@ import type {
 // 실데이터 연동 전까지는 날짜 시드 해시로 안정적인 합성값을 만든다:
 // 같은 날짜는 항상 같은 사용량을 돌려주므로 화면 간 수치가 서로 모순되지 않는다.
 
-export const SERIES = ["claude", "codex", "gemini"] as const;
+const SERIES = ["claude", "codex", "gemini"] as const;
 
 // ── ISO 날짜 유틸 ────────────────────────────────────────────────────────────
-export const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
 const toIso = (d: Date) =>
   `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-export const parseIso = (s: string) => {
+const parseIso = (s: string) => {
   const p = s.split("-").map(Number);
   return new Date(p[0], p[1] - 1, p[2]);
 };
-export const addDays = (s: string, n: number) => {
+const addDays = (s: string, n: number) => {
   const d = parseIso(s);
   d.setDate(d.getDate() + n);
   return toIso(d);
@@ -39,12 +39,8 @@ const mdLabel = (s: string) => {
   const d = parseIso(s);
   return `${d.getMonth() + 1}.${d.getDate()}`;
 };
-export const longLabel = (s: string) => {
-  const d = parseIso(s);
-  return `${d.getMonth() + 1}월 ${d.getDate()}일`;
-};
 /** 월요일 시작 요일 인덱스 */
-export const dowIndex = (s: string) => (parseIso(s).getDay() + 6) % 7;
+const dowIndex = (s: string) => (parseIso(s).getDay() + 6) % 7;
 
 const NOW_HOUR = new Date().getHours();
 
@@ -53,7 +49,7 @@ const NOW_HOUR = new Date().getHours();
 // 보존 하한은 공용 정책(lib/domain/retention)이 소유한다.
 
 // ── 합성 사용량 (날짜 시드 해시 — 결정적) ───────────────────────────────────
-export function hash(s: string): number {
+function hash(s: string): number {
   let x = 2166136261;
   for (let i = 0; i < s.length; i++) {
     x ^= s.charCodeAt(i);
@@ -113,7 +109,7 @@ const LADDER: BucketRung[] = [
   { maxDays: 400, unit: "month", size: 0 },
 ];
 
-export function buildBuckets(start: string, end: string): BucketSet {
+function buildBuckets(start: string, end: string): BucketSet {
   const n = Math.min(dayCount(start, end), RETAIN_DAYS);
   let rung = LADDER.find((r) => n <= r.maxDays) ?? LADDER[LADDER.length - 1];
 
@@ -183,7 +179,7 @@ export function buildBuckets(start: string, end: string): BucketSet {
 }
 
 /** 캡션과 평균 라벨은 선택된 단계를 따른다 */
-export function unitText(unit: BucketRung["unit"], size: number) {
+function unitText(unit: BucketRung["unit"], size: number) {
   if (unit === "hour")
     return { caption: `${size}시간 단위 · 벤더 구성`, avg: `${size}시간 평균` };
   if (unit === "day")
@@ -213,7 +209,7 @@ const MIN_PER_K = 3.73;
  * 개수로 어림하면 긴 라벨("12월 31일")이 겹치거나 자리가 남는데도 지워진다.
  * 컬럼 폭은 렌더 시점에만 알 수 있어 컴포넌트가 재서 넘긴다.
  */
-export function labelStep(
+function labelStep(
   labels: string[],
   colWidth: number,
   fontSize = 11,

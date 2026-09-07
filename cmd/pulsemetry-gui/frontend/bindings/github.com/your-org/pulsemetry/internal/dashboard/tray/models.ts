@@ -69,7 +69,6 @@ export interface Snapshot {
      */
     "limits": vendorlimit$0.Result[] | null;
     "limits_observed_at": string;
-    "tightest_limit": TightestLimit;
 }
 
 /**
@@ -93,31 +92,3 @@ export enum State {
      */
     StateNotInstalled = "not_installed",
 };
-
-/**
- * TightestLimit 은 「가장 빠듯한 한도」 하나다.
- * 
- * 선택은 결정론이어야 한다 — 볼 때마다 다른 창이 강조되면 사용자는 그 표시를 믿지 않는다.
- * 순서대로: available 벤더의 창만 후보 → 사용률 높은 쪽 → 초기화 빠른 쪽(모르는 창은 맨
- * 뒤) → 벤더 이름 → 창 종류(5시간·주·월·미상) → Label → 입력 순서. 여기까지가 전순서다.
- */
-export interface TightestLimit {
-    /**
-     * Found 가 false 면 후보가 하나도 없었다는 뜻이다. 나머지 필드는 영값이다.
-     */
-    "found": boolean;
-    "vendor": string;
-    "period": vendorlimit$0.PeriodKind;
-    "label": string;
-
-    /**
-     * UsedRatio 는 0.0~1.0 사용률이다. 한도를 넘겨 쓴 경우 1.0 을 넘을 수 있다.
-     */
-    "used_ratio": number;
-
-    /**
-     * ResetsAt 은 RFC3339 UTC 다. 모르면 빈 문자열, ResetsInSeconds 는 0 이다.
-     */
-    "resets_at": string;
-    "resets_in_seconds": number;
-}

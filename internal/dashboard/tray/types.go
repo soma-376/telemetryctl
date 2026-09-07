@@ -57,7 +57,6 @@ type Snapshot struct {
 	// 빠지면 화면이 "아직 로딩 중" 과 구분하지 못한다.
 	Limits           []vendorlimit.Result `json:"limits"`
 	LimitsObservedAt string               `json:"limits_observed_at"`
-	Tightest         TightestLimit        `json:"tightest_limit"`
 }
 
 // emptySnapshot 은 아직 한 번도 성공하지 못했을 때의 모양이다. 슬라이스를 non-nil 로 두어

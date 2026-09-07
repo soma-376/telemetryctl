@@ -7,16 +7,16 @@ import { formatDuration } from "$lib/utils/format";
 export const FILE_CAP = 4;
 
 // 에이전트 id → 표시 이름 (AGENT_NAMES 재사용)
-export const AGENT_LABELS = AGENT_NAMES;
+const AGENT_LABELS = AGENT_NAMES;
 
 // oo: 세션 상태 스타일 맵 — 진행 중은 모래빛+dot, 종료는 중립 회색+dot 없음
-export const STATE_STYLE: Record<SessionState, StateStyle> = {
+const STATE_STYLE: Record<SessionState, StateStyle> = {
   running: { label: "진행 중", bg: "var(--color-sand-soft)", fg: "#8b6b36" },
   done: { label: "종료", bg: "var(--color-inactive-soft)", fg: "var(--color-text-secondary)" },
 };
 
 // so: 스테이지 스타일 맵 (디버깅 bar 색은 리터럴 #FF9A5C)
-export const STAGE_STYLE: Record<string, StageStyle> = {
+const STAGE_STYLE: Record<string, StageStyle> = {
   Exploring: { ko: "탐색 중", bar: "var(--color-border)", label: "var(--color-text-secondary)" },
   Implementing: { ko: "구현 중", bar: "var(--color-info)", label: "var(--color-info)" },
   Debugging: { ko: "디버깅 중", bar: "#FF9A5C", label: "var(--color-text-secondary)" },
@@ -24,10 +24,10 @@ export const STAGE_STYLE: Record<string, StageStyle> = {
 };
 
 // xl: 스테이지 이름 → 한국어 라벨
-export const stageKo = (name: string): string => STAGE_STYLE[name]?.ko ?? "";
+const stageKo = (name: string): string => STAGE_STYLE[name]?.ko ?? "";
 
 // 턴 라벨 스타일 맵 (Activity v2 드로어 전용 팔레트 — 디버깅 계열은 리터럴)
-export const TURN_STYLE: Record<TurnKind, TurnStyle> = {
+const TURN_STYLE: Record<TurnKind, TurnStyle> = {
   explore: { name: "탐색", bar: "var(--color-inactive)", fg: "#5e5a54", bg: "#f1efeb", border: "#ddd8d0" },
   implement: { name: "구현", bar: "var(--color-sand)", fg: "var(--color-accent)", bg: "var(--color-sand-soft)", border: "#e6d5b8" },
   debug: { name: "디버깅", bar: "#e08a3c", fg: "#9a5a14", bg: "#fbeee0", border: "#f0d2ae" },
@@ -36,7 +36,6 @@ export const TURN_STYLE: Record<TurnKind, TurnStyle> = {
 
 const TURN_KINDS = Object.keys(TURN_STYLE) as TurnKind[];
 import { SESSIONS } from "./mock";
-export { SESSIONS } from "./mock";
 
 // ml: 세션 행 표시 데이터 계산
 export function rowDisplay(e: ActivitySession, selected: boolean) {
