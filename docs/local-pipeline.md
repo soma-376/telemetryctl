@@ -1328,6 +1328,10 @@ Codex 로컬 배선은 사용자 훅 배열을 보존하면서 `SessionStart`와
 `last_activity_at`의 바닥값을 전진시키며, 종료 훅은 이를 바꾸지 않는다. 종료 훅 누락은 유휴 세션
 SQL 스윕이 보완한다(ADR 0019, ADR 0020).
 
+데몬 로그는 훅을 받는 즉시 `vendor`, `event`, `session_id`, `source`를 남긴다. Codex 훅 본문에는
+세션 이름이 없으므로 이름은 같은 ID로 App Server에서 비동기 조회하고, 확인되면
+`Codex 세션 제목 확인: session_id=... title=...` 로그를 별도로 남긴다.
+
 훅 소유권은 별도 state나 fingerprint 파일이 아니라 `type=command`, Pulsemetry 실행 파일 이름,
 예약 서브커맨드 `hook codex`의 일치로 판정한다. 따라서 경로가 바뀐 재배선도 중복을 만들지 않고,
 로컬 배선 해제는 사용자 handler를 남긴 채 Pulsemetry handler만 제거한다.
@@ -1378,6 +1382,31 @@ SQL 스윕이 보완한다(ADR 0019, ADR 0020).
 | **`manifest` 가 `grpc`** | `local enable` 과 데몬 기동이 모두 명확한 에러로 거부한다. 기존 회사 Collector 직결은 그대로 동작한다 |
 
 ---
+
+### Codex 훅 브리지 진단
+
+훅 설치 명령은 설치된 CLI와 데이터 디렉터리의 절대 경로에서 생성한다. Windows
+PowerShell은 `& '실행 경로' hook codex`를 사용하고, Linux·macOS의 POSIX 셸은
+`'실행 경로' hook codex`를 사용한다. 경로는 단일 인용하며 내부 작은따옴표는 셸별로
+이스케이프해 공백·달러·백틱이 실행이나 변수 확장으로 해석되지 않게 한다.
+명령 변경 뒤에는 Codex에서 변경된 훅의 신뢰 승인이 필요할 수 있다. 프로그램이 승인
+해시를 임의로 갱신하지 않는다.
+
+데몬 포트 폴백 시 Codex는 OTel 설정만 새 주소로 재병합한다. 기존 훅 command,
+`--data-dir`, 승인 상태와 기능 토글은 유지하며 실행 중인 데몬 경로로 재등록하지 않는다.
+따라서 `go run` 임시 바이너리도 기존 훅을 보존한 채 포트 재배선이 가능하다.
+최초 훅 설치·재등록은 계속 빌드된 CLI로 수행한다. 설정 병합 실패 시 전체 복구 규칙은 유지한다.
+
+`pulsemetry hook codex`는 데이터 디렉터리의 `hook-bridge.log`에 stdin 읽기 전 진입,
+이벤트명·세션 ID, 대상 데몬 주소, 키링 조회 단계, HTTP 상태, 소요 시간을 남긴다.
+기본 위치는 `~/.pulsemetry/hook-bridge.log`이며 `--data-dir`을 지정하면 그 경로를 쓴다.
+토큰·본문·원본 오류는 기록하지 않는다. 약 1MiB를 넘으면 오래된 진단 내용을 비우며,
+동시 실행 중에는 일부 기록이 유실될 수 있다. 진단 파일 쓰기 실패도 훅을 막지 않는다.
+
+파일 쓰기가 검증된 상태에서 실제 종료·재개 시 `stage=entry`가 없다면 Codex의 명령
+실행 여부를 확인한다. `entry`만 있으면 입력 대기, `credential` 실패면 키링,
+`http` 실패면 전송 경로를 확인한다. `status=204`와 `result=ok`는 데몬의 정상 응답이다.
+종료 코드는 실패해도 0이므로 성공 판정에 쓰지 않는다.
 
 ## 10. 범위 밖 · 후속 티켓
 

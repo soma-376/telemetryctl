@@ -21,11 +21,15 @@ func TestLifecycleHookStartsEndsAndReopensSession(t *testing.T) {
 	db := openTestStore(t)
 	t.Cleanup(func() { _ = db.Close() })
 	now := time.Unix(fixtureUnix, 0).UTC()
-	p := newTestPipeline(t, db, &syncBuffer{}, func() time.Time { return now })
+	logs := &syncBuffer{}
+	p := newTestPipeline(t, db, logs, func() time.Time { return now })
 	ctx := context.Background()
 	e := localapi.LifecycleEvent{Vendor: "codex", SessionID: "thr-hook", Source: "startup"}
 	if err := p.SubmitLifecycle(ctx, e); err != nil {
 		t.Fatal(err)
+	}
+	if got := logs.String(); !strings.Contains(got, `세션 훅 수신: vendor=codex event=start session_id=thr-hook source="startup"`) {
+		t.Fatalf("시작 훅 로그가 없음: %q", got)
 	}
 	var started int64
 	var ended any
@@ -39,6 +43,9 @@ func TestLifecycleHookStartsEndsAndReopensSession(t *testing.T) {
 	e.End = true
 	if err := p.SubmitLifecycle(ctx, e); err != nil {
 		t.Fatal(err)
+	}
+	if got := logs.String(); !strings.Contains(got, `세션 훅 수신: vendor=codex event=end session_id=thr-hook`) {
+		t.Fatalf("종료 훅 로그가 없음: %q", got)
 	}
 	if err := db.SQL().QueryRow(`SELECT ended_at FROM sessions WHERE session_key='thr-hook'`).Scan(&ended); err != nil {
 		t.Fatal(err)

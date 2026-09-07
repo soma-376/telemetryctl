@@ -39,12 +39,25 @@ func runHook(stdin io.Reader, args []string) int {
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return 0
 	}
+	dataDir := strings.TrimSpace(*dataDirFlag)
+	if dataDir == "" {
+		var err error
+		dataDir, err = defaultDataDir()
+		if err != nil {
+			return 0
+		}
+	}
+	diagnostic := newHookDiagnostic(dataDir)
+	diagnostic.record("entry", "vendor="+string(vendorID)+" data_dir="+dataDir)
+	defer diagnostic.record("exit", "fail_open")
 	body, err := io.ReadAll(io.LimitReader(stdin, 64<<10))
 	if err != nil {
+		diagnostic.record("input", "read_failed")
 		return 0
 	}
 	var name hookEventName
 	if err := json.Unmarshal(body, &name); err != nil {
+		diagnostic.record("input", "invalid_json")
 		return 0
 	}
 	var end bool
@@ -53,21 +66,23 @@ func runHook(stdin io.Reader, args []string) int {
 	case "SessionEnd":
 		end = true
 	default:
+		diagnostic.record("input", "unsupported_event")
 		return 0
 	}
 	// 본문은 벤더가 준 그대로 넘긴다. 파싱은 데몬이 한다.
 	event, err := localapi.DecodeHook(bytes.NewReader(body), string(vendorID), end)
 	if err != nil {
+		diagnostic.record("input", "invalid_payload")
 		return 0
 	}
-	dataDir := strings.TrimSpace(*dataDirFlag)
-	if dataDir == "" {
-		dataDir, err = defaultDataDir()
-		if err != nil {
-			return 0
-		}
+	diagnostic.record("input", "event="+name.HookEventName+" session_id="+event.SessionID)
+	client := localapi.NewClient(dataDir)
+	client.HookTrace = diagnostic.record
+	if err := client.SubmitLifecycle(context.Background(), event, body); err != nil {
+		diagnostic.record("result", "failed")
+	} else {
+		diagnostic.record("result", "ok")
 	}
-	_ = localapi.NewClient(dataDir).SubmitLifecycle(context.Background(), event, body)
 	return 0
 }
 

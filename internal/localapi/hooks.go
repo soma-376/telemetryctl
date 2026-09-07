@@ -84,11 +84,18 @@ func (c *Client) SubmitLifecycle(ctx context.Context, event LifecycleEvent, body
 		req.ContentLength = int64(len(body))
 	}
 	req.Header.Set("Content-Type", "application/json")
+	c.traceHook("http", "begin")
 	resp, err := c.http.Do(req)
 	if err != nil {
+		reason := "transport_failed"
+		if errors.Is(err, context.DeadlineExceeded) {
+			reason = "timeout"
+		}
+		c.traceHook("http", reason)
 		return fmt.Errorf("localapi: hook 요청: %w", err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
+	c.traceHook("http", fmt.Sprintf("status=%d", resp.StatusCode))
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("localapi: hook 요청 실패 (%d)", resp.StatusCode)
 	}

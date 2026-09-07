@@ -349,6 +349,8 @@ func (p *pipeline) run() {
 				p.log.Printf("경고: 세션 훅 반영 실패: vendor=%s event=%s session_id=%s: %v",
 					c.lifecycle.Vendor, eventName, c.lifecycle.SessionID, err)
 			} else {
+				p.log.Printf("세션 훅 DB 반영 완료: vendor=%s event=%s session_id=%q at=%d",
+					c.lifecycle.Vendor, eventName, c.lifecycle.SessionID, at)
 				// 마감은 DB 가 소유하므로 조립기에 반영하지 않는다 (ADR 0021).
 				// 재개만 알린다 — 조립기의 활동 시각이 밀려야 다음 스냅샷이
 				// 되살아난 세션을 진행 중으로 그린다.

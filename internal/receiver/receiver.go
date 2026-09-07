@@ -345,6 +345,10 @@ func (rc *Receiver) logf(format string, args ...any) {
 // 로컬 데몬에 요청을 던질 수 있게 된다. OPTIONS 를 405 로 끊는 것도 같은 이유다 —
 // preflight 가 성공하지 못하면 브라우저는 본 요청을 보내지 않는다.
 func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == HookSessionStartPath || r.URL.Path == HookSessionEndPath {
+		finish := rc.observeHook(&w, r)
+		defer finish()
+	}
 	if r.Method == http.MethodOptions {
 		// 경로를 보지 않고 먼저 끊는다. 존재 여부를 알려 줄 이유가 없다.
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")

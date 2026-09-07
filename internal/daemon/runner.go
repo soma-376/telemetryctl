@@ -499,9 +499,10 @@ func (d *daemon) rewireAfterPortFallback(requested, actual int) {
 	}
 
 	report, err := installer.EnableLocal(installer.LocalOptions{
-		StatePath:   d.opts.StatePath,
-		Port:        actual,
-		IngestToken: d.receiverToken,
+		StatePath:          d.opts.StatePath,
+		Port:               actual,
+		IngestToken:        d.receiverToken,
+		PreserveCodexHooks: true,
 	})
 	if err != nil {
 		d.log.Printf("경고: 요청 포트 %d 를 잡지 못해 %d 로 폴백했으나 벤더 설정 재병합에 실패했다. "+

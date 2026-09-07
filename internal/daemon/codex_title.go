@@ -196,6 +196,7 @@ func (r *codexTitleRefresher) refresh(sessionKey string) (bool, error) {
 		r.log.Printf("경고: Codex 세션 제목 저장 실패 (%s): %v", sessionKey, err)
 		return false, err
 	}
+	r.log.Printf("Codex 세션 제목 확인: session_id=%s title=%q", sessionKey, title)
 	return true, nil
 }
 
