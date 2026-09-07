@@ -76,7 +76,7 @@ func TestRefresherThrottlesUntilCooldownExpires(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got, want := collector.calls.Load(), int32(len(SupportedVendors())); got != want {
-		t.Fatalf("cooldown collector calls = %d, want %d", got, want)
+		t.Fatalf("쿨다운 만료 전에는 재조회하지 않아야 한다: 조회 호출 횟수 = %d, 기대값 = %d", got, want)
 	}
 
 	now = now.Add(time.Second)
@@ -84,6 +84,6 @@ func TestRefresherThrottlesUntilCooldownExpires(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got, want := collector.calls.Load(), int32(2*len(SupportedVendors())); got != want {
-		t.Fatalf("expired collector calls = %d, want %d", got, want)
+		t.Fatalf("쿨다운 만료 후에는 다시 조회해야 한다: 조회 호출 횟수 = %d, 기대값 = %d", got, want)
 	}
 }
