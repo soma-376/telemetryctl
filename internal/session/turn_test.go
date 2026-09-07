@@ -310,7 +310,6 @@ func TestTurnTrackerForgetsPrunedSessions(t *testing.T) {
 	in := logEv("s1", "claude_code.user_prompt", start, turnKey("p1"))
 	a.Add(in)
 	a.TurnOf(in)
-	a.Advance(start + event.UnixSec(idleSec) + 60)
 
 	if n := a.Prune(start + event.UnixSec(idleSec)*2); n != 1 {
 		t.Fatalf("Prune = %d, want 1", n)

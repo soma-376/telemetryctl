@@ -13,48 +13,25 @@ import (
 // 계산되므로 (ADR 0009) 생명주기 시각이 곧 상태다. 이 파일은 그 시각과 active_time_sec 가
 // 스냅샷을 정확히 따라가는지 고정한다.
 
-// TestSessionEndedAtFollowsSnapshot 은 마감·재개가 컬럼에 그대로 반영되는지 본다.
-func TestSessionEndedAtFollowsSnapshot(t *testing.T) {
-	running := func() session.Session { return newSession("sess-1", baseTime) }
-	closed := func() session.Session {
-		s := newSession("sess-1", baseTime)
-		s.EndedAt = someSec(s.StartedAt + 600)
-		return s
+// 스냅샷은 ended_at 을 쓰지도 지우지도 않는다 (ADR 0021). 조립기가 무엇을 말하든
+// 생명주기는 훅과 유휴 스윕만 바꾼다.
+func TestSnapshotDoesNotWriteEndedAt(t *testing.T) {
+	db := openTestDB(t)
+	closed := newSession("sess-1", baseTime)
+	closed.EndedAt = someSec(closed.StartedAt + 600)
+
+	// 픽스처 헬퍼가 훅 경로로 닫아 준다. 그 뒤 진행 중 스냅샷이 와도 마감은 그대로다.
+	mustWrite(t, db, Batch{Sessions: []session.Session{closed}})
+	want := int64(event.SecFromTime(baseTime)) + 600
+	if got := scanOne(t, db, `SELECT ended_at FROM sessions`); got != want {
+		t.Fatalf("훅 마감 = %v, want %d", got, want)
 	}
 
-	tests := []struct {
-		name     string
-		snapshot []session.Session
-		wantEnd  any
-	}{
-		{
-			name:     "진행 중 → 마감",
-			snapshot: []session.Session{running(), closed()},
-			wantEnd:  int64(event.SecFromTime(baseTime)) + 600,
-		},
-		{
-			// 마감된 세션에 같은 session.id 로 이벤트가 다시 오면 조립기가 마감을 되돌린다.
-			// 저장 쪽이 옛 ended_at 을 붙들면 실제로 도는 세션이 영원히 completed 로 보인다.
-			name:     "마감 → 재개하면 ended_at 이 NULL 로 돌아온다",
-			snapshot: []session.Session{closed(), running()},
-			wantEnd:  nil,
-		},
-		{
-			name:     "마감 → 마감",
-			snapshot: []session.Session{closed(), closed()},
-			wantEnd:  int64(event.SecFromTime(baseTime)) + 600,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db := openTestDB(t)
-			for _, s := range tt.snapshot {
-				mustWrite(t, db, Batch{Sessions: []session.Session{s}})
-			}
-			if got := scanOne(t, db, `SELECT ended_at FROM sessions`); got != tt.wantEnd {
-				t.Fatalf("ended_at = %v, want %v", got, tt.wantEnd)
-			}
-		})
+	running := newSession("sess-1", baseTime)
+	running.EndedAt = event.Opt[event.UnixSec]{}
+	mustWrite(t, db, Batch{Sessions: []session.Session{running}})
+	if got := scanOne(t, db, `SELECT ended_at FROM sessions`); got != want {
+		t.Fatalf("ended_at = %v, want %d — 스냅샷이 마감을 지웠다", got, want)
 	}
 }
 
@@ -160,7 +137,7 @@ func TestSessionLateEventMovesActivityNotEnd(t *testing.T) {
 	closed.EndedAt = someSec(closed.StartedAt + 600)
 	mustWrite(t, db, Batch{Sessions: []session.Session{closed}})
 
-	straggler := baseTime.Add(11 * time.Minute)
+	straggler := baseTime.Add(9 * time.Minute) // 마감(10분) 이전
 	mustWrite(t, db, Batch{Events: []EventRecord{
 		evrec("claude_code.api_request", straggler, 1, sess("sess-1")),
 	}})
@@ -272,7 +249,7 @@ func TestCloseIdleSessionsScope(t *testing.T) {
 				closed.EndedAt = someSec(closed.StartedAt + 60)
 				mustWrite(t, db, Batch{Sessions: []session.Session{closed}})
 				mustWrite(t, db, Batch{Events: []EventRecord{
-					evrec("claude_code.api_request", baseTime.Add(11*time.Minute), 1, sess("sess-1")),
+					evrec("claude_code.api_request", baseTime.Add(30*time.Second), 1, sess("sess-1")),
 				}})
 			},
 			cutoff:  event.UnixSec(sec + 86400),
@@ -310,25 +287,25 @@ func TestCloseIdleSessionsScope(t *testing.T) {
 	}
 }
 
-// 스윕이 조립기보다 공격적으로 닫으면 다음 스냅샷이 도로 열어 매 틱 왕복이 난다.
-func TestCloseIdleSessionsDoesNotFightAssembler(t *testing.T) {
-	const idle = 10 * time.Minute
+// 스냅샷은 마감을 되돌리지 못한다. 조립기가 진행 중이라 말해도 ended_at 은 훅과 스윕만
+// 쓴다 (ADR 0021) — 이것이 매 틱 왕복을 구조적으로 불가능하게 하는 지점이다.
+func TestSnapshotCannotReopenSweptSession(t *testing.T) {
 	db := openTestDB(t)
-	asm := session.New(session.WithIdleThreshold(idle))
-	asm.Add(session.Input{Event: newEvent("claude_code.api_request", baseTime, 1)})
-
-	// 조립기가 아직 살아 있다고 보는 시점.
-	now := event.SecFromTime(baseTime.Add(idle - time.Minute))
-	asm.Advance(now)
-	mustWrite(t, db, Batch{Sessions: asm.Snapshot()})
-
-	cutoff := now - event.UnixSec(idle/time.Second)
-	n, err := db.CloseIdleSessions(context.Background(), cutoff)
-	if err != nil {
+	sec := event.SecFromTime(baseTime)
+	mustWrite(t, db, Batch{Events: []EventRecord{
+		evrec("claude_code.api_request", baseTime, 1, sess("sess-1")),
+	}})
+	if _, err := db.CloseIdleSessions(context.Background(), sec+600); err != nil {
 		t.Fatalf("CloseIdleSessions: %v", err)
 	}
-	if n != 0 {
-		t.Fatalf("조립기가 진행 중이라 보는 세션을 스윕이 %d개 마감했다 — 다음 스냅샷이 도로 연다", n)
+
+	// 조립기가 같은 세션을 진행 중이라 말하는 스냅샷 — 활동 시각은 마감과 같다.
+	running := newSession("sess-1", baseTime)
+	running.EndedAt = event.Opt[event.UnixSec]{}
+	mustWrite(t, db, Batch{Sessions: []session.Session{running}})
+
+	if got := scanOne(t, db, `SELECT ended_at FROM sessions`); got != int64(sec) {
+		t.Fatalf("ended_at = %v, want %d — 스냅샷이 마감을 되돌렸다", got, int64(sec))
 	}
 }
 
@@ -472,13 +449,10 @@ func TestHookEndYieldsToLaterActivity(t *testing.T) {
 	if got := scanOne(t, db, `SELECT ended_at FROM sessions`); got != nil {
 		t.Fatalf("ended_at = %v, want nil — 마감 뒤 활동인데 되살아나지 않았다", got)
 	}
-	if got := scanOne(t, db, `SELECT hook_ended FROM sessions`); got != int64(0) {
-		t.Fatalf("hook_ended = %v, want 0 — 되살아난 세션이 훅 보호를 달고 있다", got)
-	}
 }
 
 // 시작 훅은 명시적 재개라 언제나 마감을 되돌린다.
-func TestStartHookClearsHookEnd(t *testing.T) {
+func TestStartHookReopensAfterEndHook(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	at := event.SecFromTime(baseTime)
@@ -491,8 +465,5 @@ func TestStartHookClearsHookEnd(t *testing.T) {
 	}
 	if got := scanOne(t, db, `SELECT ended_at FROM sessions`); got != nil {
 		t.Fatalf("ended_at = %v, want nil", got)
-	}
-	if got := scanOne(t, db, `SELECT hook_ended FROM sessions`); got != int64(0) {
-		t.Fatalf("hook_ended = %v, want 0", got)
 	}
 }

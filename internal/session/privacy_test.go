@@ -53,7 +53,7 @@ func TestNoFullPathsInAssembledSession(t *testing.T) {
 	a.Add(metricEv("s1", "claude_code.lines_of_code.count", start+60, 30, typ("added")))
 	a.Add(metricEv("s1", "claude_code.lines_of_code.count", start+60, 4, typ("removed")))
 
-	s := only(t, a.Advance(start+event.UnixSec(idleSec)+60))
+	s := only(t, a.Snapshot())
 
 	// 전제 확인: 파일·툴 행이 실제로 만들어졌다. 비어 있으면 아래 단언이 공허하게 통과한다.
 	if len(s.Files) != 2 {

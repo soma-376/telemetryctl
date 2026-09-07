@@ -33,8 +33,6 @@ CREATE TABLE sessions (
   started_at INTEGER,
   ended_at INTEGER,
   last_activity_at INTEGER,
-  -- 명시적 SessionEnd 훅으로 닫혔다는 표시. 낙오 이벤트가 마감을 되돌리지 못하게 한다.
-  hook_ended INTEGER NOT NULL DEFAULT 0,
   active_time_sec INTEGER,
   UNIQUE (vendor_id, session_key)
 );

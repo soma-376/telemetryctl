@@ -1,7 +1,6 @@
 package session
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -14,294 +13,6 @@ import (
 // 무관한 테스트가 함께 깨진다.
 const idleSec = int64(DefaultIdleThreshold / time.Second)
 
-func TestIdleThresholdBoundary(t *testing.T) {
-	const start = 1_700_000_000
-
-	tests := []struct {
-		name    string
-		elapsed int64
-		want    Status
-		ended   bool
-	}{
-		{"직후", 0, StatusRunning, false},
-		{"9분59초", 599, StatusRunning, false},
-		{"정확히 임계값", idleSec, StatusCompleted, true},
-		{"임계값 1초 뒤", idleSec + 1, StatusCompleted, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			a := New()
-			a.Add(logEv("s1", "claude_code.user_prompt", start))
-
-			closed := a.Advance(event.UnixSec(start + tt.elapsed))
-			s := only(t, a.Snapshot())
-
-			if s.Status != tt.want {
-				t.Fatalf("status = %q, want %q", s.Status, tt.want)
-			}
-			if got := len(closed) == 1; got != tt.ended {
-				t.Fatalf("Advance 가 마감한 세션 수 = %d, 마감 기대 = %v", len(closed), tt.ended)
-			}
-			end, ok := s.EndedAt.Get()
-			if ok != tt.ended {
-				t.Fatalf("EndedAt 설정 여부 = %v, want %v", ok, tt.ended)
-			}
-			// ended_at 은 마지막 이벤트 시각이다. 마감을 감지한 시각으로 두면
-			// 모든 세션 소요 시간에 유휴 임계값이 유령처럼 붙는다.
-			if ok && end != start {
-				t.Fatalf("EndedAt = %d, want %d (마지막 이벤트 시각)", end, start)
-			}
-		})
-	}
-}
-
-// 임계값은 관측 후 조정할 값이라 바꿀 수 있어야 한다.
-func TestIdleThresholdIsConfigurable(t *testing.T) {
-	const start = 1_700_000_000
-	a := New(WithIdleThreshold(30 * time.Second))
-	a.Add(logEv("s1", "claude_code.user_prompt", start))
-
-	if got := a.Advance(start + 29); len(got) != 0 {
-		t.Fatalf("29초에 마감됨")
-	}
-	if got := a.Advance(start + 30); len(got) != 1 {
-		t.Fatalf("30초에 마감되지 않음")
-	}
-}
-
-// 같은 session.id 가 마감 뒤에 다시 등장하는 경우. 사용자가 임계값 넘게 생각하다 같은
-// 대화를 이어가면 실제로 일어난다.
-func TestSessionReappearsAfterClose(t *testing.T) {
-	const start = 1_700_000_000
-	a := New()
-
-	a.Add(logEv("s1", "claude_code.user_prompt", start))
-	a.Add(metricEv("s1", "claude_code.cost.usage", start, 0.5))
-	a.Advance(start + event.UnixSec(idleSec))
-
-	if s, _ := a.Session("s1"); s.Status != StatusCompleted {
-		t.Fatalf("1차 마감 실패: %q", s.Status)
-	}
-
-	// 20분 뒤 같은 session.id 로 이벤트가 다시 온다.
-	const resume = start + 1200
-	a.Add(logEv("s1", "claude_code.user_prompt", resume))
-	a.Add(metricEv("s1", "claude_code.cost.usage", resume, 0.25))
-
-	s, _ := a.Session("s1")
-	switch {
-	case s.Status != StatusRunning:
-		t.Fatalf("재등장 후 status = %q, want running", s.Status)
-	case s.EndedAt.Valid():
-		t.Fatalf("재등장 후에도 EndedAt 이 남아 있음")
-	case s.StartedAt != start:
-		t.Fatalf("StartedAt 이 바뀜: %d", s.StartedAt)
-	case s.LastEventAt != resume:
-		t.Fatalf("LastEventAt = %d, want %d", s.LastEventAt, resume)
-	case s.Prompts != 2:
-		t.Fatalf("prompts = %d, want 2 (수치가 이어서 누적돼야 한다)", s.Prompts)
-	case s.CostUSD != 0.75:
-		t.Fatalf("cost = %v, want 0.75", s.CostUSD)
-	case s.Diag.Reopens != 1:
-		t.Fatalf("Reopens = %d, want 1", s.Diag.Reopens)
-	}
-
-	// 2차 마감은 새 마지막 이벤트 기준이다.
-	a.Advance(resume + event.UnixSec(idleSec))
-	s, _ = a.Session("s1")
-	if end, ok := s.EndedAt.Get(); !ok || end != resume {
-		t.Fatalf("2차 EndedAt = (%d, %v), want (%d, true)", end, ok, resume)
-	}
-}
-
-// 마감 뒤 도착한 낙오 이벤트는 세션을 되살리지만 마감 시각을 흔들지 않는다 —
-// 다음 Advance 가 같은 ended_at 으로 다시 마감한다.
-func TestStragglerEventDoesNotMoveEnd(t *testing.T) {
-	const start = 1_700_000_000
-	a := New()
-	a.Add(logEv("s1", "claude_code.user_prompt", start))
-	a.Add(logEv("s1", "claude_code.api_request", start+10))
-	a.Advance(start + event.UnixSec(idleSec) + 100)
-
-	a.Add(logEv("s1", "claude_code.api_request", start+5)) // 배치가 늦게 도착
-	if s, _ := a.Session("s1"); s.Status != StatusRunning {
-		t.Fatalf("낙오 이벤트로 되살아나지 않음: %q", s.Status)
-	}
-	a.Advance(start + event.UnixSec(idleSec) + 100)
-
-	s, _ := a.Session("s1")
-	if end, _ := s.EndedAt.Get(); end != start+10 {
-		t.Fatalf("EndedAt = %d, want %d", end, start+10)
-	}
-	if s.Status != StatusCompleted {
-		t.Fatalf("status = %q", s.Status)
-	}
-}
-
-// handoff — 같은 project_hash 에서 30분 내에 다른 벤더 세션이 시작된 경우.
-func TestHandoffDetection(t *testing.T) {
-	const start = 1_700_000_000
-
-	tests := []struct {
-		name      string
-		second    []func(*Input)
-		gap       int64 // 첫 세션의 마지막 이벤트로부터 두 번째 세션 시작까지
-		want      Status
-		wantOther Status
-	}{
-		{
-			name:      "다른 벤더가 10분 뒤 시작",
-			second:    []func(*Input){vendor("codex"), project("/repo/telemetryctl")},
-			gap:       600,
-			want:      StatusHandoff,
-			wantOther: StatusCompleted,
-		},
-		{
-			name:      "같은 벤더는 handoff 가 아니다",
-			second:    []func(*Input){vendor("claude_code"), project("/repo/telemetryctl")},
-			gap:       600,
-			want:      StatusCompleted,
-			wantOther: StatusCompleted,
-		},
-		{
-			name:      "다른 프로젝트는 handoff 가 아니다",
-			second:    []func(*Input){vendor("codex"), project("/repo/other")},
-			gap:       600,
-			want:      StatusCompleted,
-			wantOther: StatusCompleted,
-		},
-		{
-			name:      "30분 창 밖은 handoff 가 아니다",
-			second:    []func(*Input){vendor("codex"), project("/repo/telemetryctl")},
-			gap:       1801,
-			want:      StatusCompleted,
-			wantOther: StatusCompleted,
-		},
-		{
-			name:      "정확히 30분은 창 안이다",
-			second:    []func(*Input){vendor("codex"), project("/repo/telemetryctl")},
-			gap:       1800,
-			want:      StatusHandoff,
-			wantOther: StatusCompleted,
-		},
-		{
-			name:      "project_hash 가 없으면 판정하지 않는다",
-			second:    []func(*Input){vendor("codex")},
-			gap:       600,
-			want:      StatusCompleted,
-			wantOther: StatusCompleted,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			first := []func(*Input){project("/repo/telemetryctl")}
-			if tt.name == "project_hash 가 없으면 판정하지 않는다" {
-				first = nil
-			}
-
-			a := New()
-			a.Add(logEv("first", "claude_code.user_prompt", start, first...))
-			a.Add(logEv("second", "claude_code.user_prompt", start+tt.gap, tt.second...))
-			a.Advance(event.UnixSec(start + tt.gap + idleSec))
-
-			got, _ := a.Session("first")
-			if got.Status != tt.want {
-				t.Fatalf("first.status = %q, want %q (근거=%q)", got.Status, tt.want, got.Diag.StatusReason)
-			}
-			if got.Status == StatusHandoff && got.Diag.StatusReason == "" {
-				t.Error("handoff 판정 근거가 비어 있음")
-			}
-			other, _ := a.Session("second")
-			if other.Status != tt.wantOther {
-				t.Fatalf("second.status = %q, want %q", other.Status, tt.wantOther)
-			}
-		})
-	}
-}
-
-func TestHandoffWindowIsConfigurable(t *testing.T) {
-	const start = 1_700_000_000
-	a := New(WithHandoffWindow(time.Minute))
-	a.Add(logEv("first", "claude_code.user_prompt", start, project("/repo/x")))
-	a.Add(logEv("second", "claude_code.user_prompt", start+120, vendor("codex"), project("/repo/x")))
-	a.Advance(start + event.UnixSec(idleSec) + 400)
-
-	if s, _ := a.Session("first"); s.Status != StatusCompleted {
-		t.Fatalf("창을 1분으로 줄였는데 2분 뒤 세션이 handoff 로 잡힘: %q", s.Status)
-	}
-}
-
-// abandoned — 마지막 툴 이벤트가 실패이고 이후 성공이 없는 경우.
-func TestAbandonedDetection(t *testing.T) {
-	const start = 1_700_000_000
-
-	tests := []struct {
-		name   string
-		events []Input
-		want   Status
-	}{
-		{
-			name: "마지막 툴이 실패",
-			events: []Input{
-				logEv("s1", "claude_code.tool_result", start, tool("Bash"), success(true)),
-				logEv("s1", "claude_code.tool_result", start+5, tool("Bash"), success(false)),
-			},
-			want: StatusAbandoned,
-		},
-		{
-			name: "실패 뒤 성공하면 마감",
-			events: []Input{
-				logEv("s1", "claude_code.tool_result", start, tool("Bash"), success(false)),
-				logEv("s1", "claude_code.tool_result", start+5, tool("Bash"), success(true)),
-			},
-			want: StatusCompleted,
-		},
-		{
-			name: "성공 여부 미상은 실패가 아니다",
-			events: []Input{
-				logEv("s1", "claude_code.tool_result", start, tool("Bash"), success(false)),
-				logEv("s1", "claude_code.tool_result", start+5, tool("Bash")),
-			},
-			want: StatusAbandoned, // 미상은 판정을 바꾸지 않는다 — 마지막 "판정 가능한" 결과가 실패
-		},
-		{
-			name: "툴 이벤트가 없으면 마감",
-			events: []Input{
-				logEv("s1", "claude_code.user_prompt", start),
-			},
-			want: StatusCompleted,
-		},
-		{
-			name: "도착 순서가 뒤집혀도 ts 로 판정",
-			events: []Input{
-				logEv("s1", "claude_code.tool_result", start+5, tool("Bash"), success(false)),
-				logEv("s1", "claude_code.tool_result", start, tool("Bash"), success(true)),
-			},
-			want: StatusAbandoned,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			a := New()
-			for _, e := range tt.events {
-				a.Add(e)
-			}
-			a.Advance(start + event.UnixSec(idleSec) + 400)
-
-			s, _ := a.Session("s1")
-			if s.Status != tt.want {
-				t.Fatalf("status = %q, want %q (근거=%q)", s.Status, tt.want, s.Diag.StatusReason)
-			}
-			if s.Status == StatusAbandoned && s.Diag.StatusReason == "" {
-				t.Error("abandoned 판정 근거가 비어 있음 — ADR 0005 가 근거를 남기라고 요구했다")
-			}
-		})
-	}
-}
-
-// Success 미설정 이벤트가 tool_errors 를 부풀리지 않는지. 부풀면 그 수치가 화면에 그대로 나간다.
 func TestUnsetSuccessDoesNotCountAsError(t *testing.T) {
 	const start = 1_700_000_000
 	a := New()
@@ -546,25 +257,6 @@ func TestUnprefixedAndUnknownEventNames(t *testing.T) {
 		t.Errorf("모르는 이름이 last_event_at 을 갱신하지 않음: %d", s.LastEventAt)
 	}
 }
-
-// handoff 와 abandoned 가 겹치면 handoff 로 확정하되 근거에는 둘 다 남긴다.
-func TestHandoffOutranksAbandonedButKeepsBothReasons(t *testing.T) {
-	const start = 1_700_000_000
-	a := New()
-	a.Add(logEv("first", "claude_code.tool_result", start,
-		project("/repo/x"), tool("Bash"), success(false)))
-	a.Add(logEv("second", "codex.user_prompt", start+300, vendor("codex"), project("/repo/x")))
-	a.Advance(start + event.UnixSec(idleSec) + 600)
-
-	s, _ := a.Session("first")
-	if s.Status != StatusHandoff {
-		t.Fatalf("status = %q, want handoff", s.Status)
-	}
-	if !strings.Contains(s.Diag.StatusReason, "실패") {
-		t.Fatalf("근거에 abandoned 사유가 빠짐: %q", s.Diag.StatusReason)
-	}
-}
-
 func TestMCPUsage(t *testing.T) {
 	const start = 1_700_000_000
 	a := New()
@@ -628,18 +320,17 @@ func TestDurationAndSnapshotOrdering(t *testing.T) {
 	}
 }
 
-func TestPruneDropsOnlyClosedSessions(t *testing.T) {
+func TestPruneDropsSessionsByLastActivity(t *testing.T) {
 	const start = 1_700_000_000
 	a := New()
 	a.Add(logEv("done", "claude_code.user_prompt", start))
-	a.Advance(start + event.UnixSec(idleSec))
 	a.Add(logEv("live", "claude_code.user_prompt", start+idleSec))
 
 	if n := a.Prune(start + 1); n != 1 {
 		t.Fatalf("Prune = %d, want 1", n)
 	}
 	if _, ok := a.Session("done"); ok {
-		t.Error("마감된 세션이 남아 있음")
+		t.Error("오래된 세션이 남아 있음")
 	}
 	if _, ok := a.Session("live"); !ok {
 		t.Error("진행 중 세션이 지워짐")
@@ -650,10 +341,11 @@ func TestAssembleBatchHelper(t *testing.T) {
 	const start = 1_700_000_000
 	got := Assemble([]Input{
 		logEv("s1", "claude_code.user_prompt", start, prompt("리시버 붙이기")),
-	}, start+event.UnixSec(idleSec))
+	})
 
+	// 마감은 담지 않는다 — 생명주기는 DB 가 소유한다 (ADR 0021).
 	s := only(t, got)
-	if s.Status != StatusCompleted || s.Prompts != 1 {
+	if s.Status != StatusRunning || s.Prompts != 1 {
 		t.Fatalf("Assemble 결과가 예상과 다름: %+v", s)
 	}
 }
@@ -666,39 +358,5 @@ func TestStartLifecycleDoesNotCreateState(t *testing.T) {
 
 	if got := a.Snapshot(); len(got) != 0 {
 		t.Fatalf("스냅샷 = %d개, want 0: %+v", len(got), got)
-	}
-	if got := a.Advance(1_000_000); len(got) != 0 {
-		t.Fatalf("마감 = %d개, want 0", len(got))
-	}
-}
-
-// 유휴로 닫힌(아직 Prune 전) 세션을 재개 훅이 되살릴 때 last 도 밀어야 한다.
-// 안 밀면 다음 Advance 가 now-last ≥ limit 그대로라 즉시 도로 닫는다.
-func TestStartLifecycleReopensIdleClosedSession(t *testing.T) {
-	const start = int64(1_000_000)
-	a := New()
-	a.Add(logEv("s1", "claude_code.user_prompt", start))
-
-	idle := event.UnixSec(a.IdleThreshold() / time.Second)
-	if got := a.Advance(event.UnixSec(start) + idle); len(got) != 1 {
-		t.Fatalf("유휴 마감 = %d개, want 1", len(got))
-	}
-
-	resumed := event.UnixSec(start) + idle + 3600
-	a.StartLifecycle("s1", resumed)
-
-	if got := a.Advance(resumed + 1); len(got) != 0 {
-		t.Fatalf("재개 직후 Advance 가 도로 닫았다: %+v", got)
-	}
-	s, ok := a.Session("s1")
-	if !ok {
-		t.Fatal("세션이 없다")
-	}
-	if s.EndedAt.Valid() || s.Status != StatusRunning {
-		t.Fatalf("EndedAt=%v Status=%s, want 진행 중", s.EndedAt, s.Status)
-	}
-	// started 는 최초 시작을 지킨다 — 재개가 시작 시각을 밀면 안 된다.
-	if s.StartedAt != event.UnixSec(start) {
-		t.Fatalf("StartedAt = %d, want %d", s.StartedAt, start)
 	}
 }

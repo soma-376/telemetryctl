@@ -76,7 +76,25 @@ func (f *fixture) write(b store.Batch) {
 	if _, err := f.db.Write(context.Background(), b); err != nil {
 		f.t.Fatalf("store.Write: %v", err)
 	}
+	closeEndedSessions(f.t, f.db, b)
 	flushTitles(f.t, f.db)
+}
+
+// closeEndedSessions 는 픽스처의 마감된 세션을 실제 경로로 닫는다.
+//
+// 스냅샷은 ended_at 을 쓰지 않는다 (ADR 0021). 생명주기를 쓰는 것은 벤더 훅과 유휴
+// 스윕뿐이라, 픽스처도 그중 하나를 타야 화면이 보는 것과 같은 상태가 된다.
+func closeEndedSessions(t *testing.T, db *store.DB, b store.Batch) {
+	t.Helper()
+	for _, s := range b.Sessions {
+		at, ok := s.EndedAt.Get()
+		if !ok {
+			continue
+		}
+		if err := db.ApplyLifecycle(context.Background(), s.Vendor, s.SessionID, at, true); err != nil {
+			t.Fatalf("ApplyLifecycle(%s): %v", s.SessionID, err)
+		}
+	}
 }
 
 // pendingTitles 는 title() 이 예약한 벤더 제목이다.

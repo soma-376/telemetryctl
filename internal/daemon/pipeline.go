@@ -335,15 +335,28 @@ func (p *pipeline) run() {
 			return
 		case cmdLifecycle:
 			at := event.SecFromTime(p.now())
+			eventName := "start"
+			if c.lifecycle.End {
+				eventName = "end"
+			}
+			p.log.Printf("세션 훅 수신: vendor=%s event=%s session_id=%s source=%q",
+				c.lifecycle.Vendor, eventName, c.lifecycle.SessionID, c.lifecycle.Source)
 			ctx, cancel := context.WithTimeout(context.Background(), p.writeTimeout)
 			err := p.db.ApplyLifecycle(ctx, c.lifecycle.Vendor, c.lifecycle.SessionID,
 				at, c.lifecycle.End)
 			cancel()
-			if err == nil {
-				if c.lifecycle.End {
-					p.asm.EndLifecycle(c.lifecycle.SessionID, at)
-				} else {
+			if err != nil {
+				p.log.Printf("경고: 세션 훅 반영 실패: vendor=%s event=%s session_id=%s: %v",
+					c.lifecycle.Vendor, eventName, c.lifecycle.SessionID, err)
+			} else {
+				// 마감은 DB 가 소유하므로 조립기에 반영하지 않는다 (ADR 0021).
+				// 재개만 알린다 — 조립기의 활동 시각이 밀려야 다음 스냅샷이
+				// 되살아난 세션을 진행 중으로 그린다.
+				if !c.lifecycle.End {
 					p.asm.StartLifecycle(c.lifecycle.SessionID, at)
+				}
+				if c.lifecycle.Vendor == "codex" && p.titles != nil {
+					p.titles.Enqueue(c.lifecycle.SessionID, c.lifecycle.End)
 				}
 			}
 			c.done <- err
@@ -452,45 +465,34 @@ func pickContent(cs []event.Content) event.Content {
 	return cs[0]
 }
 
-// closeSessions 는 유휴 세션을 마감하고 스냅샷을 저장한 뒤 조립기 메모리를 정리한다.
+// closeSessions 는 세션 스냅샷을 저장하고, 유휴 세션을 마감한 뒤 조립기 메모리를 정리한다.
+//
+// 마감은 SQL 스윕 하나가 한다 (ADR 0021). 조립기는 자기가 본 것만 알아서 세션이 끝났는지
+// 판단할 수 없다 — 훅이 왔는지도, 재시작 전에 무슨 일이 있었는지도 모른다.
 func (p *pipeline) closeSessions() {
 	now := event.SecFromTime(p.now())
 
-	closed := p.asm.Advance(now)
-	if len(closed) > 0 {
-		p.counters.sessionsClosed.Add(int64(len(closed)))
-		for _, s := range closed {
-			// ADR 0005 가 abandoned 판정 근거를 남기라고 요구했다. 오판 가능한
-			// 휴리스틱이라 사후에 근거 없이는 아무도 검증할 수 없다.
-			p.log.Printf("세션 마감: id=%s vendor=%s status=%s 근거=%q 도구=%d 재개=%d",
-				s.SessionID, s.Vendor, s.Status, s.Diag.StatusReason, s.ToolCalls, s.Diag.Reopens)
-		}
-	}
-
 	// Snapshot 은 진행 중·마감 세션을 모두 담은 **전체** 값이다. store 의 종속 테이블
 	// 쓰기가 스냅샷을 정본으로 보고 대체하므로 부분 세션을 넣으면 누락이 삭제로
-	// 해석된다 (store.Batch 주석). Snapshot()/Advance() 결과 외의 세션은 넘기지 않는다.
+	// 해석된다 (store.Batch 주석).
 	p.flush(p.asm.Snapshot())
+
+	p.sweepIdleSessions(now)
 
 	// 조립기 메모리 정리. 이 호출이 없으면 세션 맵이 무한히 자라고, 더 나쁘게는
 	// store.Prune 이 보존 정책으로 지운 타임라인을 다음 스냅샷이 통째로 되살린다.
 	//
-	// **반드시 flush 뒤에 온다.** 앞에 두면, 마감되는 순간 이미 TTL 을 넘긴 세션
-	// (데몬이 몇 시간 잠들었다 깨는 경우)이 스냅샷에 들어가기 전에 사라져 store 에
-	// 한 번도 쓰이지 못한다. 정리보다 저장이 먼저다.
+	// **반드시 flush 뒤에 온다.** 앞에 두면, TTL 을 넘긴 세션(데몬이 몇 시간 잠들었다
+	// 깨는 경우)이 스냅샷에 들어가기 전에 사라져 store 에 한 번도 쓰이지 못한다.
 	//
-	// 보존 기간(400일)이 아니라 몇 시간짜리 TTL 을 쓰는 이유는 되살림을 구조적으로
-	// 불가능하게 만들기 위해서다. 대신 TTL 을 지난 session.id 가 다시 등장하면 조립기가
-	// 새 세션으로 시작하고 sessions UPSERT 가 기존 행을 덮는다 — 그래서 유휴 임계값
-	// (10분)보다 한참 큰 값을 쓴다.
+	// 기준은 마지막 활동이다. 보존 기간(400일)이 아니라 몇 시간짜리 TTL 을 쓰는 이유는
+	// 되살림을 구조적으로 불가능하게 만들기 위해서다 — 유휴 임계값보다 한참 커야 한다.
 	if p.sessionTTL > 0 {
 		before := now - event.UnixSec(p.sessionTTL/time.Second)
 		if n := p.asm.Prune(before); n > 0 {
-			p.log.Printf("조립기 정리: 세션 %d개 (마감 %s 이전)", n, p.sessionTTL)
+			p.log.Printf("조립기 정리: 세션 %d개 (마지막 활동 %s 이전)", n, p.sessionTTL)
 		}
 	}
-
-	p.sweepIdleSessions(now)
 }
 
 // sweepIdleSessions 는 조립기 메모리 밖의 유휴 세션을 DB 에서 마감한다. 데몬을 재시작하면
@@ -628,11 +630,8 @@ func (p *pipeline) prune() {
 // 마감 판정을 한 번 더 돌리는 이유는, 마지막 이벤트 이후 유휴 임계값을 넘긴 세션이
 // running 상태로 남으면 화면 상단의 "N agents active" 가 죽은 세션을 계속 세기 때문이다.
 func (p *pipeline) finalFlush() {
-	now := event.SecFromTime(p.now())
-	if closed := p.asm.Advance(now); len(closed) > 0 {
-		p.counters.sessionsClosed.Add(int64(len(closed)))
-	}
 	p.flush(p.asm.Snapshot())
+	p.sweepIdleSessions(event.SecFromTime(p.now()))
 }
 
 // maxCarryEvents 는 저장 실패가 이어질 때 붙들 미저장 이벤트의 상한이다.
