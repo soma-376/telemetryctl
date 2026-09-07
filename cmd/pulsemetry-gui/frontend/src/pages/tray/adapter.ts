@@ -181,9 +181,27 @@ const STATUS_TEXT: Record<string, string> = {
   completed: "완료",
 };
 
+// startedText 는 세션이 시작한 시각이다. 날짜를 붙이지 않는 이유는 최근 세션 목록이
+// **선택한 하루 안에서 시작한 세션**만 담기 때문이다 (dashboard 의 recentSessionsSQL).
+//
+// started_at 이 0 이면 빈 문자열이다 — unix epoch 를 "09:00" 으로 그리면 없는 사실을 만든다.
+function startedText(startedAt: number): string {
+  if (startedAt <= 0) return "";
+  const d = new Date(startedAt * 1000);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+// toSession 은 한 세션을 목록 한 줄로 옮긴다.
+//
+// 부제가 시각으로 시작한다. 제목만으로는 줄이 구분되지 않는 경우가 흔하기 때문이다 —
+// 같은 프롬프트를 반복 실행하면 제목이 같고, 원문도 파일도 못 잡은 세션은 벤더별 고정
+// 문구("claude_code 세션")를 받는다. 그러면 서로 다른 세션이 화면에서 똑같아 보인다.
 function toSession(s: RecentSession): TraySession {
   const agentId = toAgentId(s.vendor);
-  const parts = [AGENT_NAMES[agentId]];
+  const parts: string[] = [];
+  const started = startedText(s.started_at);
+  if (started) parts.push(started);
+  parts.push(AGENT_NAMES[agentId]);
   if (s.duration_ms > 0)
     parts.push(formatDuration(Math.round(s.duration_ms / 60_000)));
   const status = STATUS_TEXT[s.status];
