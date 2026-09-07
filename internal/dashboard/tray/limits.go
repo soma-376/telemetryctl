@@ -2,9 +2,9 @@ package tray
 
 // 벤더 한도 스냅샷 조회 (PROJ-96).
 //
-// 벤더 API 를 직접 두드리지 않는다. 데몬이 internal/vendorlimit 로 조회해 SQLite 에 넣어
-// 둔 최신 스냅샷을 읽을 뿐이다. 화면이 직접 붙으면 트레이를 열 때마다 외부 호출이 나가고,
-// 데몬과 화면이 서로 다른 시각의 값을 말하게 된다.
+// 데몬 내부의 트레이 조립기가 호출한다. 벤더 API를 직접 조회하지 않고, 데몬의 한도
+// 갱신 경로가 SQLite에 저장한 최신 스냅샷을 읽는다. GUI는 이 함수를 호출하거나 DB를
+// 열지 않고 데몬의 로컬 API 응답을 받는다 (ADR 0013).
 
 import (
 	"context"
@@ -24,12 +24,13 @@ type Querier interface {
 const vendorLimitsQuery = `SELECT vendor,state,reason,detail,plan,windows_json,extra_json,observed_at
 FROM vendor_limit_snapshots ORDER BY vendor`
 
-// VendorLimits 는 데몬이 저장해 둔 최신 벤더 한도 스냅샷을 읽는다.
+// VendorLimits 는 데몬의 트레이 조립기가 SQLite에서 최신 벤더 한도 스냅샷을 읽을 때 쓴다.
+// GUI는 이 함수를 직접 호출하지 않는다 (ADR 0013).
 //
 // 아직 한 번도 조회되지 않은 벤더는 목록에서 빠지는 것이 아니라 unavailable 로 채운다.
 // 빠지면 화면이 "아직 로딩 중" 과 구분하지 못한다.
 //
-// db 가 nil 이면 로컬 DB 가 아직 없다는 뜻이고 에러가 아니다 (ADR 0004). 호출자는 DB 가
+// db 가 nil 이면 조회할 DB가 없다는 뜻이며 벤더별 미조회 상태를 반환한다. 호출자는 DB 가
 // 없을 때 반드시 nil 리터럴을 넘겨야 한다 — 타입이 붙은 nil 포인터를 인터페이스에 담으면
 // 여기서 db != nil 이 되어 그대로 패닉으로 간다.
 func VendorLimits(ctx context.Context, db Querier, now time.Time) vendorlimit.Snapshot {
