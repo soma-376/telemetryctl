@@ -41,7 +41,13 @@ func (d *Dashboard) Tray(ctx context.Context, q tray.Query) (tray.Snapshot, erro
 	return d.tray.Current(ctx, q)
 }
 
-// RefreshTray 는 데몬에 갱신을 명령하고 그 결과를 다시 받는다 (퀵뷰의 수동 새로고침).
+// SyncTray 는 트레이 창이 열렸을 때 부른다. 캐시를 건너뛰고 데몬까지 가되, 벤더를 두드릴지는
+// 데몬이 정한다 (ADR 0014). 화면이 억제를 판단하지 않는다.
+func (d *Dashboard) SyncTray(ctx context.Context, q tray.Query) (tray.Snapshot, error) {
+	return d.tray.RefreshAuto(ctx, q)
+}
+
+// RefreshTray 는 데몬에 수동 갱신을 명령하고 그 결과를 다시 받는다 (퀵뷰의 새로고침 버튼).
 func (d *Dashboard) RefreshTray(ctx context.Context, q tray.Query) (tray.Snapshot, error) {
-	return d.tray.Refresh(ctx, q)
+	return d.tray.RefreshManual(ctx, q)
 }

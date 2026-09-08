@@ -27,12 +27,21 @@ const (
 const (
 	paramTZ          = "tz"
 	paramRecentLimit = "recent_limit"
+	// paramManual 이 "1" 이면 사용자가 새로고침 버튼을 누른 것이다. 창이 열려서 나간 갱신과
+	// 억제 등급이 다르다 (ADR 0014). 없으면 자동으로 읽는다 — 덜 세게 읽는 쪽이 안전하다.
+	paramManual = "manual"
+	// manualValue 는 paramManual 이 수동을 뜻할 때의 값이다.
+	manualValue = "1"
 )
 
 // LimitRefresher 는 vendorlimit.Refresher가 만족하는 갱신 계약이다. 조회와 SQLite 쓰기까지 끝내고 돌아온다 —
 // 그래서 응답이 온 시점에는 뒤이은 스냅샷 조회가 새 값을 읽는다.
+//
+// 메서드가 둘인 이유는 억제 등급이 둘이기 때문이다 (ADR 0014). 여기서 어느 쪽을 부를지만 고르고,
+// 얼마나 억제할지는 전적으로 구현이 정한다 — 이 패키지에 임계값이 없어야 정책이 한 곳에 남는다.
 type LimitRefresher interface {
-	Refresh(ctx context.Context) error
+	RefreshAuto(ctx context.Context) error
+	RefreshManual(ctx context.Context) error
 }
 
 // TraySource 는 데몬의 스냅샷 조립기다 (tray.Builder).
@@ -46,10 +55,16 @@ func NewServer(refresher LimitRefresher, trays TraySource) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST "+TrayRefreshPath, func(w http.ResponseWriter, r *http.Request) {
-		if err := refresher.Refresh(r.Context()); err != nil {
+		refresh := refresher.RefreshAuto
+		if r.URL.Query().Get(paramManual) == manualValue {
+			refresh = refresher.RefreshManual
+		}
+		if err := refresh(r.Context()); err != nil {
 			http.Error(w, "vendor limit refresh failed", http.StatusServiceUnavailable)
 			return
 		}
+		// 쿨다운에 걸려 벤더를 두드리지 않았어도 스냅샷은 그대로 내려간다. 호출자가 원하는 것은
+		// "갱신했는가" 가 아니라 "지금 무엇을 그려야 하는가" 다 (ADR 0014).
 		writeTray(w, r, trays)
 	})
 

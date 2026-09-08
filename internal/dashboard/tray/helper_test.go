@@ -187,7 +187,11 @@ type stubCollector struct {
 // 외부 갱신 메서드를 억지로 추가하지 않기 위한 테스트 어댑터다.
 type builderSource struct{ *Builder }
 
-func (s builderSource) Refresh(ctx context.Context, q Query) (Snapshot, error) {
+func (s builderSource) RefreshManual(ctx context.Context, q Query) (Snapshot, error) {
+	return s.Snapshot(ctx, q)
+}
+
+func (s builderSource) RefreshAuto(ctx context.Context, q Query) (Snapshot, error) {
 	return s.Snapshot(ctx, q)
 }
 
