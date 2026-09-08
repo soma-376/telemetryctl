@@ -44,7 +44,7 @@ type codexTitlePolicy struct {
 	finalRetryDelays []time.Duration
 }
 
-// codexTitleRefresher는 별도 App Server 프로세스의 공유 저장소를 thread/read로 조회한다.
+// codexTitleRefresher 는 별도 App Server 프로세스의 공유 저장소를 thread/read로 조회한다.
 // Codex 앱의 App Server 알림은 프로세스 경계를 넘는다는 보장이 없으므로 사용하지 않는다.
 type codexTitleRefresher struct {
 	reader codexapp.ThreadReader
@@ -82,7 +82,7 @@ func newCodexTitleRefresherWithPolicy(parent context.Context, reader codexapp.Th
 	return r
 }
 
-// Enqueue는 수집 저장을 막지 않는다. 진행 중 세션은 워커가 조회 간격을 제한하고,
+// Enqueue 는 수집 저장을 막지 않는다. 진행 중 세션은 워커가 조회 간격을 제한하고,
 // 종료 세션은 쿨다운과 무관하게 최종 조회한다.
 func (r *codexTitleRefresher) Enqueue(sessionKey string, ended bool) {
 	if r == nil || sessionKey == "" {
@@ -199,7 +199,7 @@ func (r *codexTitleRefresher) refresh(sessionKey string) (bool, error) {
 	return true, nil
 }
 
-// Close는 DB와 App Server를 닫기 전에 워커와 예약된 재시도를 멈춘다.
+// Close 는 DB와 App Server를 닫기 전에 워커와 예약된 재시도를 멈춘다.
 func (r *codexTitleRefresher) Close() {
 	if r == nil {
 		return

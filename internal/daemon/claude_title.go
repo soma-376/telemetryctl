@@ -66,9 +66,7 @@ func newClaudeTitleRefresher(parent context.Context, root string, store claudeTi
 }
 
 // Enqueue 는 큐가 찼을 때 수집을 막지 않는다. 다음 세션 스냅샷이 다시 기회를 준다.
-//
-// ended 는 이 스냅샷에서 세션이 마감됐다는 뜻이다. 마감된 세션은 다시 스냅샷에 실리지
-// 않으므로 "다음 기회" 가 없다 — 쿨다운을 건너뛰고 마지막으로 한 번 더 본다.
+// ended 는 세션이 마감 상태라는 뜻이며, 최초 마감 여부를 구분하지 않는다.
 func (r *claudeTitleRefresher) Enqueue(sessionKey string, ended bool) {
 	if r == nil || sessionKey == "" {
 		return
@@ -79,6 +77,9 @@ func (r *claudeTitleRefresher) Enqueue(sessionKey string, ended bool) {
 	}
 }
 
+// run 은 제목을 저장한 세션을 제외하고, 미발견 세션의 재조회 간격을 제한한다.
+// 현재 마감 상태는 간격 제한을 우회한다. 마감 세션도 TTL 동안 반복 입력되므로
+// 제목을 찾지 못하면 스냅샷마다 다시 읽을 수 있다.
 func (r *claudeTitleRefresher) run() {
 	defer close(r.done)
 	completed := make(map[string]struct{})

@@ -331,7 +331,7 @@ func (d *daemon) start(ctx context.Context) error {
 		WriteTimeout: storeWriteTimeout,
 		PruneTimeout: storePruneTimeout,
 		SessionTTL:   sessionMemoryTTL,
-		Titles:       d.codexTitles,
+		CodexTitles:  d.codexTitles,
 		ClaudeTitles: d.claudeTitles,
 	})
 

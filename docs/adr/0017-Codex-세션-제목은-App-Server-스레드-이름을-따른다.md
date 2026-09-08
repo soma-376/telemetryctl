@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted — 제목 출처는 [ADR 0018](0018-세션-제목은-벤더가-준-것만-저장한다.md)에 따라 `thread.name`으로 한정한다.
 
 ## Context
 
@@ -19,14 +19,13 @@ Codex App Server의 `thread/read` 응답은 사용자에게 보이는 제목인 
 ## Decision
 
 - Codex 세션 제목의 정본은 App Server `thread/read`의 `thread.name`이다.
-- `thread.name`이 없으면 첫 `userMessage`의 첫 문장 60룬을 임시 제목으로 쓴다.
 - OTel의 Codex 프롬프트 원문은 제목 생성에 쓰지 않는다.
 - 별도 App Server 프로세스의 알림은 다른 Codex 클라이언트에서 일어난 변경을 보장하지
   않으므로 사용하지 않는다.
 - 진행 중 Codex 세션은 `thread/read(includeTurns=false)`를 세션별 최소 간격으로 반복하고,
   같은 `(vendor, session_key)` 행의 제목을 최신 `thread.name`으로 교체한다.
 - 종료 시에는 쿨다운과 무관하게 최종 조회한다. 이름이 비었거나 조회가 실패하면 수집
-  flush에 기대지 않고 워커가 제한된 횟수만큼 지수 간격으로 다시 조회한다.
+  flush에 기대지 않고 워커가 10초·30초·60초 간격으로 최대 3회 더 조회한다.
 - `thread.name`만 저장한다. 이름이 없으면 제목을 만들지 않고 NULL 로 둔다 (ADR 0018 로 좁혀짐).
 - 제목 재료가 없으면 DB에는 `NULL`을 유지한다. 화면은 벤더명 기반 표시 문구를 사용한다.
 - transcript 파일은 제목의 정상 조회 경로로 읽지 않는다.

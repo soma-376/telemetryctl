@@ -44,7 +44,7 @@ type pipeline struct {
 	now func() time.Time
 	// 제목 보강기는 벤더마다 출처가 달라 따로 둔다 — Codex 는 App Server 스레드 이름,
 	// Claude Code 는 로컬 트랜스크립트다 (ADR 0017·0018).
-	titles       sessionTitleRefresher
+	codexTitles  sessionTitleRefresher
 	claudeTitles sessionTitleRefresher
 
 	// batchEvents 는 크기 기준 flush 임계값이다.
@@ -187,7 +187,7 @@ func newPipeline(cfg pipelineConfig) *pipeline {
 		fwd:          cfg.Forwarder,
 		log:          cfg.Logger,
 		now:          cfg.Now,
-		titles:       cfg.Titles,
+		codexTitles:  cfg.CodexTitles,
 		claudeTitles: cfg.ClaudeTitles,
 		batchEvents:  cfg.BatchEvents,
 		writeTimeout: cfg.WriteTimeout,
@@ -212,7 +212,7 @@ type pipelineConfig struct {
 	WriteTimeout time.Duration
 	PruneTimeout time.Duration
 	SessionTTL   time.Duration
-	Titles       sessionTitleRefresher
+	CodexTitles  sessionTitleRefresher
 	ClaudeTitles sessionTitleRefresher
 	// DedupCapacity 는 배선 단계 중복 제거 창의 크기다. 0 이면 기본값.
 	DedupCapacity int
@@ -501,8 +501,8 @@ func (p *pipeline) flush(sessions []session.Session) {
 		}
 		switch id {
 		case vendor.Codex:
-			if p.titles != nil {
-				p.titles.Enqueue(s.SessionID, s.EndedAt.Valid())
+			if p.codexTitles != nil {
+				p.codexTitles.Enqueue(s.SessionID, s.EndedAt.Valid())
 			}
 		case vendor.ClaudeCode:
 			if p.claudeTitles != nil {
