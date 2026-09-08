@@ -25,7 +25,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -37,6 +39,7 @@ import (
 	"github.com/your-org/pulsemetry/internal/forward"
 	"github.com/your-org/pulsemetry/internal/hostenv"
 	"github.com/your-org/pulsemetry/internal/installer"
+	"github.com/your-org/pulsemetry/internal/instancelock"
 	"github.com/your-org/pulsemetry/internal/localapi"
 	"github.com/your-org/pulsemetry/internal/otlpdecode"
 	"github.com/your-org/pulsemetry/internal/receiver"
@@ -146,6 +149,8 @@ type Options struct {
 	// IngestToken 은 loopback ingest 토큰이다. 비우면 receiver.EnsureToken 이
 	// 키링에서 읽거나 만든다. 키링을 쓸 수 없는 환경(테스트·헤드리스)의 통로다.
 	IngestToken string
+	// ControlToken은 임베딩·테스트용 종료 토큰이다. ingest와 같으면 제어 경로를 열지 않는다.
+	ControlToken string
 	// ForwardTokens 는 상위 전달 토큰 공급자다. 비우면 state.ServerURL 로
 	// forward.NewTelemetryTokenSource 를 만든다(운영 경로).
 	ForwardTokens forward.TokenSource
@@ -197,12 +202,14 @@ func (o Options) normalized() (Options, error) {
 
 // Run 은 데몬을 기동하고 ctx 가 끝날 때까지 돌린다. 반환 전에 graceful shutdown 을 마친다.
 func Run(ctx context.Context, opts Options) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	opts, err := opts.normalized()
 	if err != nil {
 		return err
 	}
 
-	d := &daemon{opts: opts, log: opts.Logger}
+	d := &daemon{opts: opts, log: opts.Logger, cancel: cancel, startedAt: opts.Now().UTC().Format(time.RFC3339)}
 	if err := d.start(ctx); err != nil {
 		// 부분 기동을 그대로 두면 리스너·DB 핸들·runtime.json 이 남는다.
 		d.shutdown()
@@ -214,8 +221,11 @@ func Run(ctx context.Context, opts Options) error {
 }
 
 type daemon struct {
-	opts Options
-	log  *log.Logger
+	lease     *instancelock.Lock
+	cancel    context.CancelFunc
+	startedAt string
+	opts      Options
+	log       *log.Logger
 
 	state          *installer.State
 	db             *store.DB
@@ -252,6 +262,13 @@ func (d *daemon) start(ctx context.Context) error {
 		return fmt.Errorf("pulsemetry is not enrolled: state file not found at %s", d.opts.StatePath)
 	}
 	d.state = state
+	if drift, err := installer.InspectManaged(d.opts.StatePath, state); err != nil {
+		d.log.Printf("경고: 설정 drift 검사 실패: %v", err)
+	} else {
+		for _, item := range drift {
+			d.log.Printf("경고: 설정 drift tool=%s path=%s key=%s status=%s (%s) — %s로 명시적 복구", item.Tool, item.Path, item.Key, item.Status, installer.DriftImpact(item.Key), installer.DriftRepairCommand(state))
+		}
+	}
 	if migrated {
 		// 올림을 디스크에 굳힌다. 실패해도 기동은 계속한다 — 메모리 상 상태로 정상
 		// 동작하고 다음 기동이 다시 시도한다. 여기서 죽으면 업그레이드가 곧 장애다.
@@ -267,7 +284,20 @@ func (d *daemon) start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	dataDir, err = filepath.Abs(dataDir)
+	if err != nil {
+		return err
+	}
 	d.dataDir = dataDir
+	d.lease, err = instancelock.Acquire(dataDir)
+	if err != nil {
+		return err
+	}
+	// uninstall이 상태를 지운 뒤 대기 중이던 기동이 옛 상태로 살아나지 않게 한다.
+	current, err := installer.LoadState(d.opts.StatePath)
+	if err != nil || current == nil || current.InstallationID != state.InstallationID {
+		return errors.New("데이터 잠금 획득 중 설치 상태가 변경됐다")
+	}
 
 	// 원문 보관은 기본 ON, opt-out 이다 (ADR 0003). 플래그는 끄는 방향으로만 작동한다.
 	storeContent := state.Local.StoreContent && !d.opts.NoStoreContent
@@ -452,15 +482,29 @@ func (d *daemon) startReceiver() error {
 		requested = receiver.DefaultPort
 	}
 
+	var control http.Handler
+	controlToken := d.opts.ControlToken
+	// 토큰을 직접 주입하는 임베딩·테스트는 키링에 새 항목을 만들지 않는다.
+	if controlToken == "" && d.opts.IngestToken == "" {
+		var controlErr error
+		controlToken, controlErr = localapi.EnsureControlToken()
+		if controlErr != nil {
+			d.log.Print("경고: 종료 제어 토큰을 확보하지 못했다. uninstall 전 수동 종료가 필요하다")
+		}
+	}
+	if controlToken != "" && controlToken != token {
+		control = localapi.NewControlHandler(controlToken, d.dataDir, d.startedAt, os.Getpid(), d.cancel)
+	}
 	srv, err := receiver.Start(receiver.Options{
-		Port:      requested,
-		FixedPort: d.opts.FixedPort,
-		Token:     token,
-		Sink:      d.pipe,
-		Logger:    d.log,
-		Decode:    otlpdecode.Options{InstallationID: d.state.InstallationID},
-		Now:       d.opts.Now,
-		LocalAPI:  localapi.NewServer(d.limits, tray.NewBuilder(d.query), d.pipe),
+		ControlAPI: control,
+		Port:       requested,
+		FixedPort:  d.opts.FixedPort,
+		Token:      token,
+		Sink:       d.pipe,
+		Logger:     d.log,
+		Decode:     otlpdecode.Options{InstallationID: d.state.InstallationID},
+		Now:        d.opts.Now,
+		LocalAPI:   localapi.NewServer(d.limits, tray.NewBuilder(d.query), d.pipe),
 	})
 	if err != nil {
 		return fmt.Errorf("로컬 수신기 기동: %w", err)
@@ -521,7 +565,7 @@ func (d *daemon) rewireAfterPortFallback(requested, actual int) {
 func (d *daemon) runtimeInfo() runtimeinfo.Info {
 	info := runtimeinfo.Info{
 		PID:          os.Getpid(),
-		StartedAt:    d.opts.Now().UTC().Format(time.RFC3339),
+		StartedAt:    d.startedAt,
 		DataDir:      d.dataDir,
 		DatabasePath: store.PathIn(d.dataDir),
 		Version:      installer.Version,
@@ -638,6 +682,11 @@ func (d *daemon) warmToken(ctx context.Context) {
 // 각 단계는 전체 예산(ShutdownTimeout)을 1/3 씩 나눠 쓰고, 앞 단계가 남긴 시간은
 // 뒤로 넘어간다. 어느 단계도 무한정 기다리지 않는다 (§5.4).
 func (d *daemon) shutdown() {
+	defer func() {
+		if d.lease != nil {
+			_ = d.lease.Close()
+		}
+	}()
 	total := d.opts.ShutdownTimeout
 	if total <= 0 {
 		total = DefaultShutdownTimeout

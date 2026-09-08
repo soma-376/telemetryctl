@@ -3,7 +3,6 @@ package installer
 import (
 	"fmt"
 
-	"github.com/your-org/pulsemetry/internal/config"
 	"github.com/your-org/pulsemetry/internal/credential"
 	"github.com/your-org/pulsemetry/internal/enrollment"
 )
@@ -78,25 +77,17 @@ func Reconnect(statePath, serverOverride string) (*Report, error) {
 		return report, nil
 	}
 
-	for _, target := range state.Targets {
-		var result config.Result
-		switch target.Tool {
-		case "claude":
-			result, err = config.MergeClaude(target.Path, &state.Manifest, issued.TelemetryToken, false)
-		case "codex":
-			result, err = mergeCodexInstalled(target.Path, &state.Manifest, issued.TelemetryToken, false,
-				"", state.Local.DataDir)
-		default:
-			continue
-		}
-		if err != nil {
-			return report, fmt.Errorf("update %s telemetry token: %w", target.Tool, err)
-		}
-		report.Targets = append(report.Targets, result)
+	results, restore, err := remergeTargets(state, &state.Manifest, issued.TelemetryToken, "", "", state.Local.DataDir, false)
+	if err != nil {
+		return report, err
 	}
+	report.Targets = results
 
 	state.ServerURL = serverURL
 	if err := SaveState(statePath, state); err != nil {
+		if undoErr := restore(); undoErr != nil {
+			return report, fmt.Errorf("상태 저장 실패: %v; 설정 복구 실패: %w", err, undoErr)
+		}
 		return report, err
 	}
 	return report, nil

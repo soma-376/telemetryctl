@@ -332,5 +332,5 @@ func mergeCodexConfig(path string, m *contract.Manifest, token, hookCommand stri
 	if err := AtomicWriteFile(path, out.Bytes(), 0o600); err != nil {
 		return Result{}, err
 	}
-	return Result{Path: path, ManagedKeys: managed, Created: !existed}, nil
+	return Result{Path: path, ManagedKeys: managed, ManagedEntries: captureManaged(root, managed), Created: !existed}, nil
 }

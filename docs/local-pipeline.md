@@ -1337,9 +1337,10 @@ SQL 스윕이 보완한다(ADR 0019, ADR 0020).
 세션 이름이 없으므로 이름은 같은 ID로 App Server에서 비동기 조회하고, 확인되면
 `Codex 세션 제목 확인: session_id=... title=...` 로그를 별도로 남긴다.
 
-훅 소유권은 별도 state나 fingerprint 파일이 아니라 `type=command`, Pulsemetry 실행 파일 이름,
-예약 서브커맨드 `hook codex`의 일치로 판정한다. 따라서 경로가 바뀐 재배선도 중복을 만들지 않고,
-로컬 배선 해제는 사용자 handler를 남긴 채 Pulsemetry handler만 제거한다.
+명시적 재배선의 훅 후보는 `type=command`, Pulsemetry 실행 파일 이름,
+예약 서브커맨드 `hook codex`의 일치로 판정한다. 따라서 경로가 바뀐 재배선도 중복을 만들지 않는다.
+uninstall은 이 후보 판정만으로 삭제하지 않고 `managed-settings.json`의 마지막 적용 지문을
+비교한다. 사용자 변경을 보존하는 제거·drift 정책은 [설치 해제](uninstall.md)와 ADR 0021을 따른다.
 
 ---
 

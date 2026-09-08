@@ -209,6 +209,7 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 		report.Targets = append(report.Targets, result)
 		applied = append(applied, step)
 		state.Targets = append(state.Targets, Target{
+			pendingManaged: result.ManagedEntries,
 			Tool:           step.tool,
 			Path:           result.Path,
 			BackupPath:     result.BackupPath,

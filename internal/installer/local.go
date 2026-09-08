@@ -499,6 +499,8 @@ func remergeTargets(state *State, m *contract.Manifest, token, backupDir, hookEx
 		// 관리 키 목록은 갱신한다. 병합할 때마다 실제로 쓴 키가 여기 반영되어야
 		// uninstall 이 잔재 없이 제거할 수 있다 (§5.2).
 		state.Targets[s.index].ManagedKeys = result.ManagedKeys
+		state.Targets[s.index].pendingManaged = result.ManagedEntries
+		state.Targets[s.index].preserveManagedHooks = s.tool == "codex" && preserveCodexHooks
 		applied = append(applied, s)
 	}
 	return results, restore, nil
