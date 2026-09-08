@@ -172,7 +172,7 @@ func mustWrite(t *testing.T, db *DB, b Batch) WriteResult {
 }
 
 // assertNoOrphans 는 v3 의 외래 키가 전부 지켜졌는지 본다.
-// NO ACTION 이라 CASCADE 가 정리해 주지 않으므로 순서를 한 번만 틀려도 고아가 남는다.
+// 삽입과 연쇄 삭제 이후에도 원본 이벤트 참조까지 무결성이 유지돼야 한다.
 func assertNoOrphans(t *testing.T, db *DB) {
 	t.Helper()
 	rows, err := db.SQL().QueryContext(context.Background(), `PRAGMA foreign_key_check`)

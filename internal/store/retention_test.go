@@ -49,7 +49,7 @@ func seedRetention(t *testing.T, db *DB, now time.Time) {
 	})
 }
 
-func TestPruneRemovesOldLayersInOrder(t *testing.T) {
+func TestPruneCascadesOldSessions(t *testing.T) {
 	db := openTestDB(t)
 	seedRetention(t, db, baseTime)
 
@@ -221,15 +221,15 @@ func TestPruneUsesEventTimeWhenSessionHasNoTimestamps(t *testing.T) {
 }
 
 // 한 트랜잭션이라는 것은 중간에 실패하면 **아무것도** 바뀌지 않는다는 뜻이다.
-// 자식 계층을 다 지운 뒤 sessions 에서 실패시켜 그 앞의 삭제가 되돌려지는지 본다.
+// 세션과 자식 삭제 후 실패시켜 연쇄 삭제 전체가 되돌려지는지 본다.
 func TestPruneRollsBackOnFailure(t *testing.T) {
 	db := openTestDB(t)
 	seedRetention(t, db, baseTime)
 	before := snapshotRows(t, db)
 
-	// BEFORE DELETE 트리거로 sessions 삭제만 실패시킨다. 앞의 다섯 문장은 이미 성공한 뒤다.
+	// AFTER DELETE 트리거는 자식의 연쇄 삭제가 실행된 뒤 실패시킨다.
 	if _, err := db.SQL().ExecContext(context.Background(),
-		`CREATE TRIGGER prune_boom BEFORE DELETE ON sessions BEGIN
+		`CREATE TRIGGER prune_boom AFTER DELETE ON sessions BEGIN
 		   SELECT RAISE(ABORT, '테스트가 강제한 실패');
 		 END`); err != nil {
 		t.Fatalf("트리거 생성: %v", err)

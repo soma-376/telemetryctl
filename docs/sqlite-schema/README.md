@@ -23,7 +23,8 @@ vendors
 ```
 
 `llm_calls.turn_id`와 `tool_calls.turn_id`는 소유 턴을 직접 참조하고, 두 테이블의 이벤트 ID는
-원본 `events` 행을 별도로 참조한다. 모든 외래 키의 삭제 동작은 SQLite 기본값인 `NO ACTION`이다.
+원본 `events` 행을 별도로 참조한다. 세션 → 턴, 턴 → 이벤트·LLM 호출·도구 호출,
+도구 호출 → 파일 변경은 `ON DELETE CASCADE`다. 벤더 참조와 원본 이벤트 참조는 `NO ACTION`이다.
 
 ## 문서 목록
 
@@ -54,7 +55,7 @@ vendors
 도구 호출 방향으로 탐색할 때 쓰는 인덱스다. `events(turn_id)`는 `UNIQUE (turn_id, seq)`가 선두 컬럼으로
 받쳐 주므로 따로 만들지 않는다.
 
-DDL에 없는 인덱스, `ON DELETE CASCADE`, 기본값, 추가 `CHECK` 제약은 만들지 않는다.
+인덱스·외래 키 삭제 동작·기본값·`CHECK` 제약은 실행 DDL과 동일하게 유지한다.
 제품 최초 배포 전의 인덱스 변경은 `schemaSQL`에 반영한다. 배포 후에는 ADR 0012의 재검토
 조건에 따라 증분 마이그레이션으로 전환한다.
 
@@ -67,8 +68,8 @@ DDL에 없는 인덱스, `ON DELETE CASCADE`, 기본값, 추가 `CHECK` 제약�
 - **`events.seq`는 로컬 수집 도착 순서**이고 벤더 시각이 아니다. 이미 저장된 행의 `seq`는
   재번호하지 않으며, 순서가 뒤집혀 도착해도 정상 입력으로 취급한다.
   독자는 `ORDER BY occurred_at, seq`로 읽는다.
-- **삭제는 자식에서 부모 순서**로 한다. 모든 외래 키가 `NO ACTION`이라 순서를 어기면 실패한다.
-  `file_changes → tool_calls → llm_calls → events → turns → sessions → vendors`.
+- **보존 삭제는 세션 단위**로 한다. 소유한 자식은 `ON DELETE CASCADE`로 함께 삭제한다.
+  테이블별 삭제 건수는 같은 트랜잭션에서 삭제 전에 집계한다.
   `vendors` 삭제는 `AND vendor NOT IN (SELECT vendor_id FROM sessions)`로 보호한다.
 - **보존(400일) 판정 기준은 세션의 마지막으로 알려진 활동**이다. `ended_at`·`started_at`·소속
   이벤트 시각 중 가장 늦은 값을 쓰고, 셋 다 없으면 대상에서 빠진다. prune과 purge는 각각
@@ -82,6 +83,21 @@ DDL에 없는 인덱스, `ON DELETE CASCADE`, 기본값, 추가 `CHECK` 제약�
   `tool_calls.error_message`는 식별 정보를 담는다.** 로컬 저장 전용이며 상위 전달에는 실리지
   않는다. 상위 전달 스크럽은 `internal/forward`가 원본 바이트에 대해 수행한다.
 - **원문 전문 검색은 `LIKE`로 한다.** v3에는 FTS 테이블이 없다.
+
+## 값 제약
+
+- 토큰 수·비용·소요 시간·바이트 수·추가/삭제 줄 수는 `CHECK (컬럼 >= 0)`로 제한한다.
+  미확정은 `NULL`을 허용하고 실제 측정값 `0`은 유지한다. 저장 경계에서 음수 수치는
+  `NULL`로 바꾸며 비용의 NaN·무한대와 활동 시간의 정수 변환 범위 초과도 `NULL`로 처리한다.
+  한 필드의 오류로 같은 배치의 정상 이벤트까지 거부하지 않는다.
+
+- `meta.key`와 `vendors.vendor`는 `NOT NULL`이다.
+- `events.seq`는 1 이상의 정수, `turns.turn_index`는 0 이상의 정수 또는 가상 턴의 `NULL`이다.
+- 세션과 턴의 시작·종료 시각이 모두 있으면 `ended_at >= started_at`이어야 한다.
+  한쪽이 미확정인 `NULL`은 허용한다.
+- `vendor_limit_snapshots.state`는 `available` 또는 `unavailable`이다.
+  `windows_json`은 유효한 JSON 배열, `extra_json`은 유효한 JSON 객체여야 한다.
+  이벤트 수집 전에 한도 조회가 가능하므로 `vendors` 외래 키는 두지 않는다.
 
 ## 연결 PRAGMA
 
@@ -100,3 +116,6 @@ DDL에 없는 인덱스, `ON DELETE CASCADE`, 기본값, 추가 `CHECK` 제약�
 1. 빈 DB에 `schemaSQL` 전체를 한 트랜잭션으로 실행한다.
 2. 같은 트랜잭션에서 `meta.local_schema_version`을 현재 단일 세대로 기록한다.
 3. 다른 세대의 개발 DB는 자동 변환하지 않고 삭제 후 재생성을 안내한다.
+
+동일 세대로 이미 생성한 개발 DB에도 DDL 변경은 소급 적용되지 않는다. CASCADE와
+`success` 제약을 포함한 최신 DDL을 적용하려면 개발 DB를 재생성해야 한다.

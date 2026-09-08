@@ -214,8 +214,10 @@ func (w *writer) writeSessions(b Batch) error {
 		// 활동 시간은 초 단위 정수 컬럼이다. 자르지 않고 반올림한다 — 자르면 매 스냅샷마다
 		// 소수부가 버려져 긴 세션의 활동 시간이 조금씩 뒤처진다.
 		var active any
-		if s.ActiveSeconds > 0 {
-			active = int64(math.Round(s.ActiveSeconds))
+		// int64 변환 범위를 벗어나거나 비유한 값이면 미관측으로 남긴다.
+		// float64(math.MaxInt64)는 2^63으로 반올림되므로 상한은 포함하지 않는다.
+		if rounded := math.Round(s.ActiveSeconds); s.ActiveSeconds > 0 && rounded < float64(math.MaxInt64) {
+			active = int64(rounded)
 		}
 		seed := sessionSeed{
 			vendor: s.Vendor, key: s.SessionID,

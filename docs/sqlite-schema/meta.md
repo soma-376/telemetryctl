@@ -39,7 +39,7 @@ v3 파괴적 마이그레이션은 이 테이블을 삭제하지 않는다. 따�
 
 ```sql
 CREATE TABLE IF NOT EXISTS meta (
-  "key"  TEXT PRIMARY KEY,
+  "key"  TEXT NOT NULL PRIMARY KEY,
   value  TEXT NOT NULL
 );
 ```

@@ -1,6 +1,10 @@
 package store
 
-import "github.com/your-org/pulsemetry/internal/event"
+import (
+	"math"
+
+	"github.com/your-org/pulsemetry/internal/event"
+)
 
 // SQL 인자로 넘기기 전에 "값 없음" 을 NULL 로 옮기는 변환들이다.
 //
@@ -17,21 +21,23 @@ func nullStr(s string) any {
 	return s
 }
 
-// optInt·optFloat·optBool 은 event.Opt 의 미설정을 NULL 로 옮긴다.
+// optInt·optFloat는 미설정 또는 유효하지 않은 사용량 수치를 NULL로 옮긴다.
+// 음수를 0으로 바꾸면 실제 측정값과 구분할 수 없고, 그대로 보내면 배치 전체가 실패한다.
 func optInt(o event.Opt[int64]) any {
-	if v, ok := o.Get(); ok {
+	if v, ok := o.Get(); ok && v >= 0 {
 		return v
 	}
 	return nil
 }
 
 func optFloat(o event.Opt[float64]) any {
-	if v, ok := o.Get(); ok {
+	if v, ok := o.Get(); ok && v >= 0 && !math.IsNaN(v) && !math.IsInf(v, 0) {
 		return v
 	}
 	return nil
 }
 
+// optBool은 미설정을 NULL로 옮긴다.
 func optBool(o event.Opt[bool]) any {
 	if v, ok := o.Get(); ok {
 		return boolInt(v)

@@ -22,7 +22,7 @@ UNIQUE라 한 원본 이벤트가 여러 호출에 소비될 수 없다.
 ```sql
 CREATE TABLE tool_calls (
   id                 INTEGER PRIMARY KEY,
-  turn_id            INTEGER NOT NULL REFERENCES turns (id),
+  turn_id            INTEGER NOT NULL REFERENCES turns (id) ON DELETE CASCADE,
   call_key           TEXT NOT NULL UNIQUE,
   decision_event_id  INTEGER UNIQUE REFERENCES events (id),
   result_event_id    INTEGER UNIQUE REFERENCES events (id),
@@ -30,13 +30,13 @@ CREATE TABLE tool_calls (
   target             TEXT,
   mcp_server         TEXT,
   called_at          INTEGER,
-  duration_ms        INTEGER,
-  blocked_on_user_ms INTEGER,
-  success            INTEGER,
+  duration_ms        INTEGER CHECK (duration_ms >= 0),
+  blocked_on_user_ms INTEGER CHECK (blocked_on_user_ms >= 0),
+  success            INTEGER CHECK (success IN (0, 1)),
   decision           TEXT,
   decision_source    TEXT,
-  input_size_bytes   INTEGER,
-  result_size_bytes  INTEGER,
+  input_size_bytes   INTEGER CHECK (input_size_bytes >= 0),
+  result_size_bytes  INTEGER CHECK (result_size_bytes >= 0),
   error_type         TEXT,
   error_message      TEXT,
   CHECK (decision_event_id IS NOT NULL OR result_event_id IS NOT NULL)

@@ -102,9 +102,13 @@ func TestSchemaNamedIndexesAndForeignKeys(t *testing.T) {
 	}
 	for table, parents := range fks {
 		for parent, want := range parents {
+			action := "CASCADE"
+			if parent == "vendors" || parent == "events" {
+				action = "NO ACTION"
+			}
 			var n int
 			if err := db.SQL().QueryRowContext(ctx,
-				`SELECT COUNT(*) FROM pragma_foreign_key_list(?) WHERE "table" = ?`, table, parent).Scan(&n); err != nil {
+				`SELECT COUNT(*) FROM pragma_foreign_key_list(?) WHERE "table" = ? AND on_delete = ?`, table, parent, action).Scan(&n); err != nil {
 				t.Fatalf("외래 키 조회 (%s -> %s): %v", table, parent, err)
 			}
 			if n != want {
@@ -121,8 +125,8 @@ func TestSchemaNamedIndexesAndForeignKeys(t *testing.T) {
 		}
 		nonDefaultDeletes += n
 	}
-	if nonDefaultDeletes != 0 {
-		t.Fatalf("DDL에 없는 외래 키 삭제 동작 = %d개", nonDefaultDeletes)
+	if nonDefaultDeletes != 5 {
+		t.Fatalf("연쇄 삭제 외래 키 = %d개, want 5", nonDefaultDeletes)
 	}
 }
 

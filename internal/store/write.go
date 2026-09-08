@@ -83,7 +83,7 @@ type WriteResult struct {
 //
 // # 순서가 계약이다
 //
-// v3 의 외래 키는 전부 NO ACTION 이고 연결은 foreign_keys=1 이다. 부모가 없는 자식을
+// 연결은 foreign_keys=1 이다. 삭제 시 CASCADE 여부와 관계없이 부모가 없는 자식을
 // 넣으면 그 자리에서 실패한다. 그래서 삽입은 반드시 부모 → 자식 순서다:
 //
 //	vendors → sessions → turns → events → llm_calls · tool_calls → file_changes
