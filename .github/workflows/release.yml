@@ -1,0 +1,92 @@
+name: CLI Release
+
+on:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: cli-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo '버전 태그는 v0.1.0 또는 v0.1.0-rc.1 형태여야 합니다.' >&2
+            exit 1
+          fi
+          # 운영 릴리스는 main에 반영된 커밋에서 발행한다.
+          git merge-base --is-ancestor HEAD origin/main
+          echo "CLI_VERSION=${RELEASE_TAG#v}" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Install Task runner
+        run: go install github.com/go-task/task/v3/cmd/task@v3.40.1
+
+      - name: Check CLI
+        run: task check:cli
+
+      - name: Build all CLI targets
+        run: task build:cli:all
+
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/release
+          # backend /bin/{filename}의 파일명 계약을 따른다.
+          for os in windows darwin linux; do
+            for arch in amd64 arm64; do
+              ext=''
+              if [[ "$os" == windows ]]; then ext='.exe'; fi
+              source="artifacts/build/$os-$arch/bin/pulsemetry$ext"
+              test -s "$source"
+              metadata=$(go version -m "$source")
+              grep -q "GOOS=$os" <<< "$metadata"
+              grep -q "GOARCH=$arch" <<< "$metadata"
+              grep -q 'CGO_ENABLED=0' <<< "$metadata"
+              cp "$source" "artifacts/release/pulsemetry_${os}_${arch}${ext}"
+            done
+          done
+          test "$(artifacts/build/linux-amd64/bin/pulsemetry version)" = "pulsemetry $CLI_VERSION"
+          cd artifacts/release
+          sha256sum pulsemetry_* > SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq 6
+          sha256sum -c SHA256SUMS
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          flags=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then flags+=(--prerelease); fi
+          # 공개된 버전을 덮어쓰지 않는다. 실패하면 draft를 확인한 뒤 재실행한다.
+          gh release create "$RELEASE_TAG" artifacts/release/* \
+            --verify-tag --draft --title "$RELEASE_TAG" --generate-notes "${flags[@]}"
+          # 모든 첨부 파일 업로드가 성공한 뒤에만 공개한다.
+          gh release edit "$RELEASE_TAG" --draft=false
