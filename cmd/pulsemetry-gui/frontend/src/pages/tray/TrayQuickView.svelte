@@ -12,7 +12,6 @@
   import {
     trayQuery,
     trayRefreshMutation,
-    traySyncMutation,
   } from "$lib/query/tray";
   import { toTrayView } from "./adapter";
 
@@ -33,15 +32,13 @@
   let visible = $state(false);
 
   const tray = trayQuery(QUERY, () => visible);
-  const sync = traySyncMutation(QUERY);
   const refresh = trayRefreshMutation(QUERY);
 
   $effect(() => {
     const offShow = Events.On("tray:shown", () => {
       visible = true;
-      // 창이 열린 순간은 갱신을 건다. 폴링은 읽기만 한다 — 폴링까지 갱신으로 두면 창을
-      // 열어둔 채 두는 것만으로 벤더 호출이 계속 나간다 (ADR 0014).
-      sync.mutate();
+      // 창 열기는 저장된 값을 즉시 읽기만 한다. 진행 중인 조회가 있으면 공유한다.
+      void tray.refetch({ cancelRefetch: false });
     });
     const offHide = Events.On("tray:hidden", () => {
       visible = false;
@@ -53,14 +50,11 @@
     };
   });
 
-  // 창 열기가 벤더 조회까지 갈 수 있어(ADR 0014) 수십 초가 걸릴 수 있다. 그동안 헤더가 낡은
-  // "N분 전" 을 아무 표시 없이 들고 있지 않도록 갱신 중임을 알린다. 버튼은 자기 스피너가 있다.
-  const syncing = $derived(sync.isPending);
-  // 폴링도 같은 표시를 공유한다. 세 경로(버튼·창 열기·폴링)가 헤더에서 한 상태로 모인다.
+  // 창 열기와 폴링은 로컬 조회 상태만 공유한다.
   const fetching = $derived(tray.isFetching);
 
   const view = $derived(tray.data ? toTrayView(tray.data) : null);
-  const failure = $derived(tray.error ? String(tray.error) : "");
+  const failure = $derived(tray.error || refresh.error ? String(tray.error ?? refresh.error) : "");
 
   const shown = $derived(view);
   const notInstalled = $derived(
@@ -73,16 +67,25 @@
   style="animation:trayIn 180ms cubic-bezier(0.32,0.72,0,1)"
 >
   <TrayHeader
-    fetchedAt={tray.dataUpdatedAt}
+    observedAt={tray.data?.limits_observed_at ?? ""}
     trayState={shown?.monitoring.state}
-    {syncing}
     {fetching}
     onRefresh={async () => {
       // 헤더가 이 약속을 기다려 스피너 최소 표시 시간을 맞춘다. 스냅샷은 캐시로 들어가므로
       // (query/tray.ts) 여기서 받을 것이 없다.
-      await refresh.mutateAsync();
+      try {
+        await refresh.mutateAsync();
+      } catch {
+        // 오류는 mutation 상태로 표시하고 마지막 정상 데이터를 유지한다.
+      }
     }}
   />
+
+  {#if failure && shown}
+    <p role="status" class="text-text-secondary px-4 py-2 text-xs">
+      최신 상태를 확인하지 못했습니다. 마지막 조회 결과를 표시합니다.
+    </p>
+  {/if}
 
   <main class="tray-scroll min-h-0 flex-1 overflow-y-auto">
     {#if tray.isPending}

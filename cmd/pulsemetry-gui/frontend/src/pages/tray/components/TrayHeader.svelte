@@ -6,22 +6,19 @@
   import Dot from "$lib/components/ui/Dot.svelte";
 
   import { TrayState } from "$lib/bindings";
-  import { fetchedAtText } from "../adapter";
+  import { observedAtText } from "../adapter";
 
   // 프롭 이름을 state 로 두면 안 된다. Svelte 는 선언된 변수 앞의 $ 를 스토어 구독으로
   // 읽으므로, 이 파일의 $state(...) 룬이 전부 "state 스토어" 로 해석돼 컴파일이 깨진다.
   let {
-    fetchedAt,
+    observedAt,
     trayState,
-    syncing = false,
     fetching = false,
     onRefresh,
   }: {
-    /** 스냅샷을 마지막으로 받은 시각(ms, TanStack 의 dataUpdatedAt). 0 이면 아직 못 받았다. */
-    fetchedAt: number;
+    /** 벤더 한도 관측 시각(RFC3339). 로컬 재조회 시각과 구분한다. */
+    observedAt: string;
     trayState?: TrayState;
-    /** 창 열기로 시작된 갱신이 도는 중이다. 버튼을 누른 것과 달리 이 창이 시작하지 않았다. */
-    syncing?: boolean;
     /** 폴링을 포함해 조회가 나가 있다. */
     fetching?: boolean;
     onRefresh?: () => Promise<void> | void;
@@ -29,13 +26,10 @@
 
   let pulling = $state(false);
 
-  // 갱신이 도는 동안은 조회 시각 대신 그 사실을 말한다. 세 경로가 같은 상태를 쓴다 —
-  // 새로고침 버튼(pulling) · 창 열기(syncing) · 폴링(fetching).
-  const busyNow = $derived(pulling || syncing || fetching);
+  // 창 열기·폴링은 저장된 값 조회, pulling은 실제 벤더 갱신 요청이다.
+  const busyNow = $derived(pulling || fetching);
 
-  // 최소 표시 시간. 셋 다 데몬 쿨다운이나 로컬 읽기로 수십 밀리초에 끝날 수 있어(ADR 0014),
-  // 그대로 두면 스피너가 번쩍이기만 해서 눌린 것인지 알 수 없다. 한 곳에서 걸어야 세 경로가
-  // 같은 화면에서 다르게 보이지 않는다.
+  // 빠른 응답에도 버튼의 동작을 확인할 수 있게 최소 표시 시간을 둔다.
   const MIN_BUSY_MS = 450;
   let busy = $state(false);
   let busyUntil = 0;
@@ -54,8 +48,8 @@
     return () => clearTimeout(id);
   });
 
-  // 절대 시각이라 다시 그릴 필요가 없다. fetchedAt 이 바뀔 때만 갱신된다.
-  const synced = $derived(fetchedAtText(fetchedAt));
+  // 절대 시각이라 다시 그릴 필요가 없다. observedAt 이 바뀔 때만 갱신된다.
+  const synced = $derived(observedAtText(observedAt));
 
   // 최소 표시 시간은 busy 가 맡는다. 여기서는 실제 갱신만 기다린다.
   async function pull() {
@@ -67,7 +61,6 @@
       pulling = false;
     }
   }
-
 
   // 상태 줄. 아직 첫 조회가 끝나지 않았으면(undefined) 초록 점을 켜지 않는다 —
   // 확인하지 않은 것을 "모니터링 중" 이라고 말하면 안 된다.
@@ -102,7 +95,7 @@
     <span class="truncate">{status.text}</span>
   </span>
   <span class="flex-none whitespace-nowrap" style="font-size:12px;color:#b3aba0"
-    >{busy ? "조회 중" : synced}</span
+    >{busy ? "조회 중" : `${synced} 조회`}</span
   >
   <button
     type="button"

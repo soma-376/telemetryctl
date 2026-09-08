@@ -198,20 +198,12 @@ function toSession(s: RecentSession): TraySession {
   };
 }
 
-// fetchedAtText 는 데몬에서 스냅샷을 마지막으로 받은 시각이다 ("21:05 조회" 꼴).
-//
-// 경과 시간("3분 전")이 아니라 절대 시각인 이유는 둘이다. 하나, 경과를 세려면 매초 다시
-// 그려야 하는데 트레이 창은 닫아도 숨겨질 뿐이라(Application.Hide) 웹뷰가 그 타이머를
-// 늦추면 숫자가 굳는다. 둘, 폴링이 60초라 경과는 늘 1분 안쪽이고 그건 왼쪽의
-// "● 모니터링 중" 과 같은 말이다.
-//
-// 한도 자체가 얼마나 낡았는지(limits_observed_at)는 여기서 말하지 않는다. 벤더 조회가
-// 밀리는 것은 데몬이 쿨다운·backoff 로 다룰 문제다.
-export function fetchedAtText(fetchedAtMs: number): string {
-  // 숫자가 아닌 값이 새어 들어오면 Date 가 Invalid 가 되어 화면에 그대로 나간다.
-  if (!Number.isFinite(fetchedAtMs) || fetchedAtMs <= 0) return "";
-  const at = new Date(fetchedAtMs);
-  return `${pad2(at.getHours())}:${pad2(at.getMinutes())}:${pad2(at.getSeconds())} 조회`;
+// 데몬의 벤더 관측 시각을 현지 시·분·초로 표시한다.
+export function observedAtText(observedAt: string): string {
+  const ms = Date.parse(observedAt);
+  if (!Number.isFinite(ms) || ms <= 0) return "한도 확인 이력 없음";
+  const at = new Date(ms);
+  return `${pad2(at.getHours())}:${pad2(at.getMinutes())}:${pad2(at.getSeconds())}`;
 }
 
 export function toTrayView(

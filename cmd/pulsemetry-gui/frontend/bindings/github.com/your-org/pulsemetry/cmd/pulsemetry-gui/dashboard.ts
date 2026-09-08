@@ -25,15 +25,7 @@ export function RefreshTray(q: tray$0.Query): $CancellablePromise<tray$0.Snapsho
 }
 
 /**
- * SyncTray 는 트레이 창이 열렸을 때 부른다. 캐시를 건너뛰고 데몬까지 가되, 벤더를 두드릴지는
- * 데몬이 정한다 (ADR 0014). 화면이 억제를 판단하지 않는다.
- */
-export function SyncTray(q: tray$0.Query): $CancellablePromise<tray$0.Snapshot> {
-    return $Call.ByID(1759427515, q);
-}
-
-/**
- * Tray 는 트레이 퀵뷰 한 장에 필요한 전부다. 갱신 주기 안이면 캐시를 그대로 준다.
+ * Tray는 데몬에 저장된 트레이 스냅샷을 조회한다. 벤더 갱신은 요청하지 않는다.
  */
 export function Tray(q: tray$0.Query): $CancellablePromise<tray$0.Snapshot> {
     return $Call.ByID(3098134964, q);
