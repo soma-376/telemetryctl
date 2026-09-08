@@ -171,7 +171,7 @@ func mustWrite(t *testing.T, db *DB, b Batch) WriteResult {
 	return res
 }
 
-// assertNoOrphans 는 v3 의 외래 키가 전부 지켜졌는지 본다.
+// assertNoOrphans 는 v1 의 외래 키가 전부 지켜졌는지 본다.
 // 삽입과 연쇄 삭제 이후에도 원본 이벤트 참조까지 무결성이 유지돼야 한다.
 func assertNoOrphans(t *testing.T, db *DB) {
 	t.Helper()
@@ -198,7 +198,7 @@ func assertNoOrphans(t *testing.T, db *DB) {
 	}
 }
 
-// newSession 은 v3 sessions 한 행에 대응하는 세션 스냅샷이다.
+// newSession 은 v1 sessions 한 행에 대응하는 세션 스냅샷이다.
 func newSession(id string, at time.Time) session.Session {
 	sec := event.SecFromTime(at)
 	return session.Session{
@@ -212,7 +212,7 @@ func newSession(id string, at time.Time) session.Session {
 		ProjectHash: "phash",
 		ProjectName: "telemetryctl",
 
-		// ADR 0010 이 로컬 저장을 허용한 값들이다. v3 의 sessions 컬럼으로 그대로 간다.
+		// ADR 0010 이 로컬 저장을 허용한 값들이다. v1 의 sessions 컬럼으로 그대로 간다.
 		WorkspacePath: "/Users/jy/dev/projects/soma-376/telemetryctl",
 		UserEmail:     "kjy02927@gmail.com",
 		UserAccountID: "acct-1",
@@ -381,7 +381,7 @@ const (
 	secretPayload = "원본이벤트본문"
 )
 
-// seedRawContent 는 v3 에서 원문이 남을 수 있는 세 컬럼을 모두 채운다.
+// seedRawContent 는 v1 에서 원문이 남을 수 있는 세 컬럼을 모두 채운다.
 //
 // events.payload 는 쓰기 경로가 항상 NULL 로 두므로(insertEventSQL) SQL 로 직접 심는다.
 // purge 가 "지금 채워지지 않는 컬럼" 을 빠뜨리면 나중에 그 컬럼을 쓰기 시작하는 순간

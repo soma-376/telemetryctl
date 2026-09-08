@@ -3,10 +3,8 @@
 이 디렉터리는 로컬 데이터베이스의 현재 계약을 설명한다. 실행 DDL의 진실원은
 `internal/store/schema.go`의 `schemaSQL`이며, 각 문서의 DDL은 검토용 사본이다.
 
-> **전환 상태:** v3는 기존 v1/v2 도메인 테이블과 데이터를 트랜잭션 안에서 모두 삭제하고 새
-> 모델을 만든다. `meta`와 DB 파일은 유지한다. **쓰기 런타임은 PROJ-85가, 세션 생명주기·보존·
-> 원문 삭제는 PROJ-86이, 조회 계층(`internal/dashboard`)과 CLI 출력은 PROJ-87이 v3로 옮겼다.**
-> 읽기 인덱스 세 개도 최신 전체 DDL에 포함한다(ADR 0012).
+> **스키마 버전: v1 고정.** 현재 전체 DDL로 빈 DB를 초기화한다. DDL 변경 시에도 버전을
+> 올리지 않으며, 기존 개발 DB에 변경을 적용하려면 재생성한다(ADR 0012).
 
 ## 관계
 
@@ -30,6 +28,7 @@ vendors
 
 | 문서 | 역할 |
 |---|---|
+| [`vendor_limit_snapshots`](vendor-limit-snapshots.md) | 벤더별 최신 한도 조회 결과 |
 | [`meta`](meta.md) | 스키마 버전과 설치 메타데이터 |
 | [`vendors`](vendors.md) | 제품 단위 벤더 상태 |
 | [`sessions`](sessions.md) | 벤더 세션과 사용자·워크스페이스 정보 |
@@ -47,9 +46,9 @@ vendors
 | `ix_events_name` | `events(event_name)` | 이벤트 종류 조회 |
 | `ix_llm_turn` | `llm_calls(turn_id)` | 턴별 LLM 호출 조회 |
 | `ix_fc_tool` | `file_changes(tool_call_id)` | 도구 호출별 파일 변경 조회 |
-| `ix_tool_calls_turn` | `tool_calls(turn_id)` | 턴별 도구 호출 조회 (v4) |
-| `ix_turns_session` | `turns(session_id)` | 세션별 턴 조회 (v4) |
-| `ix_sessions_started` | `sessions(started_at)` | 세션 목록 정렬·구간 필터 (v4) |
+| `ix_tool_calls_turn` | `tool_calls(turn_id)` | 턴별 도구 호출 조회 |
+| `ix_turns_session` | `turns(session_id)` | 세션별 턴 조회 |
+| `ix_sessions_started` | `sessions(started_at)` | 세션 목록 정렬·구간 필터 |
 
 `ix_tool_calls_turn`·`ix_turns_session`·`ix_sessions_started`는 조회 계층이 세션 → 턴 →
 도구 호출 방향으로 탐색할 때 쓰는 인덱스다. `events(turn_id)`는 `UNIQUE (turn_id, seq)`가 선두 컬럼으로
@@ -61,10 +60,10 @@ vendors
 
 ## 계약 규칙
 
-이 규칙들은 [ADR 0009](../adr/0009-로컬-저장-모델을-v3로-전환한다.md)와
-[ADR 0010](../adr/0010-v3가-요구하는-식별-정보를-로컬에만-저장한다.md)이 확정했다.
+이 규칙들은 [ADR 0009](../adr/0009-로컬-저장-모델은-세션-턴-이벤트-계층으로-관리한다.md)와
+[ADR 0010](../adr/0010-식별-정보를-로컬에만-저장한다.md)이 확정했다.
 
-- **모든 시각 컬럼의 단위는 Unix 초다.** 나노초를 쓰는 컬럼은 없다.
+- **정수 시각 컬럼의 단위는 Unix 초다.** 한도 스냅샷의 `observed_at`은 RFC3339 문자열이다. 나노초를 쓰는 컬럼은 없다.
 - **`events.seq`는 로컬 수집 도착 순서**이고 벤더 시각이 아니다. 이미 저장된 행의 `seq`는
   재번호하지 않으며, 순서가 뒤집혀 도착해도 정상 입력으로 취급한다.
   독자는 `ORDER BY occurred_at, seq`로 읽는다.
@@ -82,7 +81,7 @@ vendors
 - **`sessions.workspace_path`·`user_email`·`user_account_id`, `file_changes.file_path`,
   `tool_calls.error_message`는 식별 정보를 담는다.** 로컬 저장 전용이며 상위 전달에는 실리지
   않는다. 상위 전달 스크럽은 `internal/forward`가 원본 바이트에 대해 수행한다.
-- **원문 전문 검색은 `LIKE`로 한다.** v3에는 FTS 테이블이 없다.
+- **원문 전문 검색은 `LIKE`로 한다.** 현재 스키마에는 FTS 테이블이 없다.
 
 ## 값 제약
 
@@ -114,7 +113,7 @@ vendors
 ## 배포 전 초기화
 
 1. 빈 DB에 `schemaSQL` 전체를 한 트랜잭션으로 실행한다.
-2. 같은 트랜잭션에서 `meta.local_schema_version`을 현재 단일 세대로 기록한다.
+2. 같은 트랜잭션에서 `meta.local_schema_version`을 `1`로 기록한다.
 3. 다른 세대의 개발 DB는 자동 변환하지 않고 삭제 후 재생성을 안내한다.
 
 동일 세대로 이미 생성한 개발 DB에도 DDL 변경은 소급 적용되지 않는다. CASCADE와

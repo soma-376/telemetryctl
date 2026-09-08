@@ -8,7 +8,7 @@ import (
 	"strconv"
 )
 
-// 제품 배포 전에는 과거 개발 DB와의 호환성을 제공하지 않고 최신 DDL 한 벌만 유지한다.
+// 제품 배포 전에는 스키마 버전을 v1로 고정하고 최신 DDL 한 벌만 유지한다.
 const schemaVersion = 1
 
 func LatestSchemaVersion() int { return schemaVersion }

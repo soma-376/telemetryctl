@@ -283,7 +283,7 @@ func TestPruneSecondRunChangesNothing(t *testing.T) {
 	}
 }
 
-// purge --content 는 v3 에서 원문이 남는 **세 컬럼 전부** 를 비운다.
+// purge --content 는 v1 에서 원문이 남는 **세 컬럼 전부** 를 비운다.
 // 행을 지우지 않으므로 집계는 그대로다.
 func TestPurgeContentClearsEveryRawColumn(t *testing.T) {
 	db := openTestDB(t)
@@ -457,7 +457,7 @@ func TestPurgeContentBefore(t *testing.T) {
 }
 
 // meta 와 구조화 집계는 보존 정책의 대상이 아니다. meta 가 사라지면 스키마 버전을 잃어
-// 다음 기동이 마이그레이션을 처음부터 다시 돌린다.
+// 다음 기동이 스키마 초기화을 처음부터 다시 돌린다.
 func TestPruneKeepsMetaAndPromotedFields(t *testing.T) {
 	db := openTestDB(t)
 	if err := db.SetMeta(context.Background(), MetaRetentionDays, "400"); err != nil {

@@ -20,7 +20,7 @@ import (
 type EventRecord struct {
 	Event event.Event
 
-	// Contents 는 이 이벤트에서 뽑힌 원문이다. v3 에는 원문 테이블이 없고
+	// Contents 는 이 이벤트에서 뽑힌 원문이다. v1 에는 원문 테이블이 없고
 	// 사용자 프롬프트만 turns.prompt_text 로 살아남는다. 나머지는 저장되지 않는다.
 	Contents []event.Content
 
@@ -45,7 +45,7 @@ type EventRecord struct {
 // 두 종류를 한 트랜잭션에 묶는 이유는 부분 적용이 곧 화면의 모순이기 때문이다 — 이벤트만
 // 들어가고 세션이 안 들어가면 세션 정보가 이벤트보다 뒤처진다.
 //
-// Sessions 는 조립기가 주는 **전체 스냅샷**이다. v3 에는 스냅샷이 정본인 종속 테이블이
+// Sessions 는 조립기가 주는 **전체 스냅샷**이다. v1 에는 스냅샷이 정본인 종속 테이블이
 // 없으므로 부분 세션을 넣어도 삭제로 해석되지는 않지만, 조립기가 항상 전체를 주는 계약은
 // 그대로다.
 type Batch struct {
@@ -70,7 +70,7 @@ type WriteResult struct {
 
 	// PromptsStored 는 turns.prompt_text 에 실제로 쓴 프롬프트 수다.
 	PromptsStored int
-	// ContentsDropped 는 저장하지 않은 원문 수다. v3 에는 원문 테이블이 없어 사용자
+	// ContentsDropped 는 저장하지 않은 원문 수다. v1 에는 원문 테이블이 없어 사용자
 	// 프롬프트를 뺀 나머지는 항상 여기 잡히고, --no-store-content 면 프롬프트도 포함된다.
 	ContentsDropped int
 

@@ -33,7 +33,7 @@ const idChunk = 500
 
 // sessionLastActivity 는 세션의 "마지막으로 알려진 활동" 시각이다.
 //
-// v3 에는 last_event_at 이 없고 started_at·ended_at 은 **둘 다 선택**이다. 그래서 하나를
+// v1 에는 last_event_at 이 없고 started_at·ended_at 은 **둘 다 선택**이다. 그래서 하나를
 // 고르는 것이 아니라 알고 있는 값 중 **가장 늦은 것**을 쓴다. COALESCE 로 우선순위를 매기면
 // 400일 전에 시작해 지금도 도는 긴 세션이 started_at 만으로 오래된 것이 되어, 어제 만들어진
 // 이벤트까지 함께 사라진다.
@@ -234,7 +234,7 @@ func (s purgeStep) count(scoped bool) string {
 	return `SELECT COUNT(*) FROM ` + s.table + s.where(scoped)
 }
 
-// purgeSteps 는 v3 에서 원문이 남는 자리 **전부** 다.
+// purgeSteps 는 v1 에서 원문이 남는 자리 **전부** 다.
 //
 // v1 의 event_content 처럼 통째로 지울 테이블이 없다. 원문은 세 컬럼에 흩어져 있고
 // 나머지 컬럼(수치·모델·도구 이름·오류 타입)은 원문이 아니므로 남는다 — 행을 지우면
@@ -261,7 +261,7 @@ var purgeSteps = []purgeStep{
 
 // PurgeContent 는 원문만 지운다 (telemetryctl purge --content [--before]).
 //
-// v3 에서 원문이 남는 자리는 turns.prompt_text · events.payload · tool_calls.error_message
+// v1 에서 원문이 남는 자리는 turns.prompt_text · events.payload · tool_calls.error_message
 // 세 곳이다. 행을 지우지 않고 컬럼만 NULL 로 만든다 — 세션·턴·이벤트 행과 수치는 그대로라
 // 집계는 변하지 않고 원문 검색만 불가능해진다.
 //
