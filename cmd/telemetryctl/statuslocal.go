@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -223,11 +224,31 @@ func printDataStatus(w io.Writer, st dashboard.Status) {
 	}
 }
 
-// probeHealth 는 /healthz 를 한 번 두드린다. runtime.json 의 pid 판정이 pid 재사용
-// 때문에 확정적이지 않아서, "정말 우리 데몬인가" 는 여기서만 확인할 수 있다
-// (runtimeinfo.Load 주석). 응답 본문에는 좌표와 카운터만 있고 비밀은 없다.
+// validateHealthEndpoint 는 ADR 0001 의 로컬 주소 표기를 요청 직전에 강제한다.
+// runtime.json 은 수정될 수 있으므로 파싱 성공이나 pid 생존만으로 주소를 신뢰하지 않는다.
+func validateHealthEndpoint(endpoint string) error {
+	port, ok := strings.CutPrefix(endpoint, "http://localhost:")
+	// ParseUint 의 10진수·16비트 검증으로 포트 외의 URL 구성요소와 범위 초과를 거부한다.
+	n, err := strconv.ParseUint(port, 10, 16)
+	if !ok || err != nil || n == 0 {
+		return errors.New("로컬 수집기 endpoint는 http://localhost:<1-65535> 형식이어야 함")
+	}
+	return nil
+}
+
+// probeHealth 는 검증한 로컬 주소의 /healthz 응답을 확인한다. pid 는 재사용될 수 있어
+// 생존 판정만으로 수신기가 응답하는지는 알 수 없다 (runtimeinfo.Load 주석).
 func probeHealth(endpoint string) (healthResponse, error) {
-	client := &http.Client{Timeout: healthTimeout}
+	if err := validateHealthEndpoint(endpoint); err != nil {
+		return healthResponse{}, err
+	}
+	client := &http.Client{
+		Timeout: healthTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			// 최초 주소를 검증해도 리다이렉트를 따르면 다른 주소로 요청할 수 있다.
+			return http.ErrUseLastResponse
+		},
+	}
 	resp, err := client.Get(endpoint + receiver.HealthPath)
 	if err != nil {
 		return healthResponse{}, err

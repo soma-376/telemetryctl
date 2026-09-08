@@ -239,9 +239,9 @@ func TestCostIsNotDoubleCounted(t *testing.T) {
 func TestCodexSSEPromotesOnlyCompletedEvent(t *testing.T) {
 	db := openTestDB(t)
 
-	delta := evrec("codex.sse_event", baseTime, 0, inTurn("p1"), vendor("codex"))
+	delta := evrec("codex.sse_event", baseTime, 0, inTurn("p1"), withVendor("codex"))
 	delta.Event.Attr.Type = "response.output_text.delta"
-	done := evrec("codex.sse_event", baseTime, 1, inTurn("p1"), vendor("codex"), tokens(100, 20))
+	done := evrec("codex.sse_event", baseTime, 1, inTurn("p1"), withVendor("codex"), tokens(100, 20))
 	done.Event.Attr.Type = "response.completed"
 
 	mustWrite(t, db, Batch{Events: []EventRecord{delta, done}})

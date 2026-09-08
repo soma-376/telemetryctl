@@ -415,17 +415,17 @@ func TestScreenContract_Tray_SummarizesLocalStateWithoutCredentials(t *testing.T
 		t.Errorf("활성 세션 = %d / 에이전트 = %v, want 1 / [claude_code]",
 			snap.ActiveSessions, snap.ActiveAgents)
 	}
-	// 벤더는 전부 자리를 지키되 자격증명이 없어 unavailable 이다.
+	// 벤더는 전부 자리를 지키되 저장된 조회 결과가 없어 unavailable 이다.
 	if len(snap.Limits) != len(vendorlimit.SupportedVendors()) {
 		t.Fatalf("한도 결과 = %d건, want %d (실패한 벤더도 자리를 지킨다)",
 			len(snap.Limits), len(vendorlimit.SupportedVendors()))
 	}
 	for _, res := range snap.Limits {
 		if res.State != vendorlimit.StateUnavailable {
-			t.Errorf("%s state = %q — 자격증명이 없는데 available 이다", res.Vendor, res.State)
+			t.Errorf("%s state = %q — 저장된 조회 결과가 없는데 available 이다", res.Vendor, res.State)
 		}
-		if res.Reason != vendorlimit.ReasonCredentialMissing {
-			t.Errorf("%s reason = %q, want credential_missing", res.Vendor, res.Reason)
+		if res.Reason != vendorlimit.ReasonNotProbed {
+			t.Errorf("%s reason = %q, want not_probed", res.Vendor, res.Reason)
 		}
 		if res.Windows == nil {
 			t.Errorf("%s windows = nil — JSON 에서 null 이 되어 화면이 분기해야 한다", res.Vendor)

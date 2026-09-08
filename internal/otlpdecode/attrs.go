@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/your-org/pulsemetry/internal/event"
+	"github.com/your-org/pulsemetry/internal/vendor"
 )
 
 // 속성 allowlist 는 이 파일의 테이블들이 전부다. 새 속성을 받으려면 여기에 한 줄을 넣고
@@ -31,7 +32,8 @@ var stringAttrs = map[string]func(*event.Attributes, string){
 	"type": func(a *event.Attributes, v string) { a.Type = v },
 	// Codex 는 스트리밍 이벤트의 종류를 kind 로 보낸다 (response.completed 등).
 	// llm_calls 승격 규칙이 이 값을 보므로 같은 컬럼으로 모은다.
-	"kind": func(a *event.Attributes, v string) { a.Type = v },
+	"kind":       func(a *event.Attributes, v string) { a.Type = v },
+	"event.kind": func(a *event.Attributes, v string) { a.Type = v },
 
 	"tool_name": func(a *event.Attributes, v string) { a.ToolName = v },
 	"tool.name": func(a *event.Attributes, v string) { a.ToolName = v },
@@ -426,37 +428,20 @@ func anyTimestamp(v *commonpb.AnyValue) (event.UnixNano, bool) {
 	return 0, false
 }
 
-// serviceVendors 는 service.name(또는 시그널 이름 접두)을 events.vendor 로 옮긴다.
-// 스키마는 벤더를 제약하지 않으므로 여기 없는 값도 정규화만 거쳐 그대로 쓴다.
-var serviceVendors = map[string]string{
-	"claude-code": "claude_code",
-	"claude_code": "claude_code",
-	"claude":      "claude_code",
-	"codex":       "codex",
-	"codex-cli":   "codex",
-	"codex_cli":   "codex",
-	"gemini-cli":  "gemini_cli",
-	"gemini_cli":  "gemini_cli",
-	"cursor":      "cursor",
-}
-
 // vendorOf 는 벤더를 세 단계로 찾는다: service.name → 시그널 이름 접두 → 호출자 폴백.
 // 이름 접두를 쓰는 이유는 Claude Code 가 service.name 없이도 claude_code.* 로 이름을 짓기 때문이다.
+// 별칭 표는 internal/vendor 가 소유한다 — 여기 두면 store·daemon 이 같은 지식을 복사하게 된다.
 func vendorOf(serviceName, signalName, fallback string) string {
-	if v, ok := serviceVendors[strings.ToLower(serviceName)]; ok {
-		return v
+	if v, ok := vendor.Normalize(serviceName); ok {
+		return string(v)
 	}
 	if i := strings.IndexByte(signalName, '.'); i > 0 {
-		if v, ok := serviceVendors[strings.ToLower(signalName[:i])]; ok {
-			return v
+		if v, ok := vendor.Normalize(signalName[:i]); ok {
+			return string(v)
 		}
 	}
 	if serviceName != "" {
-		return normalizeVendor(serviceName)
+		return vendor.Fallback(serviceName)
 	}
 	return fallback
-}
-
-func normalizeVendor(s string) string {
-	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(s)), "-", "_")
 }

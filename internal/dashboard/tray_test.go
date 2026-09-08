@@ -85,6 +85,28 @@ func newTestMonitor(r *Reader, snap vendorlimit.Snapshot) (*TrayMonitor, *stubCo
 
 // ── 가장 빠듯한 한도 ────────────────────────────────────────────────────────
 
+func TestTrayMonitorReadsStoredVendorLimits(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	want := availableResult(vendorlimit.VendorCodex, window(vendorlimit.PeriodFiveHour, "primary", .5, 3600))
+	if err := f.db.UpsertVendorLimit(ctx, want, testNow); err != nil {
+		t.Fatal(err)
+	}
+	m := NewTrayMonitor(f.reader)
+	snap := m.collect(ctx)
+	if len(snap.Results) != 2 {
+		t.Fatalf("지원 벤더 두 개가 있어야 한다: 결과 = %+v", snap.Results)
+	}
+	got := snap.Results[1]
+	if got.Vendor != want.Vendor || got.State != want.State || len(got.Windows) != 1 || got.Windows[0] != want.Windows[0] {
+		t.Fatalf("저장된 Codex 한도를 읽어야 한다: 결과 = %+v", got)
+	}
+	missing := snap.Results[0]
+	if missing.Vendor != vendorlimit.VendorClaudeCode || missing.Reason != vendorlimit.ReasonNotProbed {
+		t.Fatalf("저장되지 않은 벤더는 미조회 상태여야 한다: 결과 = %+v", missing)
+	}
+}
+
 func TestTightestLimitIsDeterministic(t *testing.T) {
 	cases := []struct {
 		name       string

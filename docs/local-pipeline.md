@@ -1069,6 +1069,11 @@ env.OTEL_EXPORTER_OTLP_HEADERS = "Authorization=Bearer <로컬 ingest 토큰>,X-
 - 낡은 파일 판별은 pid 생존으로 한다. **pid 는 재사용되므로 `Stale=true` 만 확정이고
   `Stale=false` 는 "아마 살아 있음" 이다.** 확정이 필요하면 `endpoint` 에 인증 없는
   `GET /healthz` 를 한 번 더 던진다 — `status` 와 `local enable` 이 그렇게 한다.
+- CLI 는 헬스체크 요청 직전에 `endpoint` 가 `http://localhost:<port>` 형태인지 검증한다.
+  포트는 1–65535 범위의 십진수만 허용하고, 다른 호스트·IP 표기·HTTPS·사용자 정보·경로·쿼리·
+  프래그먼트·주변 공백은 거부한다. 잘못된 주소에는 요청을 보내지 않으며, 정상 주소의 응답이라도
+  리다이렉트는 따르지 않고 헬스체크 실패로 처리한다. `status` 와 `daemonRunning` 을 거치는
+  `local enable`·`autostart enable` 등 모든 CLI 상태 확인에 같은 규칙을 적용한다.
 - `state.Local` 과 역할이 다르다. `state.Local` 은 **설정된 의도**("사용자가 이렇게 돌기를 원했다"),
   `runtime.json` 은 **현실**("실제로 이렇게 돌고 있다")이다. 포트 폴백이 일어나면 둘이 갈리는데,
   재병합이 필요한지 판단하는 근거는 `state.Local` 이다(벤더 설정에 적힌 주소가 거기서 나왔다).
