@@ -173,9 +173,18 @@ func (a *Assembler) StartLifecycle(sessionID string, at event.UnixSec) {
 // 마감이 아니라 **활동**을 기준으로 한다. 메모리 관리는 생명주기와 무관해야 한다 —
 // 마감은 DB 가 소유하므로(ADR 0021) 조립기는 자기가 마지막으로 본 시각만 안다.
 func (a *Assembler) Prune(before event.UnixSec) int {
+	return a.PruneIf(before, nil)
+}
+
+// PruneIf 는 제거 대상 세션에 allow를 호출하고, 허용된 세션만 메모리에서 제거한다.
+// 연관 상태의 정리가 준비되지 않으면 false를 반환해 다음 정리까지 보류할 수 있다.
+func (a *Assembler) PruneIf(before event.UnixSec, allow func(Session) bool) int {
 	n := 0
 	for id, s := range a.sessions {
 		if s.last < before {
+			if allow != nil && !allow(s.session()) {
+				continue
+			}
 			delete(a.sessions, id)
 			a.turns.Forget(id)
 			n++

@@ -104,10 +104,16 @@ func TestCodexAppHelperProcess(t *testing.T) {
 		return
 	}
 	mode := os.Args[len(os.Args)-1]
-	if mode != "normal" && mode != "hang" && mode != "malformed" && mode != "no-user" {
+	if mode != "normal" && mode != "hang" && mode != "malformed" && mode != "no-user" && mode != "flood" {
 		return
 	}
 	s := bufio.NewScanner(os.Stdin)
+	if mode == "flood" {
+		fmt.Print(strings.Repeat("{\"method\":\"notification\"}\n", 32))
+		for s.Scan() {
+		}
+		os.Exit(0)
+	}
 	requests := 0
 	for s.Scan() {
 		var req struct {

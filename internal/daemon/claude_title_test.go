@@ -54,13 +54,12 @@ func (r *claudeReaderStub) count() int {
 	return r.calls
 }
 
-func newTestClaudeRefresher(t *testing.T, rd *claudeReaderStub, st claudeTitleStore, now func() time.Time) *claudeTitleRefresher {
+func newTestClaudeRefresher(t *testing.T, rd *claudeReaderStub, st claudeTitleStore, now func() time.Time) *titleRefresher {
 	t.Helper()
-	r := newClaudeTitleRefresher(context.Background(), t.TempDir(), st, log.New(io.Discard, "", 0), now)
+	r := newClaudeTitleRefresherWithPolicy(context.Background(), t.TempDir(), st, log.New(io.Discard, "", 0), now, claudeTitlePolicy{read: rd.read})
 	if r == nil {
 		t.Fatal("refresher 가 nil 이다")
 	}
-	r.read = rd.read
 	t.Cleanup(r.Close)
 	return r
 }
@@ -115,7 +114,7 @@ func TestClaudeTitleRefresherRetryCooldown(t *testing.T) {
 	}
 
 	mu.Lock()
-	now = now.Add(claudeTitleRetry + time.Second)
+	now = now.Add(time.Minute + time.Second)
 	mu.Unlock()
 
 	rd.mu.Lock()
@@ -151,7 +150,7 @@ func TestClaudeTitleRefresherRetriesOnStoreError(t *testing.T) {
 
 	st.setErr(nil)
 	mu.Lock()
-	now = now.Add(claudeTitleRetry + time.Second)
+	now = now.Add(time.Minute + time.Second)
 	mu.Unlock()
 
 	r.Enqueue("s1", false)
@@ -167,7 +166,7 @@ func TestClaudeTitleRefresherRetriesOnStoreError(t *testing.T) {
 
 // nil 이어도 호출부가 안전해야 한다 — 홈을 못 찾는 환경에서 nil 이 돌아온다.
 func TestClaudeTitleRefresherNilSafe(t *testing.T) {
-	var r *claudeTitleRefresher
+	var r *titleRefresher
 	r.Enqueue("s1", false)
 	r.Close()
 
@@ -188,8 +187,7 @@ func waitCalls(t *testing.T, rd *claudeReaderStub, want int) {
 	t.Fatalf("읽기 %d회를 기다리다 시간 초과 (실제 %d회)", want, rd.count())
 }
 
-// 마감된 세션은 다시 스냅샷에 실리지 않는다 — "다음 기회" 가 없으므로 쿨다운을 건너뛰고
-// 마지막으로 한 번 더 본다.
+// 최초 종료 시에는 진행 중 재조회 간격을 건너뛰고 제목을 확인한다.
 func TestClaudeTitleRefresherFinalAttemptOnEnd(t *testing.T) {
 	rd := &claudeReaderStub{ok: false}
 	st := &claudeTitleStoreStub{saved: make(chan string, 1)}
@@ -212,5 +210,134 @@ func TestClaudeTitleRefresherFinalAttemptOnEnd(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("마감 시 쿨다운을 건너뛰지 않았다")
+	}
+}
+
+// 새 스냅샷 없이도 예약된 재시도가 늦게 생성된 제목을 저장해야 한다.
+func TestClaudeTitleFinalRetriesWithoutSnapshots(t *testing.T) {
+	rd := &claudeReaderStub{}
+	st := &claudeTitleStoreStub{saved: make(chan string, 1)}
+	r := newClaudeTitleRefresherWithPolicy(context.Background(), t.TempDir(), st, log.New(io.Discard, "", 0), time.Now,
+		claudeTitlePolicy{read: rd.read, finalRetryDelays: []time.Duration{30 * time.Millisecond, 30 * time.Millisecond, 30 * time.Millisecond}})
+	defer r.Close()
+	r.Enqueue("s1", true)
+	waitCalls(t, rd, 1)
+	rd.mu.Lock()
+	rd.title, rd.ok = "늦게 생성된 제목", true
+	rd.mu.Unlock()
+	select {
+	case <-st.saved:
+	case <-time.After(time.Second):
+		t.Fatal("새 스냅샷 없이 재시도하지 않았다")
+	}
+	for i := 0; i < 10; i++ {
+		r.Enqueue("s1", true)
+	}
+	r.Enqueue("s1", false)
+	time.Sleep(100 * time.Millisecond)
+	if got := rd.count(); got != 2 {
+		t.Fatalf("성공 뒤 추가 조회: %d", got)
+	}
+}
+
+func TestClaudeTitleFinalRetryBudget(t *testing.T) {
+	for _, storeError := range []bool{false, true} {
+		t.Run(map[bool]string{false: "제목 미발견", true: "저장 실패"}[storeError], func(t *testing.T) {
+			rd := &claudeReaderStub{title: "제목", ok: storeError}
+			st := &claudeTitleStoreStub{saved: make(chan string, 1), err: errors.New("저장 실패")}
+			r := newClaudeTitleRefresherWithPolicy(context.Background(), t.TempDir(), st, log.New(io.Discard, "", 0), time.Now,
+				claudeTitlePolicy{read: rd.read, finalRetryDelays: []time.Duration{20 * time.Millisecond, 20 * time.Millisecond, 20 * time.Millisecond}})
+			defer r.Close()
+			r.Enqueue("s1", true)
+			// 반복 종료 입력이 예약을 우회해 조회 횟수를 늘려서는 안 된다.
+			for i := 0; i < 30; i++ {
+				r.Enqueue("s1", true)
+			}
+			waitCalls(t, rd, 4)
+			for i := 0; i < 30; i++ {
+				r.Enqueue("s1", true)
+			}
+			time.Sleep(100 * time.Millisecond)
+			if got := rd.count(); got != 4 {
+				t.Fatalf("종료 조회 횟수=%d, want 4", got)
+			}
+		})
+	}
+}
+
+func TestClaudeTitleResumeInvalidatesFinalRetry(t *testing.T) {
+	rd := &claudeReaderStub{}
+	st := &claudeTitleStoreStub{saved: make(chan string, 1)}
+	r := newClaudeTitleRefresherWithPolicy(context.Background(), t.TempDir(), st, log.New(io.Discard, "", 0), time.Now,
+		claudeTitlePolicy{read: rd.read, finalRetryDelays: []time.Duration{time.Hour}})
+	defer r.Close()
+	r.Enqueue("s1", true)
+	waitCalls(t, rd, 1)
+	r.Enqueue("s1", false)
+	waitCalls(t, rd, 2)
+	// 이미 큐에 들어온 이전 종료 세대의 재시도도 재개 후에는 무효다.
+	r.queue <- titleRequest{key: "s1", ended: true, retry: true, generation: 1}
+	r.Enqueue("s1", false)
+	time.Sleep(50 * time.Millisecond)
+	if got := rd.count(); got != 2 {
+		t.Fatalf("이전 종료 재시도가 실행됨: %d", got)
+	}
+	r.Enqueue("s1", true)
+	waitCalls(t, rd, 3)
+}
+
+func TestClaudeTitleResumeAfterFinalRetryExhausted(t *testing.T) {
+	rd := &claudeReaderStub{}
+	st := &claudeTitleStoreStub{saved: make(chan string, 1)}
+	r := newClaudeTitleRefresherWithPolicy(context.Background(), t.TempDir(), st, log.New(io.Discard, "", 0), time.Now,
+		claudeTitlePolicy{read: rd.read, finalRetryDelays: []time.Duration{}})
+	defer r.Close()
+	r.Enqueue("s1", true)
+	waitCalls(t, rd, 1)
+	rd.mu.Lock()
+	rd.title, rd.ok = "재개 후 제목", true
+	rd.mu.Unlock()
+	r.Enqueue("s1", false)
+	select {
+	case <-st.saved:
+	case <-time.After(time.Second):
+		t.Fatal("재시도 소진 후 재개한 세션을 조회하지 않음")
+	}
+}
+
+func TestClaudeTitleCloseCancelsFinalRetry(t *testing.T) {
+	rd := &claudeReaderStub{}
+	st := &claudeTitleStoreStub{saved: make(chan string, 1)}
+	r := newClaudeTitleRefresherWithPolicy(context.Background(), t.TempDir(), st, log.New(io.Discard, "", 0), time.Now,
+		claudeTitlePolicy{read: rd.read, finalRetryDelays: []time.Duration{time.Hour}})
+	t.Cleanup(r.Close)
+	r.Enqueue("s1", true)
+	waitCalls(t, rd, 1)
+	closed := make(chan struct{})
+	go func() { r.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("예약된 재시도가 종료되지 않음")
+	}
+	if got := rd.count(); got != 1 {
+		t.Fatalf("종료 중 추가 조회: %d", got)
+	}
+}
+
+func TestClaudeTitleRepeatedEndDoesNotBypassRetryDelay(t *testing.T) {
+	rd := &claudeReaderStub{}
+	st := &claudeTitleStoreStub{saved: make(chan string, 1)}
+	r := newClaudeTitleRefresherWithPolicy(context.Background(), t.TempDir(), st, log.New(io.Discard, "", 0), time.Now,
+		claudeTitlePolicy{read: rd.read, finalRetryDelays: []time.Duration{time.Hour}})
+	defer r.Close()
+	r.Enqueue("s1", true)
+	waitCalls(t, rd, 1)
+	for i := 0; i < 30; i++ {
+		r.Enqueue("s1", true)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := rd.count(); got != 1 {
+		t.Fatalf("종료 입력이 예약 간격을 우회함: %d", got)
 	}
 }

@@ -42,7 +42,7 @@ func (c *Client) RateLimits(ctx context.Context) (RateLimitSnapshot, error) {
 	return result.RateLimits, nil
 }
 
-// ThreadName은 thread/read가 돌려준 벤더 제목만 읽는다. turns를 요청하지 않으므로
+// ThreadName 은 thread/read가 돌려준 벤더 제목만 읽는다. turns를 요청하지 않으므로
 // 대화 원문은 이 경로를 지나지 않는다 (ADR 0017·0018).
 func (c *Client) ThreadName(ctx context.Context, threadID string) (string, error) {
 	if threadID == "" {
