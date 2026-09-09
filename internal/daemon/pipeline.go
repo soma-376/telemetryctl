@@ -220,6 +220,7 @@ type pipelineConfig struct {
 
 type sessionTitleRefresher interface {
 	Enqueue(string, bool)
+	TryForget(string) bool
 }
 
 // Consume 은 receiver.Sink 구현이다. 수신기 워커(2개)가 동시에 부른다.
@@ -444,11 +445,27 @@ func (p *pipeline) closeSessions() {
 	// (10분)보다 한참 큰 값을 쓴다.
 	if p.sessionTTL > 0 {
 		before := now - event.UnixSec(p.sessionTTL/time.Second)
-		if n := p.asm.Prune(before); n > 0 {
+		if n := p.asm.PruneIf(before, p.forgetTitle); n > 0 {
 			p.log.Printf("조립기 정리: 세션 %d개 (마감 %s 이전)", n, p.sessionTTL)
 		}
 	}
 
+}
+
+// forgetTitle 은 조립기와 같은 순서로 제목 상태를 제거한다. 큐 포화 시 다음 틱에 재시도한다.
+func (p *pipeline) forgetTitle(s session.Session) bool {
+	id, ok := vendor.Normalize(s.Vendor)
+	if !ok {
+		return true
+	}
+	switch id {
+	case vendor.Codex:
+		return p.codexTitles == nil || p.codexTitles.TryForget(s.SessionID)
+	case vendor.ClaudeCode:
+		return p.claudeTitles == nil || p.claudeTitles.TryForget(s.SessionID)
+	default:
+		return true
+	}
 }
 
 // flush 는 미저장 이벤트·롤업·세션 스냅샷을 한 트랜잭션으로 쓴다.
