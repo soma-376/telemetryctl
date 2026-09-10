@@ -103,13 +103,13 @@ func PrepareUninstall(opts UninstallOptions) (*UninstallPlan, error) {
 			return nil, errors.New("설정·설치 파일의 경로가 충돌한다")
 		}
 		seen[key] = true
-		edit, err := config.PlanManagedRemoval(target.Tool, target.Path, m.entries(target), target.ManagedKeys)
+		edit, err := config.PlanManagedRemoval(target.Tool, target.Path, m.entries(target))
 		if err != nil {
 			return nil, err
 		}
 		p.Settings = append(p.Settings, edit)
 		for _, c := range edit.Checks {
-			if c.Status == "changed" || c.Status == "unknown" || c.Status == "shared" {
+			if c.Status == "changed" || c.Status == "shared" {
 				p.Warnings = append(p.Warnings, fmt.Sprintf("보존: %s · %s (%s)", target.Path, c.Key, c.Status))
 			}
 		}

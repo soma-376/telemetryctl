@@ -3,6 +3,7 @@ package installer
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -232,5 +233,53 @@ func TestUninstallRejectsSymlinkAndPathCollision(t *testing.T) {
 	}
 	if err := safeUninstallPath(filepath.Join(link, "state.json")); err == nil {
 		t.Fatal("링크 경로 허용")
+	}
+}
+
+// 관리 기록 유실을 정상 제거로 처리하면 벤더 배선을 남긴 채 토큰만 삭제할 수 있다.
+func TestUninstallRejectsMissingManagedRecords(t *testing.T) {
+	for _, mode := range []string{"file", "target", "malformed"} {
+		t.Run(mode, func(t *testing.T) {
+			f, _ := newEnrollFixture(t, httpManifest(), ingestToken)
+			before := mustRead(t, f.claudePath)
+			path := ManagedPath(f.statePath)
+			switch mode {
+			case "file":
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			case "target":
+				var m ManagedSettings
+				if err := json.Unmarshal(mustRead(t, path), &m); err != nil {
+					t.Fatal(err)
+				}
+				m.Targets = nil
+				b, err := json.Marshal(m)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(path, b, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			case "malformed":
+				if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			loaded, err := LoadState(f.statePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = InspectManaged(f.statePath, loaded); err == nil {
+				t.Fatal("관리 기록 오류를 숨김")
+			}
+			plan, err := PrepareUninstall(UninstallOptions{StatePath: f.statePath, DataDir: filepath.Join(filepath.Dir(f.statePath), "data")})
+			if err == nil || plan != nil {
+				t.Fatal("관리 기록 오류인데 제거 계획 생성")
+			}
+			if !bytes.Equal(before, mustRead(t, f.claudePath)) {
+				t.Fatal("설정이 변경됨")
+			}
+		})
 	}
 }

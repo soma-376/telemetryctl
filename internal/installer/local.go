@@ -46,7 +46,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/your-org/pulsemetry/internal/config"
@@ -140,11 +139,9 @@ func LocalEndpoint(port int) string {
 //	otlp.protocol     → http/protobuf
 //	otlp.compression  → 없음                       (수신기는 identity·gzip 만 푼다)
 //	signals           → 셋 다 true
-//	privacy           → assistant_responses 만 false, 나머지 true
+//	privacy           → 벤더 설정에 쓰는 다섯 항목 true
 //
-// assistant_responses 만 끄는 이유는 로컬 파이프라인이 그것을 쓰지 않기 때문이다.
-// 세션 제목·요약은 프롬프트에서, 툴 타임라인은 tool details 에서 나온다. 응답 원문은
-// 어디에도 쓰이지 않으면서 배치 크기만 키운다.
+// 응답 원문을 포함해 로컬에서 수집하고, 상위 전달 범위는 회사 manifest로 판단한다.
 //
 // # 원본은 절대 건드리지 않는다
 //
@@ -178,7 +175,7 @@ func localProfile(company *contract.Manifest, port int) (contract.Manifest, erro
 	local.Signals = contract.Signals{Logs: true, Metrics: true, Traces: true}
 	local.Privacy = contract.Privacy{
 		CollectUserPrompts:        true,
-		CollectAssistantResponses: false,
+		CollectAssistantResponses: true,
 		CollectToolDetails:        true,
 		CollectToolContent:        true,
 		CollectRawAPIBodies:       true,
@@ -474,12 +471,7 @@ func remergeTargets(state *State, m *contract.Manifest, token, backupDir, hookEx
 		case "codex":
 			if preserveCodexHooks {
 				result, err = config.MergeCodexOTel(s.path, m, token)
-				// uninstall이 기존 훅을 계속 찾도록 소유권 기록도 보존한다.
-				for _, key := range state.Targets[s.index].ManagedKeys {
-					if !strings.HasPrefix(key, "otel.") {
-						result.ManagedKeys = append(result.ManagedKeys, key)
-					}
-				}
+
 			} else {
 				result, err = mergeCodexInstalled(s.path, m, token, false, hookExecutable, hookDataDir)
 			}
@@ -496,9 +488,7 @@ func remergeTargets(state *State, m *contract.Manifest, token, backupDir, hookEx
 		result.OriginalSHA256 = s.backup.SHA256
 		results = append(results, result)
 
-		// 관리 키 목록은 갱신한다. 병합할 때마다 실제로 쓴 키가 여기 반영되어야
-		// uninstall 이 잔재 없이 제거할 수 있다 (§5.2).
-		state.Targets[s.index].ManagedKeys = result.ManagedKeys
+		// 실제 적용한 항목의 지문을 별도 관리 기록에 반영한다.
 		state.Targets[s.index].pendingManaged = result.ManagedEntries
 		state.Targets[s.index].preserveManagedHooks = s.tool == "codex" && preserveCodexHooks
 		applied = append(applied, s)

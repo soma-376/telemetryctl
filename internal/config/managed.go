@@ -23,7 +23,7 @@ type ManagedEntry struct {
 
 type ManagedCheck struct {
 	Key    string `json:"key"`
-	Status string `json:"status"` // same, changed, missing, unknown, shared
+	Status string `json:"status"` // same, changed, missing, shared
 }
 
 // ManagedEdit는 dry-run과 실제 쓰기가 공유하는 검사 결과다. 원문은 메모리에만 둔다.
@@ -180,7 +180,7 @@ func validManaged(tool string, e ManagedEntry) bool {
 }
 
 // PlanManagedRemoval은 설정을 쓰지 않는다. 파싱 오류에 원문이나 비밀을 붙이지 않는다.
-func PlanManagedRemoval(tool, path string, entries []ManagedEntry, legacyKeys []string) (*ManagedEdit, error) {
+func PlanManagedRemoval(tool, path string, entries []ManagedEntry) (*ManagedEdit, error) {
 	if tool != "claude" && tool != "codex" {
 		return nil, errors.New("지원하지 않는 설정 대상")
 	}
@@ -209,31 +209,14 @@ func PlanManagedRemoval(tool, path string, entries []ManagedEntry, legacyKeys []
 	}
 	edit := &ManagedEdit{Path: path, Before: b, After: b, Existed: existed}
 	if entries == nil {
-		for _, key := range legacyKeys {
-			edit.Checks = append(edit.Checks, ManagedCheck{key, "unknown"})
-		}
-		return edit, nil
+		return nil, errors.New("관리 항목 기록이 없다. 명시적 재배선이 필요하다")
 	}
+
 	// 훅 제거를 먼저 수행해야 기능 토글의 공유 여부를 판단할 수 있다.
 	sorted := append([]ManagedEntry{}, entries...)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Event != "" && sorted[j].Event == "" })
 	changed := false
 	seenEntries := map[string]bool{}
-	// OTel 전용 재배선으로 새로 생긴 기록에는 구버전 훅의 기준값이 없을 수 있다.
-	for _, key := range legacyKeys {
-		base, _, _ := strings.Cut(key, ":")
-		covered := false
-		for _, entry := range entries {
-			k := entryKey(entry)
-			if k == base || strings.HasPrefix(k, base+".") {
-				covered = true
-				break
-			}
-		}
-		if !covered {
-			edit.Checks = append(edit.Checks, ManagedCheck{base, "unknown"})
-		}
-	}
 	for _, e := range sorted {
 		if !validManaged(tool, e) {
 			return nil, errors.New("관리 기록에 허용되지 않은 항목이 있다")

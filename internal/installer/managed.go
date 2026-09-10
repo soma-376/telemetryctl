@@ -122,7 +122,7 @@ func DriftRepairCommand(state *State) string {
 	return "pulsemetry reconnect"
 }
 
-// InspectManaged는 읽기 전용이다. unknown을 현재 설정으로 자동 등록하지 않는다.
+// InspectManaged는 읽기 전용이다. 관리 기록 누락은 오류로 알리고 현재 설정을 자동 등록하지 않는다.
 func InspectManaged(statePath string, state *State) ([]Drift, error) {
 	if state == nil {
 		return nil, nil
@@ -133,7 +133,7 @@ func InspectManaged(statePath string, state *State) ([]Drift, error) {
 	}
 	var out []Drift
 	for _, t := range state.Targets {
-		e, err := config.PlanManagedRemoval(t.Tool, t.Path, m.entries(t), t.ManagedKeys)
+		e, err := config.PlanManagedRemoval(t.Tool, t.Path, m.entries(t))
 		if err != nil {
 			return nil, fmt.Errorf("%s 설정 검사 실패: %w", t.Tool, err)
 		}

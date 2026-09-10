@@ -959,7 +959,7 @@ telemetryctl local disable [--data-dir <경로>] [--state <경로>]
    | `otlp.protocol` | `http/protobuf` |
    | `otlp.compression` | 없음 — 수신기는 `identity`·`gzip` 만 풀고, loopback 에서 압축이 벌어 주는 것이 없다 |
    | `signals` | 셋 다 `true` |
-   | `privacy` | `collect_assistant_responses` 만 `false`, 나머지 `true` |
+   | `privacy` | 벤더 설정에 쓰는 다섯 항목 `true` (`collect_user_email`은 회사 값 유지) |
 
    회사 값이 살아남는 것은 벤더 설정에 나타나지 않는 필드뿐이다 — `collect_user_email`,
    `repository_allowlist`, `timeout_ms`, 그리고 Codex `environment` 가 파생되는 `resource_attributes`.

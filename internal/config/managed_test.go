@@ -31,7 +31,7 @@ func TestManagedClaudePreservesUserChanges(t *testing.T) {
 	hooks["SessionEnd"] = append([]any{user}, groups...)
 	b, _ = json.Marshal(root)
 	_ = os.WriteFile(path, b, 0o600)
-	e, err := PlanManagedRemoval("claude", path, r.ManagedEntries, r.ManagedKeys)
+	e, err := PlanManagedRemoval("claude", path, r.ManagedEntries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestManagedClaudePreservesUserChanges(t *testing.T) {
 	if err = e.Apply(); err != nil {
 		t.Fatal(err)
 	}
-	second, err := PlanManagedRemoval("claude", path, r.ManagedEntries, r.ManagedKeys)
+	second, err := PlanManagedRemoval("claude", path, r.ManagedEntries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestManagedPreservesUnrelatedTOMLTypesAndLargeJSONNumber(t *testing.T) {
 	b, _ := os.ReadFile(path)
 	b = append([]byte("user_date = 1979-05-27T07:32:00Z\nuser_number = 9223372036854775807\n"), b...)
 	_ = os.WriteFile(path, b, 0o600)
-	e, err := PlanManagedRemoval("codex", path, r.ManagedEntries, r.ManagedKeys)
+	e, err := PlanManagedRemoval("codex", path, r.ManagedEntries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestManagedPreservesUnrelatedTOMLTypesAndLargeJSONNumber(t *testing.T) {
 	b, _ = os.ReadFile(path)
 	b = bytes.Replace(b, []byte("{"), []byte("{\"large\":9223372036854775807,"), 1)
 	_ = os.WriteFile(path, b, 0o600)
-	e, err = PlanManagedRemoval("claude", path, r.ManagedEntries, r.ManagedKeys)
+	e, err = PlanManagedRemoval("claude", path, r.ManagedEntries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestManagedCodexPreservesNestedFieldsAndSharedToggle(t *testing.T) {
 	// 리프 키로 기록해야 사용자가 exporter에 추가한 필드도 살아남는다.
 	b = bytes.Replace(b, []byte("[otel.exporter.otlp-http]"), []byte("[otel.exporter.otlp-http]\nuser_option = 'keep'"), 1)
 	_ = os.WriteFile(path, b, 0o600)
-	e, err := PlanManagedRemoval("codex", path, r.ManagedEntries, r.ManagedKeys)
+	e, err := PlanManagedRemoval("codex", path, r.ManagedEntries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestManagedModifiedHookAndGroupArePreserved(t *testing.T) {
 			}
 			b, _ = json.Marshal(root)
 			_ = os.WriteFile(path, b, 0o600)
-			e, err := PlanManagedRemoval("claude", path, r.ManagedEntries, r.ManagedKeys)
+			e, err := PlanManagedRemoval("claude", path, r.ManagedEntries)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -147,20 +147,17 @@ func TestManagedModifiedHookAndGroupArePreserved(t *testing.T) {
 	}
 }
 
-func TestManagedUnknownAndConcurrentEdit(t *testing.T) {
+func TestManagedMissingRecordAndConcurrentEdit(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	r, err := MergeClaude(path, companyManifest(), "secret", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := PlanManagedRemoval("claude", path, nil, r.ManagedKeys)
-	if err != nil {
-		t.Fatal(err)
+	e, err := PlanManagedRemoval("claude", path, nil)
+	if err == nil || e != nil {
+		t.Fatal("관리 기록 없이 제거 계획이 생성됨")
 	}
-	if !bytes.Equal(e.Before, e.After) || e.Checks[0].Status != "unknown" {
-		t.Fatal("기록 없는 설정을 변경했다")
-	}
-	e, err = PlanManagedRemoval("claude", path, r.ManagedEntries, r.ManagedKeys)
+	e, err = PlanManagedRemoval("claude", path, r.ManagedEntries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +166,7 @@ func TestManagedUnknownAndConcurrentEdit(t *testing.T) {
 		t.Fatal("동시 편집을 덮어썼다")
 	}
 	_ = os.WriteFile(path, []byte(`{"token":"SECRET", invalid`), 0o600)
-	_, err = PlanManagedRemoval("claude", path, r.ManagedEntries, r.ManagedKeys)
+	_, err = PlanManagedRemoval("claude", path, r.ManagedEntries)
 	if err == nil || strings.Contains(err.Error(), "SECRET") {
 		t.Fatal("파싱 오류에 비밀이 노출됐다")
 	}
@@ -185,7 +182,7 @@ func TestManagedRecordHasNoPlaintextAndRejectsArbitraryKeys(t *testing.T) {
 	if bytes.Contains(b, []byte("SECRET")) {
 		t.Fatal("지문에 원문이 포함됐다")
 	}
-	_, err = PlanManagedRemoval("claude", path, []ManagedEntry{{Path: []string{"model", "name"}, Digest: fingerprint("x")}}, nil)
+	_, err = PlanManagedRemoval("claude", path, []ManagedEntry{{Path: []string{"model", "name"}, Digest: fingerprint("x")}})
 	if err == nil {
 		t.Fatal("임의 키 삭제 기록을 허용했다")
 	}

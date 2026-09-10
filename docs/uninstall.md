@@ -23,7 +23,6 @@ pulsemetry uninstall --yes --delete-data
 | same | 마지막 적용 값과 일치 | 해당 키/handler만 제거 |
 | changed | 마지막 적용 값과 불일치 | 보존·안내 |
 | missing | 해당 값이 없음 | 그대로 둠 |
-| unknown | 비교할 기록이 없음 | 보존·안내 |
 | shared | 남은 사용자 훅이 기능 토글을 사용 | 토글 보존 |
 
 훅은 배열의 인덱스 대신 그룹 조건과 handler 내용으로 비교한다. 이벤트에 다른 handler만 남은
@@ -31,7 +30,7 @@ pulsemetry uninstall --yes --delete-data
 Codex exporter의 사용자 추가 필드는 리프 단위 제거로 보존한다. JSON 큰 정수와 TOML 날짜 타입도
 보존하지만 기존 map 기반 인코더 특성상 주석·공백·표현 순서는 보존을 보장하지 않는다.
 
-기록 없는 기존 설치는 unknown이다. 현재 파일을 자동 입양하거나 설치 전 백업으로 덮어쓰지 않는다.
+신규 설치만 지원하며 관리 정보는 `managed-settings.json`에만 저장한다. 관리 파일이나 대상 기록이 없으면 오류로 중단한다. 현재 파일을 자동 입양하거나 설치 전 백업으로 덮어쓰지 않는다.
 사용자가 명시적으로 `local enable`을 성공시키면 그때 적용한 값부터 기록된다. 회사 직결 설치는
 `reconnect`로 다시 쓴 설정을 기록한다. 로컬 모드의 reconnect는 회사 토큰만 바꾸므로 지문을 바꾸지 않는다.
 관리 기록 파싱 실패는 덮어쓰지 않고 오류로 보고한다.

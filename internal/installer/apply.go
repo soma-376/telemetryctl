@@ -214,7 +214,6 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 			Path:           result.Path,
 			BackupPath:     result.BackupPath,
 			OriginalSHA256: result.OriginalSHA256,
-			ManagedKeys:    result.ManagedKeys,
 			Created:        result.Created,
 		})
 	}

@@ -98,7 +98,7 @@ func TestLocalManifestForcesContentGates(t *testing.T) {
 
 	wantPrivacy := contract.Privacy{
 		CollectUserPrompts:        true,
-		CollectAssistantResponses: false,
+		CollectAssistantResponses: true,
 		CollectToolDetails:        true,
 		CollectToolContent:        true,
 		CollectRawAPIBodies:       true,
@@ -413,7 +413,7 @@ func TestEnable이쓴Claude설정이참고자료와정확히일치한다(t *test
 		"OTEL_EXPORTER_OTLP_PROTOCOL":                       "http/protobuf",
 		"OTEL_LOGS_EXPORTER":                                "otlp",
 		"OTEL_LOGS_EXPORT_INTERVAL":                         "5000",
-		"OTEL_LOG_ASSISTANT_RESPONSES":                      "0",
+		"OTEL_LOG_ASSISTANT_RESPONSES":                      "1",
 		"OTEL_LOG_RAW_API_BODIES":                           "1",
 		"OTEL_LOG_TOOL_CONTENT":                             "1",
 		"OTEL_LOG_TOOL_DETAILS":                             "1",
@@ -542,8 +542,8 @@ func TestEnableRewiresVendorConfigs(t *testing.T) {
 		`"OTEL_LOG_TOOL_DETAILS": "1"`,
 		`"OTEL_LOG_TOOL_CONTENT": "1"`,
 		`"OTEL_LOG_RAW_API_BODIES": "1"`,
-		// 응답 원문만 끈다. 로컬 파이프라인이 쓰지 않으면서 배치만 키운다.
-		`"OTEL_LOG_ASSISTANT_RESPONSES": "0"`,
+		// 응답 원문도 로컬에서 수집한다.
+		`"OTEL_LOG_ASSISTANT_RESPONSES": "1"`,
 		// 회사가 traces 를 껐어도 로컬은 받는다.
 		`"OTEL_TRACES_EXPORTER": "otlp"`,
 		`"OTEL_TRACES_EXPORT_INTERVAL": "5000"`,
@@ -610,9 +610,9 @@ func TestEnableDoesNotMutateStoredCompanyManifest(t *testing.T) {
 	}
 }
 
-// TestEnableUpdatesManagedKeys 는 재배선이 state.Targets 의 관리 키를 갱신하는지 본다.
+// TestEnableUpdatesManagedEntries 는 재배선이 별도 관리 기록의 지문을 갱신하는지 본다.
 // 갱신하지 않으면 나중에 uninstall 이 새로 추가된 키를 남긴다 (§5.2).
-func TestEnableUpdatesManagedKeys(t *testing.T) {
+func TestEnableUpdatesManagedEntries(t *testing.T) {
 	f := newLocalFixture(t, httpManifest())
 	if _, err := EnableLocal(f.options()); err != nil {
 		t.Fatalf("EnableLocal: %v", err)
@@ -620,6 +620,13 @@ func TestEnableUpdatesManagedKeys(t *testing.T) {
 	state, err := LoadState(f.statePath)
 	if err != nil {
 		t.Fatalf("LoadState: %v", err)
+	}
+	managed, err := LoadManaged(f.statePath, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(mustRead(t, f.statePath), []byte(`"managed_keys"`)) {
+		t.Fatal("state.json에 관리 키가 중복 저장됨")
 	}
 	for _, target := range state.Targets {
 		if target.Tool != "claude" {
@@ -630,8 +637,14 @@ func TestEnableUpdatesManagedKeys(t *testing.T) {
 			"env.OTEL_METRIC_EXPORT_INTERVAL",
 			"env.OTEL_LOGS_EXPORT_INTERVAL",
 		} {
-			if !containsString(target.ManagedKeys, key) {
-				t.Errorf("state.Targets 의 관리 키에 %s 가 없다: %v", key, target.ManagedKeys)
+			found := false
+			for _, entry := range managed.entries(target) {
+				if strings.Join(entry.Path, ".") == key {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("관리 지문에 %s가 없다", key)
 			}
 		}
 		// 백업 경로는 enroll 직전의 원본을 계속 가리켜야 한다.
@@ -665,6 +678,10 @@ func TestPortFallbackPreservesCodexHooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	managedBefore, err := LoadManaged(f.statePath, stateBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
 	opts.Port = 51999
 	opts.PreserveCodexHooks = true
 	// 훅 설치 경로로는 쓸 수 없는 입력이다. 포트 재배선이 이를 해석하면 실패해야 한다.
@@ -693,22 +710,26 @@ func TestPortFallbackPreservesCodexHooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i, target := range stateBefore.Targets {
+	managedAfter, err := LoadManaged(f.statePath, stateAfter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range stateBefore.Targets {
 		if target.Tool != "codex" {
 			continue
 		}
-		if !reflect.DeepEqual(target.ManagedKeys, stateAfter.Targets[i].ManagedKeys) {
-			// 순서는 계약이 아니므로 집합으로 비교한다.
-			for _, key := range target.ManagedKeys {
-				found := false
-				for _, got := range stateAfter.Targets[i].ManagedKeys {
-					if got == key {
-						found = true
-					}
+		for _, entry := range managedBefore.entries(target) {
+			if len(entry.Path) > 0 && entry.Path[0] == "otel" {
+				continue
+			}
+			found := false
+			for _, got := range managedAfter.entries(target) {
+				if reflect.DeepEqual(entry, got) {
+					found = true
 				}
-				if !found {
-					t.Fatalf("관리 키 유실: %s", key)
-				}
+			}
+			if !found {
+				t.Fatalf("훅 관리 지문 유실: %v", entry.Path)
 			}
 		}
 	}

@@ -545,7 +545,7 @@ func runStatus(stdout, stderr io.Writer, args []string) int {
 		fmt.Fprintf(stdout, "installation_id=%s · config_revision=%d · installer=%s · installed_at=%s\n",
 			st.InstallationID, st.ConfigRevision, st.InstallerVersion, st.InstalledAt)
 		for _, t := range st.Targets {
-			fmt.Fprintf(stdout, "  - [%s] %s (관리 키 %d개)\n", t.Tool, t.Path, len(t.ManagedKeys))
+			fmt.Fprintf(stdout, "  - [%s] %s\n", t.Tool, t.Path)
 		}
 		printCredentialStatus(stdout)
 		if drift, err := installer.InspectManaged(target.StatePath, st); err != nil {
