@@ -73,6 +73,10 @@ func PrepareUninstall(opts UninstallOptions) (*UninstallPlan, error) {
 	}
 	if s == nil {
 		p.AlreadyRemoved = true
+		// 이전 제거가 state.json 을 지운 직후 끊기면 관리 기록만 남는다.
+		if _, err = os.Stat(ManagedPath(opts.StatePath)); err == nil {
+			p.Files = append(p.Files, ManagedPath(opts.StatePath))
+		}
 		return p, nil
 	}
 	if s.InstallationID == "" {
@@ -129,7 +133,9 @@ func PrepareUninstall(opts UninstallOptions) (*UninstallPlan, error) {
 		}
 		p.Files = append(p.Files, path)
 	}
-	p.Files = append(p.Files, ManagedPath(opts.StatePath), opts.StatePath)
+	// state.json 을 먼저 지운다. 반대로 두면 중단 시 "설치됨 + 기록 없음"이 되어
+	// 다음 실행이 제거 계획을 세우지 못한다.
+	p.Files = append(p.Files, opts.StatePath, ManagedPath(opts.StatePath))
 	p.Warnings = append(p.Warnings, "실행 파일·기존 백업·사용자 추가 파일·잠금 파일은 보존한다. 실행 파일 제거는 설치 패키지에서 수행한다.")
 	p.Warnings = append(p.Warnings, "설정 변경 직전 오류 복구용 백업: "+filepath.Join(filepath.Dir(opts.StatePath), "uninstall-backups"))
 	if !opts.DeleteData {
@@ -149,6 +155,15 @@ func uninstallPathKey(path string) string {
 // Execute는 설정 해제가 모두 끝나기 전에는 키링·데이터를 지우지 않는다.
 func (p *UninstallPlan) Execute(ctx context.Context) error {
 	if p.AlreadyRemoved {
+		// 남은 관리 기록 정리만 수행한다. 데몬 종료·키링 정리는 이전 실행에서 끝났다.
+		for _, path := range p.Files {
+			if err := safeUninstallPath(path); err != nil {
+				return err
+			}
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("파일 정리 실패 (%s): %w", path, err)
+			}
+		}
 		return nil
 	}
 	if p.options.Stop == nil {

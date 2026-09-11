@@ -72,10 +72,19 @@ func saveManaged(statePath string, state *State) (func() error, error) {
 	if !needed {
 		return noop, nil
 	}
-	old, err := LoadManaged(statePath, state)
+	previous, err := LoadState(statePath)
 	if err != nil {
 		return nil, err
 	}
+	var old *ManagedSettings
+	if previous != nil {
+		// 재등록 전 설치 ID로 검증한 기록만 새 설치에 반영한다.
+		old, err = LoadManaged(statePath, previous)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// state가 없으면 고아 기록을 인수하지 않는다. 원문은 아래에서 복구용으로만 보관한다.
 	m := ManagedSettings{Version: 1, InstallationID: state.InstallationID}
 	for _, t := range state.Targets {
 		entries := old.entries(t)

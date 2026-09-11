@@ -236,6 +236,58 @@ func TestUninstallRejectsSymlinkAndPathCollision(t *testing.T) {
 	}
 }
 
+// cancelAtStateDeleted는 state.json이 사라진 직후를 중단 시점으로 잡는다.
+type cancelAtStateDeleted struct {
+	context.Context
+	statePath string
+}
+
+func (c cancelAtStateDeleted) Err() error {
+	if _, err := os.Stat(c.statePath); errors.Is(err, os.ErrNotExist) {
+		return context.Canceled
+	}
+	return c.Context.Err()
+}
+
+// 두 기록 삭제 사이에서 끊겨도 재실행이 남은 정리를 끝내야 한다 (ADR 0021).
+func TestUninstallResumesAfterStateRecordDeleted(t *testing.T) {
+	f, _ := newEnrollFixture(t, httpManifest(), ingestToken)
+	dir := filepath.Join(filepath.Dir(f.statePath), "data")
+	_ = os.MkdirAll(dir, 0o700)
+	opts := UninstallOptions{StatePath: f.statePath, DataDir: dir, Stop: func(context.Context) error { return nil }, DeleteCredential: func(credential.Account) error { return nil }}
+	p, err := PrepareUninstall(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = p.Execute(cancelAtStateDeleted{context.Background(), f.statePath}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("중단 지점을 잡지 못했다: %v", err)
+	}
+	if _, err = os.Stat(f.statePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("state 기록이 남았다")
+	}
+	if _, err = os.Stat(ManagedPath(f.statePath)); err != nil {
+		t.Fatal("중단 창을 재현하지 못했다 (관리 기록이 이미 없다)")
+	}
+	after := mustRead(t, f.claudePath)
+
+	p, err = PrepareUninstall(opts)
+	if err != nil {
+		t.Fatalf("중단 후 재실행이 막혔다: %v", err)
+	}
+	if !p.AlreadyRemoved {
+		t.Fatal("설치 상태가 없는데 제거 계획을 세웠다")
+	}
+	if err = p.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(ManagedPath(f.statePath)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("남은 관리 기록을 정리하지 않았다")
+	}
+	if !bytes.Equal(after, mustRead(t, f.claudePath)) {
+		t.Fatal("재실행이 벤더 설정을 다시 건드렸다")
+	}
+}
+
 // 관리 기록 유실을 정상 제거로 처리하면 벤더 배선을 남긴 채 토큰만 삭제할 수 있다.
 func TestUninstallRejectsMissingManagedRecords(t *testing.T) {
 	for _, mode := range []string{"file", "target", "malformed"} {

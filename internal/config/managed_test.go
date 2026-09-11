@@ -3,11 +3,12 @@ package config
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/BurntSushi/toml"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 func TestManagedClaudePreservesUserChanges(t *testing.T) {
@@ -112,6 +113,137 @@ func TestManagedCodexPreservesNestedFieldsAndSharedToggle(t *testing.T) {
 	}
 	if bytes.Contains(e.After, []byte("hook codex")) || bytes.Contains(e.After, []byte("secret")) {
 		t.Fatal("관리 항목이 남았다")
+	}
+}
+
+// exporter 테이블은 endpoint·protocol이 한 벌이라 반쪽만 남으면 안 된다.
+func TestManagedCodexExporterGroupSurvivesFieldEdit(t *testing.T) {
+	for _, field := range []string{"protocol", "endpoint"} {
+		t.Run(field, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			m := companyManifest()
+			m.OTLP.Endpoint = "http://localhost:4318"
+			r, err := MergeCodex(path, m, "secret", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var root map[string]any
+			if _, err = toml.DecodeFile(path, &root); err != nil {
+				t.Fatal(err)
+			}
+			inner := root["otel"].(map[string]any)["exporter"].(map[string]any)["otlp-http"].(map[string]any)
+			if field == "protocol" {
+				inner["protocol"] = "json"
+			} else {
+				inner["endpoint"] = "http://localhost:9999"
+			}
+			var out bytes.Buffer
+			if err = toml.NewEncoder(&out).Encode(root); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(path, out.Bytes(), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			e, err := PlanManagedRemoval("codex", path, r.ManagedEntries)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var after map[string]any
+			if _, err = toml.Decode(string(e.After), &after); err != nil {
+				t.Fatal(err)
+			}
+			otel, _ := after["otel"].(map[string]any)
+			exporter, _ := otel["exporter"].(map[string]any)
+			left, ok := exporter["otlp-http"].(map[string]any)
+			if !ok {
+				t.Fatalf("수정된 exporter를 통째로 지웠다: %s", e.After)
+			}
+			for _, key := range []string{"endpoint", "protocol"} {
+				if _, ok = left[key]; !ok {
+					t.Fatalf("%s 없는 반쪽 exporter가 남았다: %s", key, e.After)
+				}
+			}
+			for _, c := range e.Checks {
+				if c.Key == "otel.exporter" && c.Status != "changed" {
+					t.Fatalf("그룹 보존을 알리지 않았다: %v", c)
+				}
+			}
+			if _, ok = otel["metrics_exporter"]; ok {
+				t.Fatalf("무관한 관리 그룹이 남았다: %s", e.After)
+			}
+		})
+	}
+}
+
+func TestManagedCodexExporterMissingLeafAndUserField(t *testing.T) {
+	for _, scenario := range []string{"deleted_endpoint", "added_field"} {
+		t.Run(scenario, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			m := companyManifest()
+			m.OTLP.Endpoint = "http://localhost:4318"
+			r, err := MergeCodex(path, m, "secret", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var root map[string]any
+			if _, err = toml.DecodeFile(path, &root); err != nil {
+				t.Fatal(err)
+			}
+			inner := root["otel"].(map[string]any)["exporter"].(map[string]any)["otlp-http"].(map[string]any)
+			if scenario == "deleted_endpoint" {
+				delete(inner, "endpoint")
+			} else {
+				inner["user_option"] = "keep-me"
+			}
+			var out bytes.Buffer
+			if err = toml.NewEncoder(&out).Encode(root); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(path, out.Bytes(), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			e, err := PlanManagedRemoval("codex", path, r.ManagedEntries)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, check := range e.Checks {
+				if check.Key == "otel.exporter" {
+					found = true
+					if check.Status != "same" {
+						t.Fatalf("그룹 판정 = %s, 기대값 = same", check.Status)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("exporter 그룹 판정 누락")
+			}
+			if err = e.Apply(); err != nil {
+				t.Fatal(err)
+			}
+			var after map[string]any
+			if _, err = toml.DecodeFile(path, &after); err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range r.ManagedEntries {
+				if entry.Event == "" {
+					if _, exists := managedValue(after, entry.Path); exists {
+						t.Fatalf("관리 설정 잔존: %s", entryKey(entry))
+					}
+				}
+			}
+			if scenario == "deleted_endpoint" {
+				if _, exists := after["otel"]; exists {
+					t.Fatal("빈 OTel 테이블이 남았다")
+				}
+			} else {
+				value, exists := managedValue(after, []string{"otel", "exporter", "otlp-http", "user_option"})
+				if !exists || value != "keep-me" {
+					t.Fatal("사용자가 추가한 필드 유실")
+				}
+			}
+		})
 	}
 }
 

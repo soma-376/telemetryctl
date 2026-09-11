@@ -15,9 +15,13 @@ import (
 )
 
 // ManagedEntry는 값 원문 없이 마지막 적용 항목을 식별한다. Path는 점을 포함한 키도 보존한다.
+//
+// Group은 병합기가 관리한다고 선언한 키다 (예: "otel.exporter"). 지문은 리프마다 찍지만
+// 제거 판정은 이 단위로 한다 — 리프 단위로 지우면 반쪽만 남은 설정이 만들어진다.
 type ManagedEntry struct {
 	Path   []string `json:"path,omitempty"`
 	Event  string   `json:"event,omitempty"`
+	Group  string   `json:"group,omitempty"`
 	Digest string   `json:"digest"`
 }
 
@@ -59,15 +63,15 @@ func managedArray(value any) []any {
 // captureManaged는 방금 생성한 관리 키만 기록한다. 사용자 추가 키를 사후 입양하지 않는다.
 func captureManaged(root map[string]any, keys []string) []ManagedEntry {
 	entries := make([]ManagedEntry, 0)
-	var leaves func([]string, any)
-	leaves = func(path []string, v any) {
+	var leaves func(string, []string, any)
+	leaves = func(group string, path []string, v any) {
 		if m, ok := v.(map[string]any); ok && len(m) > 0 {
 			for k, val := range m {
-				leaves(append(append([]string{}, path...), k), val)
+				leaves(group, append(append([]string{}, path...), k), val)
 			}
 			return
 		}
-		entries = append(entries, ManagedEntry{Path: path, Digest: fingerprint(v)})
+		entries = append(entries, ManagedEntry{Path: path, Group: group, Digest: fingerprint(v)})
 	}
 	for _, key := range keys {
 		if strings.HasPrefix(key, "hooks.") {
@@ -87,7 +91,7 @@ func captureManaged(root map[string]any, keys []string) []ManagedEntry {
 		}
 		path := strings.Split(key, ".")
 		if v, found := managedValue(root, path); found {
-			leaves(path, v)
+			leaves(key, path, v)
 		}
 	}
 	sort.Slice(entries, func(i, j int) bool { return entryKey(entries[i]) < entryKey(entries[j]) })
@@ -144,6 +148,24 @@ func entryKey(e ManagedEntry) string {
 	return strings.Join(e.Path, ".")
 }
 
+// isPathPrefix는 group이 path의 조상 키인지 본다. 점을 포함한 키가 있어 조각 단위로 맞춘다.
+func isPathPrefix(group string, path []string) bool {
+	for i := range path {
+		if strings.Join(path[:i+1], ".") == group {
+			return true
+		}
+	}
+	return false
+}
+
+// groupKey는 제거 판정 단위를 돌려준다. Group이 없으면 리프 자신이 단위다.
+func groupKey(e ManagedEntry) string {
+	if e.Event == "" && e.Group != "" {
+		return e.Group
+	}
+	return entryKey(e)
+}
+
 func validManaged(tool string, e ManagedEntry) bool {
 	if len(e.Digest) != 64 {
 		return false
@@ -152,9 +174,13 @@ func validManaged(tool string, e ManagedEntry) bool {
 		return false
 	}
 	if e.Event != "" {
-		return len(e.Path) == 0 && (e.Event == "SessionStart" || e.Event == "SessionEnd")
+		return len(e.Path) == 0 && e.Group == "" && (e.Event == "SessionStart" || e.Event == "SessionEnd")
 	}
 	if len(e.Path) < 2 {
+		return false
+	}
+	// 무관한 키를 한 그룹으로 묶어 제거를 막는 기록을 걸러낸다.
+	if e.Group != "" && !isPathPrefix(e.Group, e.Path) {
 		return false
 	}
 	if tool == "claude" && e.Path[0] == "env" && len(e.Path) == 2 {
@@ -217,6 +243,17 @@ func PlanManagedRemoval(tool, path string, entries []ManagedEntry) (*ManagedEdit
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Event != "" && sorted[j].Event == "" })
 	changed := false
 	seenEntries := map[string]bool{}
+
+	// 같은 그룹의 뒷 항목이 수정돼 있으면 앞 항목도 지우지 않아야 해서 비교와 삭제를 나눈다.
+	type groupPlan struct {
+		key     string
+		entries []ManagedEntry
+		edited  bool // 설치 당시 값과 다른 항목이 있다
+		present bool // 남아 있는 항목이 있다
+	}
+	var plans []*groupPlan
+	byKey := map[string]*groupPlan{}
+
 	for _, e := range sorted {
 		if !validManaged(tool, e) {
 			return nil, errors.New("관리 기록에 허용되지 않은 항목이 있다")
@@ -230,8 +267,8 @@ func PlanManagedRemoval(tool, path string, entries []ManagedEntry) (*ManagedEdit
 			return nil, errors.New("중복된 관리 항목 기록")
 		}
 		seenEntries[identity] = true
-		status := "missing"
 		if e.Event != "" {
+			status := "missing"
 			hooks, _ := root["hooks"].(map[string]any)
 			groups := managedArray(hooks[e.Event])
 			matched := false
@@ -271,19 +308,46 @@ func PlanManagedRemoval(tool, path string, entries []ManagedEntry) (*ManagedEdit
 					delete(root, "hooks")
 				}
 			}
-		} else if v, found := managedValue(root, e.Path); found {
-			status = "changed"
-			if fingerprint(v) == e.Digest {
-				status = "same"
-				if entryKey(e) == "features.hooks" && root["hooks"] != nil {
-					status = "shared"
-				} else {
-					deleteManaged(root, e.Path)
-					changed = true
-				}
+			edit.Checks = append(edit.Checks, ManagedCheck{entryKey(e), status})
+			continue
+		}
+		key := groupKey(e)
+		plan := byKey[key]
+		if plan == nil {
+			plan = &groupPlan{key: key}
+			byKey[key] = plan
+			plans = append(plans, plan)
+		}
+		plan.entries = append(plan.entries, e)
+		if v, found := managedValue(root, e.Path); found {
+			plan.present = true
+			if fingerprint(v) != e.Digest {
+				plan.edited = true
 			}
 		}
-		edit.Checks = append(edit.Checks, ManagedCheck{entryKey(e), status})
+	}
+
+	// 수정된 항목이 하나라도 있으면 그룹을 통째로 남긴다.
+	for _, plan := range plans {
+		status := "missing"
+		switch {
+		case plan.edited:
+			status = "changed"
+		case plan.present:
+			status = "same"
+			for _, e := range plan.entries {
+				if _, found := managedValue(root, e.Path); !found {
+					continue
+				}
+				if entryKey(e) == "features.hooks" && root["hooks"] != nil {
+					status = "shared"
+					continue
+				}
+				deleteManaged(root, e.Path)
+				changed = true
+			}
+		}
+		edit.Checks = append(edit.Checks, ManagedCheck{plan.key, status})
 	}
 	if !changed {
 		return edit, nil

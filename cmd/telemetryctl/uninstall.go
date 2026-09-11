@@ -60,7 +60,23 @@ func runUninstall(stdin io.Reader, stdout, stderr io.Writer, args []string, stop
 		return 1
 	}
 	if p.AlreadyRemoved {
-		fmt.Fprintln(stdout, "설치 상태가 없습니다. 추가 삭제 없이 종료합니다.")
+		if len(p.Files) == 0 {
+			fmt.Fprintln(stdout, "설치 상태가 없습니다. 추가 삭제 없이 종료합니다.")
+			return 0
+		}
+		fmt.Fprintln(stdout, "설치 상태가 없습니다. 이전 제거가 끝나지 않아 남은 기록만 정리합니다.")
+		for _, path := range p.Files {
+			fmt.Fprintln(stdout, "제거 파일:", path)
+		}
+		if *dry {
+			fmt.Fprintln(stdout, "dry-run: 변경하지 않았습니다.")
+			return 0
+		}
+		if err = p.Execute(context.Background()); err != nil {
+			fmt.Fprintln(stderr, "남은 기록 정리 실패:", err)
+			return 1
+		}
+		fmt.Fprintln(stdout, "남은 기록을 정리했습니다.")
 		return 0
 	}
 	fmt.Fprintln(stdout, "자동 시작 해제·데몬 정상 종료 후 Pulsemetry 설정을 제거합니다. 벤더 도구도 먼저 종료하세요.")
