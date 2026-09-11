@@ -50,8 +50,8 @@ func (s *titleStoreStub) SetCodexTitle(_ context.Context, key, title string) err
 	return nil
 }
 
-func testCodexTitlePolicy(interval time.Duration, delays ...time.Duration) codexTitlePolicy {
-	return codexTitlePolicy{now: time.Now, refreshInterval: interval, finalRetryDelays: delays}
+func testCodexTitlePolicy(interval time.Duration, delays ...time.Duration) titlePolicy {
+	return titlePolicy{now: time.Now, refreshInterval: interval, finalRetryDelays: delays}
 }
 
 func TestCodexTitleRefresherPollsActiveSessionAfterCooldown(t *testing.T) {

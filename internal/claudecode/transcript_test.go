@@ -1,4 +1,4 @@
-package daemon
+package claudecode
 
 import (
 	"encoding/json"
@@ -28,7 +28,7 @@ func TestReadClaudeAITitle(t *testing.T) {
 		`{"type":"ai-title","aiTitle":"트레이 한도 조회 동작 확인","sessionId":"s1"}`,
 	)
 
-	got, ok := readClaudeAITitle(root, "s1")
+	got, ok := ReadAITitle(root, "s1")
 	if !ok {
 		t.Fatal("제목을 못 찾았다")
 	}
@@ -44,7 +44,7 @@ func TestReadClaudeAITitleTakesLast(t *testing.T) {
 		`{"type":"ai-title","aiTitle":"처음","sessionId":"s1"}`,
 		`{"type":"ai-title","aiTitle":"나중","sessionId":"s1"}`,
 	)
-	if got, _ := readClaudeAITitle(root, "s1"); got != "나중" {
+	if got, _ := ReadAITitle(root, "s1"); got != "나중" {
 		t.Fatalf("제목 = %q, want 나중", got)
 	}
 }
@@ -53,10 +53,10 @@ func TestReadClaudeAITitleMissing(t *testing.T) {
 	root := t.TempDir()
 	writeTranscript(t, root, "C--repo", "s1", `{"type":"mode","mode":"default","sessionId":"s1"}`)
 
-	if _, ok := readClaudeAITitle(root, "s1"); ok {
+	if _, ok := ReadAITitle(root, "s1"); ok {
 		t.Error("제목 레코드가 없는데 찾았다고 한다")
 	}
-	if _, ok := readClaudeAITitle(root, "없는세션"); ok {
+	if _, ok := ReadAITitle(root, "없는세션"); ok {
 		t.Error("파일이 없는데 찾았다고 한다")
 	}
 }
@@ -67,7 +67,7 @@ func TestReadClaudeAITitleRejectsUnsafeKey(t *testing.T) {
 	writeTranscript(t, root, "C--repo", "s1", `{"type":"ai-title","aiTitle":"제목","sessionId":"s1"}`)
 
 	for _, key := range []string{"../s1", "C--repo/s1", `C--repo\s1`, "*", "s1.jsonl", ""} {
-		if _, ok := readClaudeAITitle(root, key); ok {
+		if _, ok := ReadAITitle(root, key); ok {
 			t.Errorf("안전하지 않은 키를 통과시켰다: %q", key)
 		}
 	}
@@ -84,7 +84,7 @@ func TestReadClaudeAITitleReadsTailFirst(t *testing.T) {
 	lines = append(lines, `{"type":"ai-title","aiTitle":"끝쪽 제목","sessionId":"s1"}`)
 	writeTranscript(t, root, "C--repo", "s1", lines...)
 
-	if got, _ := readClaudeAITitle(root, "s1"); got != "끝쪽 제목" {
+	if got, _ := ReadAITitle(root, "s1"); got != "끝쪽 제목" {
 		t.Fatalf("제목 = %q, want 끝쪽 제목", got)
 	}
 }
@@ -99,7 +99,7 @@ func TestReadClaudeAITitleExpandsPastHugeRecord(t *testing.T) {
 		huge,
 	)
 
-	if got, _ := readClaudeAITitle(root, "s1"); got != "거대 레코드 앞의 제목" {
+	if got, _ := ReadAITitle(root, "s1"); got != "거대 레코드 앞의 제목" {
 		t.Fatalf("제목 = %q — 창을 넓히지 못했다", got)
 	}
 }
@@ -114,7 +114,7 @@ func TestReadClaudeAITitleStopsAtCap(t *testing.T) {
 	}
 	writeTranscript(t, root, "C--repo", "s1", lines...)
 
-	if got, ok := readClaudeAITitle(root, "s1"); ok {
+	if got, ok := ReadAITitle(root, "s1"); ok {
 		t.Fatalf("상한 밖의 제목을 읽었다: %q", got)
 	}
 }
@@ -126,7 +126,7 @@ func TestClaudeTitleRecordDropsConversation(t *testing.T) {
 	line := `{"type":"user","cwd":"C:\repo","gitBranch":"main",` +
 		`"message":{"role":"user","content":"` + secret + `"},"sessionId":"s1"}`
 
-	var rec claudeTitleRecord
+	var rec titleRecord
 	if err := json.Unmarshal([]byte(line), &rec); err != nil {
 		t.Fatal(err)
 	}

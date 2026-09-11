@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/your-org/pulsemetry/internal/autostart"
+	"github.com/your-org/pulsemetry/internal/claudecode"
 	"github.com/your-org/pulsemetry/internal/codexapp"
 	"github.com/your-org/pulsemetry/internal/dashboard"
 	"github.com/your-org/pulsemetry/internal/dashboard/tray"
@@ -236,8 +237,8 @@ type daemon struct {
 	limitCollector *vendorlimit.Collector
 	limits         *vendorlimit.Refresher
 	codex          *codexapp.Client
-	codexTitles    *codexTitleRefresher
-	claudeTitles   *claudeTitleRefresher
+	codexTitles    *titleRefresher
+	claudeTitles   *titleRefresher
 	// query 는 GUI 조회에 쓰는 read-only 핸들이다. 쓰기 커넥션(db)과 별개다 —
 	// dashboard 는 mode=ro 를 강제하고, 조회가 쓰기를 할 수 없다는 것이 그 계약이다.
 	query *dashboard.Service
@@ -334,7 +335,7 @@ func (d *daemon) start(ctx context.Context) error {
 	d.codexTitles = newCodexTitleRefresher(ctx, threadReader, db, d.log)
 	// Claude Code 는 세션 제목을 자기 트랜스크립트에 남긴다. 홈을 못 찾으면 nil 이고
 	// 그때는 이 벤더의 제목이 채워지지 않는다 (ADR 0018).
-	d.claudeTitles = newClaudeTitleRefresher(ctx, claudeTranscriptRoot(), db, d.log, d.opts.Now)
+	d.claudeTitles = newClaudeTitleRefresher(ctx, claudecode.TranscriptRoot(), db, d.log, d.opts.Now)
 	// 자동 쿨다운을 틱에서 파생시킨다. 둘이 같거나 쿨다운이 더 길면 다음 틱이 자기 쿨다운에
 	// 걸려 자동 갱신이 통째로 멈춘다 (ADR 0014). 상수 두 개로 두면 한쪽만 바꿔도 그렇게 되므로,
 	// 깨질 수 없게 여기서 계산한다.
@@ -367,7 +368,7 @@ func (d *daemon) start(ctx context.Context) error {
 		WriteTimeout: storeWriteTimeout,
 		PruneTimeout: storePruneTimeout,
 		SessionTTL:   sessionMemoryTTL,
-		Titles:       d.codexTitles,
+		CodexTitles:  d.codexTitles,
 		ClaudeTitles: d.claudeTitles,
 	})
 

@@ -45,7 +45,7 @@ type pipeline struct {
 	now func() time.Time
 	// 제목 보강기는 벤더마다 출처가 달라 따로 둔다 — Codex 는 App Server 스레드 이름,
 	// Claude Code 는 로컬 트랜스크립트다 (ADR 0017·0018).
-	titles       sessionTitleRefresher
+	codexTitles  sessionTitleRefresher
 	claudeTitles sessionTitleRefresher
 
 	// batchEvents 는 크기 기준 flush 임계값이다.
@@ -191,7 +191,7 @@ func newPipeline(cfg pipelineConfig) *pipeline {
 		fwd:          cfg.Forwarder,
 		log:          cfg.Logger,
 		now:          cfg.Now,
-		titles:       cfg.Titles,
+		codexTitles:  cfg.CodexTitles,
 		claudeTitles: cfg.ClaudeTitles,
 		batchEvents:  cfg.BatchEvents,
 		writeTimeout: cfg.WriteTimeout,
@@ -239,7 +239,7 @@ type pipelineConfig struct {
 	WriteTimeout time.Duration
 	PruneTimeout time.Duration
 	SessionTTL   time.Duration
-	Titles       sessionTitleRefresher
+	CodexTitles  sessionTitleRefresher
 	ClaudeTitles sessionTitleRefresher
 	// DedupCapacity 는 배선 단계 중복 제거 창의 크기다. 0 이면 기본값.
 	DedupCapacity int
@@ -247,6 +247,7 @@ type pipelineConfig struct {
 
 type sessionTitleRefresher interface {
 	Enqueue(string, bool)
+	TryForget(string) bool
 }
 
 // Consume 은 receiver.Sink 구현이다. 수신기 워커(2개)가 동시에 부른다.
@@ -357,8 +358,8 @@ func (p *pipeline) run() {
 				if !c.lifecycle.End {
 					p.asm.StartLifecycle(c.lifecycle.SessionID, at)
 				}
-				if c.lifecycle.Vendor == "codex" && p.titles != nil {
-					p.titles.Enqueue(c.lifecycle.SessionID, c.lifecycle.End)
+				if c.lifecycle.Vendor == "codex" && p.codexTitles != nil {
+					p.codexTitles.Enqueue(c.lifecycle.SessionID, c.lifecycle.End)
 				}
 			}
 			c.done <- err
@@ -491,7 +492,7 @@ func (p *pipeline) closeSessions() {
 	// 되살림을 구조적으로 불가능하게 만들기 위해서다 — 유휴 임계값보다 한참 커야 한다.
 	if p.sessionTTL > 0 {
 		before := now - event.UnixSec(p.sessionTTL/time.Second)
-		if n := p.asm.Prune(before); n > 0 {
+		if n := p.asm.PruneIf(before, p.forgetTitle); n > 0 {
 			p.log.Printf("조립기 정리: 세션 %d개 (마지막 활동 %s 이전)", n, p.sessionTTL)
 		}
 	}
@@ -521,6 +522,22 @@ func (p *pipeline) sweepIdleSessions(now event.UnixSec) {
 	if n > 0 {
 		p.counters.sessionsClosed.Add(int64(n))
 		p.log.Printf("유휴 세션 마감: %d개 (마지막 활동 %s 이전, 조립기 밖)", n, idle)
+	}
+}
+
+// forgetTitle 은 조립기와 같은 순서로 제목 상태를 제거한다. 큐 포화 시 다음 틱에 재시도한다.
+func (p *pipeline) forgetTitle(s session.Session) bool {
+	id, ok := vendor.Normalize(s.Vendor)
+	if !ok {
+		return true
+	}
+	switch id {
+	case vendor.Codex:
+		return p.codexTitles == nil || p.codexTitles.TryForget(s.SessionID)
+	case vendor.ClaudeCode:
+		return p.claudeTitles == nil || p.claudeTitles.TryForget(s.SessionID)
+	default:
+		return true
 	}
 }
 
@@ -574,8 +591,8 @@ func (p *pipeline) flush(sessions []session.Session) {
 		}
 		switch id {
 		case vendor.Codex:
-			if p.titles != nil {
-				p.titles.Enqueue(s.SessionID, s.EndedAt.Valid())
+			if p.codexTitles != nil {
+				p.codexTitles.Enqueue(s.SessionID, s.EndedAt.Valid())
 			}
 		case vendor.ClaudeCode:
 			if p.claudeTitles != nil {
