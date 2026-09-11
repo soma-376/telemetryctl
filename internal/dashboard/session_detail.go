@@ -71,7 +71,7 @@ type TokenTotals struct {
 	// cache_creation_tokens 라는 v1 이름으로 내보낸다.
 	CacheWrite int64 `json:"cache_write_tokens"`
 	// Reasoning 은 **출력 토큰의 부분집합**이라 Billable 에 다시 더하지 않는다
-	// (llm_calls 스키마 문서). 현재 쓰기 경로는 이 컬럼을 채우지 않는다.
+	// (llm_calls 스키마 문서). Codex reasoning_token_count에서 온다.
 	Reasoning int64 `json:"reasoning_tokens"`
 }
 
@@ -151,6 +151,7 @@ func (s *SavingsTotals) finalize() {
 // finalize 만 고치면 상단 값과 턴별 합계가 자동으로 함께 움직인다 — 두 곳에서 따로
 // 세면 언젠가 갈린다.
 type TurnTotals struct {
+	UsageCalls int64 `json:"usage_calls"`
 	// LLMCalls·ToolCalls 는 티켓이 요구하는 「턴별 LLM 호출과 툴 호출 합계」다.
 	LLMCalls  int64 `json:"llm_calls"`
 	ToolCalls int64 `json:"tool_calls"`
@@ -173,6 +174,7 @@ type TurnTotals struct {
 }
 
 func (t *TurnTotals) add(o TurnTotals) {
+	t.UsageCalls += o.UsageCalls
 	t.LLMCalls += o.LLMCalls
 	t.ToolCalls += o.ToolCalls
 	t.ToolErrors += o.ToolErrors
@@ -208,6 +210,9 @@ type SessionTotals struct {
 
 // TurnMetrics 는 턴 하나의 지표다.
 type TurnMetrics struct {
+	PromptText      string `json:"prompt_text"`
+	PromptTruncated bool   `json:"prompt_truncated"`
+	FilesChanged    int64  `json:"files_changed"`
 	// TurnID 는 turns.id 다.
 	TurnID int64 `json:"turn_id"`
 	// TurnKey 는 벤더가 준 턴 식별자다 (Claude Code prompt.id, Codex 합성 키).
@@ -451,7 +456,9 @@ func (x *turnIndex) at(turnID int64) *TurnMetrics {
 //
 // 실제 턴이 turn_index 오름차순으로 먼저 오고 가상 턴이 마지막이다 — 가상 턴은 순서가
 // 없는 세션 수준 이벤트의 자리라 타임라인 중간에 끼워 넣을 지점이 없다.
-const sessionTurnsSQL = `SELECT t.id, t.turn_key, t.turn_index, t.started_at, t.ended_at, t.ttft_ms
+const sessionTurnsSQL = `SELECT t.id, t.turn_key, t.turn_index, t.started_at, t.ended_at, t.ttft_ms,
+COALESCE(substr(t.prompt_text,1,4000),''), COALESCE(length(t.prompt_text)>4000,0),
+(SELECT COUNT(DISTINCT f.file_path) FROM file_changes f JOIN tool_calls c ON c.id=f.tool_call_id WHERE c.turn_id=t.id)
 FROM turns t WHERE t.session_id = ?
 ORDER BY (t.turn_index IS NULL) ASC, t.turn_index ASC, t.id ASC`
 
@@ -469,7 +476,7 @@ func sessionTurnMetrics(ctx context.Context, db sqlQuerier, id int64) (index *tu
 			t                         TurnMetrics
 			idx, started, ended, ttft sql.NullInt64
 		)
-		if serr := rows.Scan(&t.TurnID, &t.TurnKey, &idx, &started, &ended, &ttft); serr != nil {
+		if serr := rows.Scan(&t.TurnID, &t.TurnKey, &idx, &started, &ended, &ttft, &t.PromptText, &t.PromptTruncated, &t.FilesChanged); serr != nil {
 			return nil, queryErr(op, serr)
 		}
 		t.TurnIndex = nullInt64(idx)
@@ -532,6 +539,9 @@ func collectLLMCalls(ctx context.Context, db sqlQuerier, id int64, table pricing
 
 		t := index.at(turnID)
 		t.LLMCalls++
+		if in.Valid && out.Valid {
+			t.UsageCalls++
+		}
 		addOptTokens(&t.Tokens, in, out, cacheRead, cacheWrite, reasoning)
 		if duration.Valid && duration.Int64 > 0 {
 			t.LLMDurationMS += duration.Int64

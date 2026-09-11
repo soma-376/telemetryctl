@@ -28,6 +28,7 @@ const stageKo = (name: string): string => STAGE_STYLE[name]?.ko ?? "";
 
 // 턴 라벨 스타일 맵 (Activity v2 드로어 전용 팔레트 — 디버깅 계열은 리터럴)
 const TURN_STYLE: Record<TurnKind, TurnStyle> = {
+  unknown: { name: "미분류", bar: "var(--color-border)", fg: "var(--color-text-secondary)", bg: "var(--color-surface-hover)", border: "var(--color-border)" },
   explore: { name: "탐색", bar: "var(--color-inactive)", fg: "#5e5a54", bg: "#f1efeb", border: "#ddd8d0" },
   implement: { name: "구현", bar: "var(--color-sand)", fg: "var(--color-accent)", bg: "var(--color-sand-soft)", border: "#e6d5b8" },
   debug: { name: "디버깅", bar: "#e08a3c", fg: "#9a5a14", bg: "#fbeee0", border: "#f0d2ae" },
@@ -77,16 +78,19 @@ export function detailDisplay(t: ActivitySession, position: string) {
   const n = STATE_STYLE[t.state];
 
   const turns = t.turns;
-  const totalMins = turns.reduce((sum, u) => sum + u.mins, 0) || 1;
+  const totalMins = turns.reduce((sum, u) => sum + (u.mins ?? 0), 0);
+  const durationKnown = turns.length > 0 && turns.every(u => u.mins !== null);
+  const weight = (u: typeof turns[number]) => durationKnown ? (u.mins ?? 0) : 1;
+  const totalWeight = turns.reduce((sum, u) => sum + weight(u), 0) || 1;
   const minsByKind: Partial<Record<TurnKind, number>> = {};
   turns.forEach((u) => {
-    minsByKind[u.kind] = (minsByKind[u.kind] ?? 0) + u.mins;
+    minsByKind[u.kind] = (minsByKind[u.kind] ?? 0) + weight(u);
   });
   // 가장 오래 머문 턴 분류가 세션 성격이 된다.
   const topKind = TURN_KINDS.reduce((a, b) =>
     (minsByKind[b] ?? 0) > (minsByKind[a] ?? 0) ? b : a,
   );
-  const cl = TURN_STYLE[topKind];
+  const cl = TURN_STYLE[t.workType ?? topKind];
 
   return {
     title: t.title,
@@ -99,18 +103,18 @@ export function detailDisplay(t: ActivitySession, position: string) {
     range: t.range,
     kpi: t.kpi,
     turnCount:
-      turns.length + "턴 · " + formatDuration(totalMins),
+      turns.length + "턴 · " + (durationKnown ? formatDuration(totalMins) : "턴 수 기준 · 시간 미수집"),
     legend: TURN_KINDS.map((k) => ({
       name: TURN_STYLE[k].name,
       color: TURN_STYLE[k].bar,
-      pct: Math.round(((minsByKind[k] ?? 0) / totalMins) * 100) + "%",
+      pct: Math.round(((minsByKind[k] ?? 0) / totalWeight) * 100) + "%",
     })),
     segments: turns.map(
       (u, i): TurnSegment => ({
-        grow: u.mins,
+        grow: weight(u),
         color: TURN_STYLE[u.kind].bar,
         radius: i === 0 ? "4px 0 0 4px" : i === turns.length - 1 ? "0 4px 4px 0" : "0",
-        tip: i + 1 + "턴 · " + TURN_STYLE[u.kind].name + " · " + u.mins + "분",
+        tip: i + 1 + "턴 · " + TURN_STYLE[u.kind].name + " · " + (u.mins === null ? "시간 미수집" : formatDuration(u.mins)),
       }),
     ),
     turns: turns.map((u, i): TurnDisplay => {
@@ -123,17 +127,17 @@ export function detailDisplay(t: ActivitySession, position: string) {
         labelBg: s.bg,
         labelBorder: s.border,
         labelDot: s.bar,
-        preview: u.prompt.split("\n")[0] ?? "",
-        prompt: u.prompt,
-        chars: u.prompt.length + "자",
+        preview: u.prompt.split("\n")[0] || "프롬프트 미수집",
+        prompt: u.prompt || "수집된 프롬프트가 없습니다.",
+        chars: u.prompt.length + "자" + (u.promptTruncated ? " · 일부 표시" : ""),
         meta: u.actions + " Action · " + u.tokens,
         stats: [
           { name: "Agent Action", value: String(u.actions), fg: "var(--color-text)" },
           { name: "변경 파일", value: String(u.filesChanged), fg: "var(--color-text)" },
           { name: "토큰", value: u.tokens, fg: "var(--color-text)" },
-          { name: "재시도", value: String(u.retries), fg: u.retries ? "#9a6a14" : "var(--color-text)" },
+          { name: "재시도", value: u.retries === null ? "미수집" : String(u.retries), fg: u.retries ? "#9a6a14" : "var(--color-text)" },
         ],
-        callNote: u.calls.length + "회 · 실패 " + u.calls.filter((c) => !c.ok).length,
+        callNote: u.calls.length + "회 표시 · 실패 " + u.calls.filter((c) => c.ok === false).length + " · 결과 미수집 " + u.calls.filter(c => c.ok === null).length,
         calls: u.calls,
       };
     }),

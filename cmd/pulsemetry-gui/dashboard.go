@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/your-org/pulsemetry/internal/dashboard"
 
 	"github.com/your-org/pulsemetry/internal/dashboard/tray"
 	"github.com/your-org/pulsemetry/internal/hostenv"
@@ -35,6 +36,14 @@ func NewDashboard() *Dashboard {
 
 // ServiceName 은 Wails 가 로그에 쓰는 이름이다. 없으면 타입 이름으로 짓는다.
 func (d *Dashboard) ServiceName() string { return "Dashboard" }
+
+func (d *Dashboard) Activity(ctx context.Context, q dashboard.ActivityQuery) (dashboard.ActivityPage, error) {
+	return d.daemon.Activity(ctx, q)
+}
+
+func (d *Dashboard) ActivitySession(ctx context.Context, id int64) (localapi.ActivityDetail, error) {
+	return d.daemon.ActivitySession(ctx, id)
+}
 
 // Tray 는 트레이 퀵뷰 한 장에 필요한 전부다. 갱신 주기 안이면 캐시를 그대로 준다.
 func (d *Dashboard) Tray(ctx context.Context, q tray.Query) (tray.Snapshot, error) {

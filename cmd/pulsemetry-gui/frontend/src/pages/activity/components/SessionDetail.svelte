@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { fade, fly } from "svelte/transition";
   import { prefersReducedMotion } from "svelte/motion";
   import { cubicOut } from "svelte/easing";
@@ -26,7 +27,13 @@
     onClose,
     onPrev,
     onNext,
+    loading = false,
+    error = "",
+    onRetry,
   }: {
+    loading?: boolean;
+    error?: string;
+    onRetry?: () => void;
     open?: boolean;
     session: ActivitySession | null;
     position: string;
@@ -45,12 +52,15 @@
   let lastPosition = $state("");
   $effect(() => {
     if (!session) return;
+    const changed = untrack(() => last?.id) !== session.id;
     last = session;
     lastPosition = position;
     // 세션이 바뀌면 턴 펼침·선택·파일 목록 상태를 초기화한다.
-    turnOpen = {};
-    turnSel = null;
-    filesOpen = false;
+    if (changed) {
+      turnOpen = {};
+      turnSel = null;
+      filesOpen = false;
+    }
   });
 
   const shown = $derived(session ?? last);
@@ -173,65 +183,20 @@
           </button>
         </div>
 
-        <div class="flex items-center" style="gap:9px">
-          <button
-            type="button"
-            class="hover:bg-accent-hover flex cursor-pointer items-center border-none font-semibold whitespace-nowrap text-white"
-            style="gap:8px;background:var(--color-accent);font-size:13px;padding:10px 16px;border-radius:9px"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              style="width:13px;height:13px"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linejoin="round"
-              ><path d="M8 5.5 18 12 8 18.5z"></path></svg
-            > 계속하기</button
-          >
-          <button
-            type="button"
-            class="bg-surface border-border text-text hover:border-border-strong flex cursor-pointer items-center border font-semibold whitespace-nowrap"
-            style="gap:9px;font-size:13px;padding:10px 15px;border-radius:9px"
-          >
-            다른 에이전트로 넘기기
-            <ChevronDownIcon
-              size={13}
-              strokeWidth={2.2}
-              class="text-text-muted"
-            /></button
-          >
-          <button
-            type="button"
-            class="bg-surface border-border text-text hover:border-border-strong flex cursor-pointer items-center border font-semibold whitespace-nowrap"
-            style="gap:8px;font-size:13px;padding:10px 15px;border-radius:9px"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              style="width:14px;height:14px"
-              fill="none"
-              stroke="var(--color-text-secondary)"
-              stroke-width="1.7"
-              stroke-linejoin="round"
-              ><path
-                d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
-              ></path></svg
-            > 폴더 열기</button
-          >
-          <div class="flex-1"></div>
-          <div
-            class="border-border text-text-muted hover:border-border-strong flex flex-none cursor-pointer items-center justify-center border"
-            style="width:30px;height:30px;border-radius:9px;font-size:14px"
-          >
-            •••
-          </div>
-        </div>
+
       </div>
 
       <div
         class="flex min-h-0 flex-1 flex-col overflow-y-auto"
         style="padding:18px 24px 22px;gap:14px"
       >
+        {#if loading}
+          <p role="status">세션 상세를 불러오는 중입니다.</p>
+        {:else if error && d.kpi.length === 0}
+          <div role="alert">{error} <button onclick={() => onRetry?.()}>다시 시도</button></div>
+        {:else}
+        {#if error}<p role="alert">{error} 마지막 조회 결과를 표시합니다. <button onclick={() => onRetry?.()}>다시 시도</button></p>{/if}
+        {#if shown?.notice}<p role="status">{shown.notice}</p>{/if}
         <KpiGrid kpi={d.kpi} />
 
         <TurnFlow
@@ -271,6 +236,7 @@
           open={filesOpen}
           onToggle={() => (filesOpen = !filesOpen)}
         />
+        {/if}
       </div>
 
       <div

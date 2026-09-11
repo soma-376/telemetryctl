@@ -8,8 +8,14 @@
     sessions,
     selectedIndex = null,
     onOpen,
+    hasMore = false,
+    loadingMore = false,
+    onLoadMore,
   }: {
     sessions: ActivitySession[];
+    hasMore?: boolean;
+    loadingMore?: boolean;
+    onLoadMore?: () => void;
     selectedIndex?: number | null;
     onOpen?: (index: number) => void;
   } = $props();
@@ -47,13 +53,17 @@
         onOpen={() => onOpen?.(i)}
       />
     {/each}
+    {#if hasMore}
     <button
+      disabled={loadingMore}
+      onclick={() => onLoadMore?.()}
       type="button"
       class="text-text-secondary hover:text-text flex w-full cursor-pointer items-center justify-center border-none bg-transparent"
       style="gap:7px;padding:14px;font-size:12.5px"
     >
-      더 불러오기
+      {loadingMore ? "불러오는 중…" : "더 불러오기"}
       <ChevronDownIcon strokeWidth={2} />
     </button>
+    {/if}
   {/if}
 </div>

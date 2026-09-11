@@ -15,7 +15,21 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as dashboard$0 from "../../internal/dashboard/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as tray$0 from "../../internal/dashboard/tray/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as localapi$0 from "../../internal/localapi/models.js";
+
+export function Activity(q: dashboard$0.ActivityQuery): $CancellablePromise<dashboard$0.ActivityPage> {
+    return $Call.ByID(3148998841, q);
+}
+
+export function ActivitySession(id: number): $CancellablePromise<localapi$0.ActivityDetail> {
+    return $Call.ByID(3638835675, id);
+}
 
 /**
  * RefreshTray 는 데몬에 수동 갱신을 명령하고 그 결과를 다시 받는다 (퀵뷰의 새로고침 버튼).

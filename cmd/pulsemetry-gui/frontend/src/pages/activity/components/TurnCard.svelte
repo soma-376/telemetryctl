@@ -143,7 +143,7 @@
             style="font-size:10.5px">{turn.callNote}</span
           >
         </div>
-        {#each turn.calls as call (call.time + call.tool + call.arg)}
+        {#each turn.calls as call, i (call.id ?? i)}
           <div
             class="grid items-center"
             style="grid-template-columns:42px 62px minmax(0,1fr) 46px 14px;gap:10px;padding:5px 0"
@@ -169,11 +169,11 @@
             >
             <span
               class="flex items-center justify-center font-bold"
-              style="width:14px;height:14px;border-radius:4px;font-size:9px;background:{call.ok
+              style="width:14px;height:14px;border-radius:4px;font-size:9px;background:{call.ok === null ? 'var(--color-surface-hover)' : call.ok
                 ? 'var(--color-success-soft)'
-                : 'var(--color-danger-soft)'};color:{call.ok
+                : 'var(--color-danger-soft)'};color:{call.ok === null ? 'var(--color-text-muted)' : call.ok
                 ? '#2f7e55'
-                : 'var(--color-danger-strong)'}">{call.ok ? "✓" : "✕"}</span
+                : 'var(--color-danger-strong)'}">{call.ok === null ? "?" : call.ok ? "✓" : "✕"}</span
             >
           </div>
         {/each}
@@ -181,8 +181,7 @@
           class="text-text-muted"
           style="font-size:10.5px;margin-top:8px;padding-top:8px;border-top:1px solid #f1ece4;line-height:1.6"
         >
-          출력 본문은 저장하지 않아요. 종료 코드 · 실패 수 · 오류 지문만
-          남습니다.
+          수집된 도구 이름·대상·소요 시간·성공 여부를 표시합니다.
         </div>
       </div>
     </div>

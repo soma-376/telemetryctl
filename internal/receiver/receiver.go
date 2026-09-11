@@ -365,7 +365,7 @@ func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rc.opt.ControlAPI.ServeHTTP(w, r)
 		return
 	}
-	if (strings.HasPrefix(r.URL.Path, LocalAPIPathPrefix) || strings.HasPrefix(r.URL.Path, HookAPIPathPrefix)) && rc.opt.LocalAPI != nil {
+	if (strings.HasPrefix(r.URL.Path, LocalAPIPathPrefix) || r.URL.Path == "/v1/activity" || strings.HasPrefix(r.URL.Path, "/v1/activity/") || strings.HasPrefix(r.URL.Path, HookAPIPathPrefix)) && rc.opt.LocalAPI != nil {
 		if ok, reason := rc.authorize(r); !ok {
 			total := rc.stats.unauthorized.Add(1)
 			rc.logUnauthorized(reason, total)

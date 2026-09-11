@@ -1,0 +1,95 @@
+package localapi
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+
+	"github.com/your-org/pulsemetry/internal/dashboard"
+)
+
+const ActivityPath = "/v1/activity"
+
+// ActivityDetail은 같은 세션 ID로 조회한 상세·지표·분류를 묶는다.
+type ActivityDetail struct {
+	Detail         dashboard.SessionDetail         `json:"detail"`
+	Metrics        dashboard.SessionMetrics        `json:"metrics"`
+	Classification dashboard.SessionClassification `json:"classification"`
+}
+
+// WithActivity는 기존 트레이·훅 핸들러에 읽기 전용 Activity 경로를 더한다.
+func WithActivity(next http.Handler, source *dashboard.Service) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/", next)
+	mux.HandleFunc("GET "+ActivityPath, func(w http.ResponseWriter, r *http.Request) {
+		var q dashboard.ActivityQuery
+		if err := json.Unmarshal([]byte(r.URL.Query().Get("q")), &q); err != nil || q.Since < 0 || q.Until < 0 || (q.Until > 0 && q.Since >= q.Until) {
+			http.Error(w, "invalid activity query", http.StatusBadRequest)
+			return
+		}
+		page, err := source.Activity(r.Context(), q)
+		if err != nil {
+			http.Error(w, "activity unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		writeJSON(w, page)
+	})
+	mux.HandleFunc("GET "+ActivityPath+"/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id <= 0 {
+			http.Error(w, "invalid session id", http.StatusBadRequest)
+			return
+		}
+		var out ActivityDetail
+		out.Detail, err = source.Session(r.Context(), id)
+		if err == nil && out.Detail.Found {
+			out.Metrics, err = source.SessionMetrics(r.Context(), dashboard.SessionMetricsQuery{SessionID: id})
+			if err == nil {
+				out.Classification, err = dashboard.NewClassifier(source.Reader()).Session(r.Context(), id)
+			}
+		}
+		if err != nil {
+			http.Error(w, "session unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		writeJSON(w, out)
+	})
+	return mux
+}
+
+func (c *Client) Activity(ctx context.Context, q dashboard.ActivityQuery) (dashboard.ActivityPage, error) {
+	data, err := json.Marshal(q)
+	if err != nil {
+		return dashboard.ActivityPage{}, err
+	}
+	var out dashboard.ActivityPage
+	err = c.readActivity(ctx, ActivityPath+"?"+url.Values{"q": {string(data)}}.Encode(), &out)
+	return out, err
+}
+
+func (c *Client) ActivitySession(ctx context.Context, id int64) (ActivityDetail, error) {
+	var out ActivityDetail
+	err := c.readActivity(ctx, ActivityPath+"/"+strconv.FormatInt(id, 10), &out)
+	return out, err
+}
+
+func (c *Client) readActivity(ctx context.Context, path string, out any) error {
+	ctx, cancel := context.WithTimeout(ctx, snapshotTimeout)
+	defer cancel()
+	req, err := c.newRequest(ctx, http.MethodGet, path)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("localapi: 활동 조회: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("localapi: 활동 조회 실패 (%d)", resp.StatusCode)
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}

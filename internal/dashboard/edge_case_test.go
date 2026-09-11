@@ -233,6 +233,11 @@ func TestEdgeCase_OutOfOrderArrivalGivesTheSameScreens(t *testing.T) {
 			name: "SessionDetail",
 			call: func(f *fixture) (any, error) {
 				d, err := f.reader.Session(ctx, f.sessionID(vendorClaude, "ooo"))
+				// DB마다 달라지는 대리 키는 제외하고 관측 내용을 비교한다.
+				for i := range d.Tools {
+					d.Tools[i].ID = 0
+					d.Tools[i].TurnID = 0
+				}
 				return d, err
 			},
 		},

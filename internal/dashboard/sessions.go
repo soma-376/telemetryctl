@@ -106,7 +106,9 @@ type SessionRow struct {
 	ToolErrors  int64 `json:"tool_errors"`
 	ToolRejects int64 `json:"tool_rejects"`
 
-	APIRequests int64 `json:"api_requests"`
+	APIRequests       int64 `json:"api_requests"`
+	UsageCalls        int64 `json:"usage_calls"`
+	ReportedCostCalls int64 `json:"reported_cost_calls"`
 	// APIErrors·Retries·Responses 는 v3 에 출처가 없어 항상 0 이다 (위 주석).
 	APIErrors int64 `json:"api_errors"`
 	Retries   int64 `json:"retries"`
@@ -139,6 +141,8 @@ type FileRow struct {
 // v1 의 action(read|edit|write|run|search)과 target_hash 는 v3 에 컬럼이 없어 사라졌다.
 // 대상은 원경로 하나로 온다.
 type ToolRow struct {
+	ID       int64  `json:"id"`
+	TurnID   int64  `json:"turn_id"`
 	TS       int64  `json:"ts"`
 	ToolName string `json:"tool_name"`
 	// Target 은 대상의 원경로, TargetName 은 그 basename 이다.
@@ -223,7 +227,9 @@ var sessionColumns = `s.id, s.session_key, s.vendor_id,
   ` + toolCount(`c.decision = 'reject'`) + `,
   COALESCE((SELECT COUNT(*) FROM turns t WHERE t.session_id = s.id AND t.turn_index IS NOT NULL), 0),
   ` + fileSum(`SUM(f.additions)`) + `,
-  ` + fileSum(`SUM(f.deletions)`)
+	` + fileSum(`SUM(f.deletions)`) + `,
+  ` + llmSum(`COUNT(CASE WHEN c.input_tokens IS NOT NULL AND c.output_tokens IS NOT NULL THEN 1 END)`) + `,
+  ` + llmSum(`COUNT(c.cost_usd)`)
 
 func scanSession(scan func(...any) error) (SessionRow, error) {
 	var (
@@ -238,6 +244,7 @@ func scanSession(scan func(...any) error) (SessionRow, error) {
 		&s.CostUSD, &s.APIRequests,
 		&s.ToolCalls, &s.ToolErrors, &s.ToolRejects,
 		&s.Prompts, &s.LinesAdded, &s.LinesRemoved,
+		&s.UsageCalls, &s.ReportedCostCalls,
 	)
 	if err != nil {
 		return SessionRow{}, err
@@ -423,7 +430,7 @@ func sessionFiles(ctx context.Context, db sqlQuerier, id int64) (files []FileRow
 
 // tool_calls.called_at 은 초 단위라 같은 초에 여러 행이 흔하다. id 를 2순위로 두어야
 // 저장 순서(= 도착 순서)가 타임라인에 그대로 남는다.
-const sessionToolsSQL = `SELECT COALESCE(c.called_at,0), COALESCE(c.tool_name,''),
+const sessionToolsSQL = `SELECT c.id, c.turn_id, COALESCE(c.called_at,0), COALESCE(c.tool_name,''),
   COALESCE(c.target,''), c.success, c.duration_ms, COALESCE(c.error_type,''),
   COALESCE(c.decision,''), COALESCE(c.mcp_server,'')
 FROM tool_calls c
@@ -446,7 +453,7 @@ func sessionTools(ctx context.Context, db sqlQuerier, id int64) (tools []ToolRow
 			success  sql.NullInt64
 			duration sql.NullInt64
 		)
-		if serr := rows.Scan(&t.TS, &t.ToolName, &t.Target,
+		if serr := rows.Scan(&t.ID, &t.TurnID, &t.TS, &t.ToolName, &t.Target,
 			&success, &duration, &t.ErrorType, &t.Decision, &t.MCPServer); serr != nil {
 			return nil, false, queryErr(op, serr)
 		}

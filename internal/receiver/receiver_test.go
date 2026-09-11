@@ -172,6 +172,23 @@ func TestLocalAPIRequiresAuthBeforeDelegating(t *testing.T) {
 	assertNoCORS(t, authorized)
 }
 
+func TestActivityAPIRequiresAuthBeforeDelegating(t *testing.T) {
+	for _, path := range []string{"/v1/activity", "/v1/activity/42"} {
+		t.Run(path, func(t *testing.T) {
+			calls := 0
+			rc, _, _ := newTestReceiver(t, func(opt *Options) {
+				opt.LocalAPI = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls++; w.WriteHeader(http.StatusOK) })
+			})
+			if got := do(rc, httptest.NewRequest(http.MethodGet, path, nil)); got.Code != http.StatusUnauthorized || calls != 0 {
+				t.Fatalf("인증 전 위임: %d / %d", got.Code, calls)
+			}
+			if got := do(rc, authedRequest(http.MethodGet, path, "", nil)); got.Code != http.StatusOK || calls != 1 {
+				t.Fatalf("인증 후 위임: %d / %d", got.Code, calls)
+			}
+		})
+	}
+}
+
 func TestUnsupportedMediaType(t *testing.T) {
 	rc, _, _ := newTestReceiver(t, nil)
 

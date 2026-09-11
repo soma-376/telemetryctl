@@ -47,6 +47,9 @@ func main() {
 	})
 
 	// 트레이 퀵뷰 — 프레임 없는 팝업. 트레이 클릭으로 토글되고 포커스를 잃으면 닫힌다.
+	win.RegisterHook(events.Common.WindowShow, func(*application.WindowEvent) { win.EmitEvent("main:shown") })
+	win.RegisterHook(events.Common.WindowHide, func(*application.WindowEvent) { win.EmitEvent("main:hidden") })
+
 	quick := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:         "Pulsemetry Quick View",
 		Width:         392,
