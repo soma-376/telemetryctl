@@ -249,7 +249,7 @@ func (c cancelAtStateDeleted) Err() error {
 	return c.Context.Err()
 }
 
-// 두 기록 삭제 사이에서 끊겨도 재실행이 남은 정리를 끝내야 한다 (ADR 0021).
+// 두 기록 삭제 사이에서 끊겨도 재실행이 남은 정리를 끝내야 한다 (ADR 0022).
 func TestUninstallResumesAfterStateRecordDeleted(t *testing.T) {
 	f, _ := newEnrollFixture(t, httpManifest(), ingestToken)
 	dir := filepath.Join(filepath.Dir(f.statePath), "data")

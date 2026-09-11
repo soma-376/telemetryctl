@@ -1340,7 +1340,7 @@ SQL 스윕이 보완한다(ADR 0019, ADR 0020).
 명시적 재배선의 훅 후보는 `type=command`, Pulsemetry 실행 파일 이름,
 예약 서브커맨드 `hook codex`의 일치로 판정한다. 따라서 경로가 바뀐 재배선도 중복을 만들지 않는다.
 uninstall은 이 후보 판정만으로 삭제하지 않고 `managed-settings.json`의 마지막 적용 지문을
-비교한다. 사용자 변경을 보존하는 제거·drift 정책은 [설치 해제](uninstall.md)와 ADR 0021을 따른다.
+비교한다. 사용자 변경을 보존하는 제거·drift 정책은 [설치 해제](uninstall.md)와 ADR 0022를 따른다.
 
 ---
 
