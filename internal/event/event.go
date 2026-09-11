@@ -177,6 +177,7 @@ type Measures struct {
 	OutputTokens        Opt[int64]
 	CacheReadTokens     Opt[int64]
 	CacheCreationTokens Opt[int64]
+	ReasoningTokens     Opt[int64] // 출력 토큰의 부분집합. llm_calls에 저장하며 총량에 더하지 않는다.
 
 	DurationMS Opt[int64]
 	StatusCode Opt[int64]

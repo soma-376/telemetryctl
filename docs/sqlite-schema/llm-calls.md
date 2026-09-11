@@ -2,6 +2,10 @@
 
 원본 이벤트에서 승격한 LLM 호출의 모델·토큰·비용·시간 정보를 저장한다.
 
+Codex `response.completed`의 `input_token_count`, `output_token_count`,
+`cached_token_count`, `cache_write_token_count`, `reasoning_token_count`를 각각
+입력·출력·캐시 읽기·캐시 쓰기·추론 토큰 컬럼에 저장한다. 미전송은 `NULL`, 전송된 0은 0이다.
+
 | 컬럼 | 타입 | 제약 | 설명 |
 |---|---|---|---|
 | `id` | `INTEGER` | 기본 키 | SQLite rowid 별칭 |

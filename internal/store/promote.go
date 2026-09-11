@@ -138,7 +138,7 @@ func (w *writer) promoteLLMCalls(recs []EventRecord, turnIDs, eventIDs []int64) 
 		_, err := w.tx.ExecContext(w.ctx, insertLLMCallSQL,
 			turnIDs[i], eventIDs[i], nullSec(rec.Event.TS.Sec()), nullStr(rec.Event.Attr.Model),
 			optInt(m.InputTokens), optInt(m.OutputTokens),
-			optInt(m.CacheReadTokens), optInt(m.CacheCreationTokens), nil,
+			optInt(m.CacheReadTokens), optInt(m.CacheCreationTokens), optInt(m.ReasoningTokens),
 			optFloat(m.CostUSD), optInt(m.DurationMS), nil,
 		)
 		if err != nil {

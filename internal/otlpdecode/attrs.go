@@ -99,9 +99,15 @@ var intMeasures = map[string]func(*event.Measures, int64){
 	"input_tokens":      func(m *event.Measures, v int64) { m.InputTokens = event.Some(v) },
 	"output_tokens":     func(m *event.Measures, v int64) { m.OutputTokens = event.Some(v) },
 	"cache_read_tokens": func(m *event.Measures, v int64) { m.CacheReadTokens = event.Some(v) },
-	// Codex 표기. 같은 의미의 다른 이름이라 같은 컬럼으로 모은다 — 없으면 조용히 버려진다.
+	// 기존 별칭도 유지한다.
 	"cached_input_tokens":   func(m *event.Measures, v int64) { m.CacheReadTokens = event.Some(v) },
 	"cache_creation_tokens": func(m *event.Measures, v int64) { m.CacheCreationTokens = event.Some(v) },
+	// Codex response.completed의 속성 이름을 공통 토큰 필드로 모은다.
+	"input_token_count":       func(m *event.Measures, v int64) { m.InputTokens = event.Some(v) },
+	"output_token_count":      func(m *event.Measures, v int64) { m.OutputTokens = event.Some(v) },
+	"cached_token_count":      func(m *event.Measures, v int64) { m.CacheReadTokens = event.Some(v) },
+	"cache_write_token_count": func(m *event.Measures, v int64) { m.CacheCreationTokens = event.Some(v) },
+	"reasoning_token_count":   func(m *event.Measures, v int64) { m.ReasoningTokens = event.Some(v) },
 
 	"duration_ms":               func(m *event.Measures, v int64) { m.DurationMS = event.Some(v) },
 	"status_code":               func(m *event.Measures, v int64) { m.StatusCode = event.Some(v) },
