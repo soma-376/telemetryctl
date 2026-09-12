@@ -1335,6 +1335,13 @@ ls ~/.config/systemd/user 2>/dev/null | grep -i pulsemetry || echo "OK: 등록�
 
 ### 7.8 Codex 세션 수명주기 훅
 
+Claude Code·Codex의 `SessionStart` 본문에 있는 `cwd`는 원경로 그대로
+`sessions.workspace_path`에 저장한다. 시작·재개 시 비어 있지 않은 경로로 갱신하고,
+경로가 없거나 빈 문자열이면 기존 값을 보존한다. `SessionEnd`는 경로를 바꾸지 않는다.
+`cwd`는 벤더 작업 디렉터리이며 Git 루트로 변환하지 않는다. 이 경로는 로컬 조회에만 쓴다.
+OTel 이벤트·조립기 스냅샷은 `workspace_path`를 쓰지 않는다. 기존 DB 경로는 유지하고,
+시작 훅이 없는 신규 세션의 경로는 NULL로 남긴다(ADR 0028).
+
 Codex 로컬 배선은 사용자 훅 배열을 보존하면서 `SessionStart`와 `SessionEnd`에
 현재 설치 바이너리의 절대 경로로 `hook codex` command handler를 하나씩 설치한다. 사용자 PATH는
 바꾸지 않는다. 사용자 지정 데이터 디렉터리는 `--data-dir` 절대 경로로 함께 기록한다. 이 숨은 CLI

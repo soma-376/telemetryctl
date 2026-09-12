@@ -86,10 +86,9 @@ type Session struct {
 	ProjectName string
 
 	// ── 로컬 저장 전용 (ADR 0010) ───────────────────────────────────────────
-	// v3 의 sessions.workspace_path · user_email · user_account_id · terminal_type 을
+	// v3 의 sessions.user_email · user_account_id · terminal_type 을
 	// 채우는 값이다. 로컬 SQLite 에만 저장하고 상위로 전달하지 않는다.
 	// 해시가 필요한 곳(상위 전달과 관련된 코드)은 ProjectHash·ProjectName 을 쓴다.
-	WorkspacePath string
 	UserEmail     string
 	UserAccountID string
 	TerminalType  string

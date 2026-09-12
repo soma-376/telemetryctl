@@ -24,7 +24,6 @@ type state struct {
 
 	// 로컬 저장 전용 식별 정보 (ADR 0010). 세션 안에서 한 번만 정한다 —
 	// 도중에 바뀌면 세션의 정체성이 흔들리고 화면 필터에서 세션이 사라진다.
-	workspacePath string
 	userEmail     string
 	userAccountID string
 	terminalType  string
@@ -131,7 +130,6 @@ func (s *state) observe(e event.Event) {
 		dst *string
 		src string
 	}{
-		{&s.workspacePath, e.Attr.WorkspacePath},
 		{&s.userEmail, e.Attr.UserEmail},
 		{&s.userAccountID, e.Attr.UserAccountID},
 		{&s.terminalType, e.Attr.TerminalType},
@@ -398,7 +396,6 @@ func (s *state) session() Session {
 		ProjectHash: s.projectHash,
 		ProjectName: s.projectName,
 
-		WorkspacePath: s.workspacePath,
 		UserEmail:     s.userEmail,
 		UserAccountID: s.userAccountID,
 		TerminalType:  s.terminalType,

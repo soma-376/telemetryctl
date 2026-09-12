@@ -22,6 +22,7 @@ package daemon
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"reflect"
@@ -63,6 +64,15 @@ func newScreenFixture(t *testing.T) *screenFixture {
 	t.Setenv("USERPROFILE", empty)
 
 	h := start(t, harnessOptions{})
+	body, err := json.Marshal(map[string]string{
+		"session_id": fixtureSession, "cwd": fixturePath, "source": "startup",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp := h.post("/v1/hooks/session-start?vendor=claude_code", body); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("시작 훅 응답 = %d", resp.StatusCode)
+	}
 
 	// 메트릭을 먼저 넣는다 — lines_of_code 포인트는 첫 프롬프트보다 앞선 이벤트라
 	// 가상 턴으로 가야 한다 (daemon_test.go 의 같은 주석).

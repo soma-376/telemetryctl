@@ -171,7 +171,7 @@ func closeEndedSessions(t *testing.T, db *DB, b Batch) {
 		if !ok {
 			continue
 		}
-		if err := db.ApplyLifecycle(context.Background(), s.Vendor, s.SessionID, at, true); err != nil {
+		if err := db.ApplyLifecycle(context.Background(), s.Vendor, s.SessionID, at, true, ""); err != nil {
 			t.Fatalf("ApplyLifecycle(%s): %v", s.SessionID, err)
 		}
 	}
@@ -227,7 +227,6 @@ func newSession(id string, at time.Time) session.Session {
 		ProjectName: "telemetryctl",
 
 		// ADR 0010 이 로컬 저장을 허용한 값들이다. v3 의 sessions 컬럼으로 그대로 간다.
-		WorkspacePath: "/Users/jy/dev/projects/soma-376/telemetryctl",
 		UserEmail:     "kjy02927@gmail.com",
 		UserAccountID: "acct-1",
 		TerminalType:  "iTerm.app",

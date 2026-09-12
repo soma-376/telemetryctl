@@ -87,11 +87,17 @@ func (f *fixture) write(b store.Batch) {
 func closeEndedSessions(t *testing.T, db *store.DB, b store.Batch) {
 	t.Helper()
 	for _, s := range b.Sessions {
+		if path, ok := pendingWorkspaces[s.SessionID]; ok {
+			if err := db.ApplyLifecycle(context.Background(), s.Vendor, s.SessionID, s.StartedAt, false, path); err != nil {
+				t.Fatal(err)
+			}
+			delete(pendingWorkspaces, s.SessionID)
+		}
 		at, ok := s.EndedAt.Get()
 		if !ok {
 			continue
 		}
-		if err := db.ApplyLifecycle(context.Background(), s.Vendor, s.SessionID, at, true); err != nil {
+		if err := db.ApplyLifecycle(context.Background(), s.Vendor, s.SessionID, at, true, ""); err != nil {
 			t.Fatalf("ApplyLifecycle(%s): %v", s.SessionID, err)
 		}
 	}
@@ -102,6 +108,9 @@ func closeEndedSessions(t *testing.T, db *store.DB, b store.Batch) {
 // 조립기는 제목을 만들지 않으므로 스냅샷으로는 제목을 넣을 수 없다 (PROJ-124).
 // 실제 경로와 같게 쓰기 뒤에 UPDATE 로 넣는다.
 var pendingTitles = map[string]string{}
+
+// 경로 픽스처는 스냅샷 대신 시작 훅으로 저장한다 (ADR 0028).
+var pendingWorkspaces = map[string]string{}
 
 // title 은 세션에 벤더 제목을 예약하는 mod 다.
 func title(v string) func(*session.Session) {
@@ -146,9 +155,9 @@ func newSession(key string, started time.Time, mods ...func(*session.Session)) s
 		LastEventAt:   sec + 600,
 		EndedAt:       event.Some(sec + 600),
 		Status:        session.StatusCompleted,
-		WorkspacePath: workspaceA,
 		ActiveSeconds: 120,
 	}
+	pendingWorkspaces[key] = workspaceA
 	for _, m := range mods {
 		m(&s)
 	}
@@ -167,7 +176,7 @@ func codex(s *session.Session) { s.Vendor = vendorCodex }
 // workspace 는 세션의 작업 폴더 원경로를 바꾼다 (ADR 0010). 작업 폴더 열기 테스트가
 // 실재하는 임시 디렉터리를 가리키게 하는 손잡이다.
 func workspace(path string) func(*session.Session) {
-	return func(s *session.Session) { s.WorkspacePath = path }
+	return func(s *session.Session) { pendingWorkspaces[s.SessionID] = path }
 }
 
 // ── 이벤트 ──────────────────────────────────────────────────────────────────

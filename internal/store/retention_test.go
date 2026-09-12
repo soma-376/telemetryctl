@@ -516,7 +516,7 @@ func TestLastActivityColumnMatchesSubquery(t *testing.T) {
 		evrec("claude_code.api_request", baseTime.Add(30*time.Minute), 1, sess("sess-closed")),
 	}})
 	// 훅으로만 열린 세션.
-	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-hook", at, false); err != nil {
+	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-hook", at, false, ""); err != nil {
 		t.Fatalf("ApplyLifecycle: %v", err)
 	}
 

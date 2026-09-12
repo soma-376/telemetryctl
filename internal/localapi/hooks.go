@@ -32,15 +32,17 @@ const (
 // 그날로 세션 마감이 멈춘다.
 type HookPayload struct {
 	SessionID string `json:"session_id"`
+	CWD       string `json:"cwd"`
 	// Source 는 SessionStart 에만 있다. startup·resume·clear·compact.
 	Source string `json:"source"`
 }
 
 // LifecycleEvent 는 훅 하나가 말하는 세션 상태 변화다.
 type LifecycleEvent struct {
-	Vendor    string
-	SessionID string
-	Source    string
+	Vendor        string
+	SessionID     string
+	Source        string
+	WorkspacePath string
 	// End 는 본문의 hook_event_name 이 아니라 경로가 정한다.
 	End bool
 }
@@ -117,6 +119,7 @@ func DecodeHook(r io.Reader, vendorID string, end bool) (LifecycleEvent, error) 
 	}
 	event := LifecycleEvent{
 		Vendor: vendorID, SessionID: p.SessionID, Source: p.Source, End: end,
+		WorkspacePath: p.CWD,
 	}
 	return event, event.Validate()
 }

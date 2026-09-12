@@ -123,10 +123,10 @@ func TestSearchCoversWorkspacePath(t *testing.T) {
 	f := newFixture(t)
 	f.write(store.Batch{Sessions: []session.Session{
 		newSession("s-ws-a", testNow.Add(-2*time.Hour), title("제목에는 없는 낱말"), func(s *session.Session) {
-			s.WorkspacePath = workspaceB
+			workspace(workspaceB)(s)
 		}),
 		newSession("s-ws-b", testNow.Add(-time.Hour), title("제목에는 없는 낱말"), func(s *session.Session) {
-			s.WorkspacePath = workspaceA
+			workspace(workspaceA)(s)
 		}),
 	}})
 

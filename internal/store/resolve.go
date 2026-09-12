@@ -129,6 +129,7 @@ func (w *writer) writeVendors(b Batch) error {
 // **title 은 여기서 쓰지 않는다.** 조립기는 제목을 만들지 않고, sessions.title 은 벤더가
 // 준 제목을 저장하는 UPDATE 두 개(SetClaudeTitle·SetCodexTitle)만 건드린다. 유도한 제목이
 // 없으니 승격 사다리도, 잠금도 필요 없다 (PROJ-124).
+// workspace_path도 쓰지 않는다. 세션 원경로는 시작·재개 훅만 저장한다 (ADR 0028).
 //
 // 식별 정보는 새 관측을 우선한다 — 처음엔 비어 있다가 나중에 리소스 속성이 도착하는 것이
 // 정상 경로다.
@@ -145,11 +146,10 @@ func (w *writer) writeVendors(b Batch) error {
 // 마감 이전 시각의 낙오 배치는 마감을 흔들지 못한다 (ADR 0021). 두 씨앗이 같은 규칙을
 // 타므로 경로별 예외가 없다.
 const sessionUpsertHead = `INSERT INTO sessions (
-  vendor_id, session_key, workspace_path, user_email, user_account_id,
+  vendor_id, session_key, user_email, user_account_id,
   terminal_type, started_at, last_activity_at, active_time_sec
-) VALUES (?,?,?,?,?,?,?,?,?)
+) VALUES (?,?,?,?,?,?,?,?)
 ON CONFLICT(vendor_id, session_key) DO UPDATE SET
-  workspace_path   = COALESCE(excluded.workspace_path,  sessions.workspace_path),
   user_email       = COALESCE(excluded.user_email,      sessions.user_email),
   user_account_id  = COALESCE(excluded.user_account_id, sessions.user_account_id),
   terminal_type    = COALESCE(excluded.terminal_type,   sessions.terminal_type),
@@ -188,7 +188,6 @@ RETURNING id`
 type sessionSeed struct {
 	vendor, key string
 
-	workspacePath string
 	userEmail     string
 	userAccountID string
 	terminalType  string
@@ -212,7 +211,7 @@ func (s sessionSeed) sql() string {
 
 func (s sessionSeed) args() []any {
 	return []any{
-		s.vendor, s.key, nullStr(s.workspacePath),
+		s.vendor, s.key,
 		nullStr(s.userEmail), nullStr(s.userAccountID), nullStr(s.terminalType),
 		s.startedAt, s.lastActivityAt, s.activeTime,
 	}
@@ -252,7 +251,6 @@ func (w *writer) writeSessions(b Batch) error {
 		}
 		seed := sessionSeed{
 			vendor: s.Vendor, key: s.SessionID,
-			workspacePath:  s.WorkspacePath,
 			userEmail:      s.UserEmail,
 			userAccountID:  s.UserAccountID,
 			terminalType:   s.TerminalType,
@@ -277,7 +275,6 @@ func (w *writer) writeSessions(b Batch) error {
 		}
 		seed := sessionSeed{
 			vendor: e.Vendor, key: e.SessionID,
-			workspacePath: e.Attr.WorkspacePath,
 			userEmail:     e.Attr.UserEmail,
 			userAccountID: e.Attr.UserAccountID,
 			terminalType:  e.Attr.TerminalType,
