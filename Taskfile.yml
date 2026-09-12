@@ -12,6 +12,7 @@
 version: 3
 
 vars:
+  CLI_VERSION: '{{.CLI_VERSION | default ""}}'
   BUILD_DIR: "artifacts/build/{{OS}}-{{ARCH}}"
   # 순수 Go 로 검사할 수 있는 범위. GUI(cmd/pulsemetry-gui)는 뺀다 — OS 의 창 시스템을
   # 링크하므로 리눅스는 GTK4·WebKitGTK 개발 패키지가, macOS 는 Objective-C 를 위한 C
@@ -62,9 +63,8 @@ tasks:
   # 디렉터리에 공존할 수 없다. 둘 다 각자의 올바른 이름을 지키려면 경로를 나눠야 한다.
   prepare:build:
     internal: true
-    # build:cli 와 build:gui 가 각각 deps 로 선언하므로 task build 에서 두 번 불린다.
-    # mkdir 은 몇 번 돌아도 결과가 같지만, run: once 면 프로세스를 한 번만 띄운다.
-    run: once
+    # GUI 빌드 도구에 넘길 출력 디렉터리를 준비한다.
+    # CLI 는 go build 가 대상별 출력 디렉터리를 직접 만든다.
     cmds:
       - cmd: powershell -NoProfile -Command New-Item -ItemType Directory -Force -Path {{.BUILD_DIR}}/bin
         platforms: [windows]
@@ -75,9 +75,23 @@ tasks:
     # 이름이 cli 인 것은 이 바이너리가 CLI 이기 때문이다. daemon 은 그 서브커맨드 하나다
     # (enroll·status·stats·sessions·local·autostart 와 나란히 있다). 산출물을
     # pulsemetry-daemon 으로 부르면 사용자가 `pulsemetry-daemon enroll` 을 쳐야 한다.
-    desc: CLI와 데몬을 함께 제공하는 pulsemetry 바이너리를 빌드한다.
-    deps:
-      - prepare:build
+    desc: CLI를 한 대상용으로 빌드한다. TARGET_OS·TARGET_ARCH를 생략하면 현재 컴퓨터 기준이다.
+    vars:
+      TARGET_OS: '{{.TARGET_OS | default OS}}'
+      TARGET_ARCH: '{{.TARGET_ARCH | default ARCH}}'
+      CLI_BUILD_DIR: 'artifacts/build/{{.TARGET_OS}}-{{.TARGET_ARCH}}'
+      CLI_EXT: '{{if eq .TARGET_OS "windows"}}.exe{{end}}'
+    env:
+      GOOS: '{{.TARGET_OS}}'
+      GOARCH: '{{.TARGET_ARCH}}'
+      CGO_ENABLED: "0"
+    preconditions:
+      - sh: '{{if or (eq .CLI_VERSION "") (regexMatch "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$" .CLI_VERSION)}}true{{else}}false{{end}}'
+        msg: 'CLI_VERSION은 v 접두사 없는 버전이어야 합니다. 예: 0.1.0 또는 0.1.0-rc.1'
+      - sh: 'test "{{.TARGET_OS}}" = windows || test "{{.TARGET_OS}}" = darwin || test "{{.TARGET_OS}}" = linux'
+        msg: 'TARGET_OS는 windows, darwin, linux 중 하나여야 합니다.'
+      - sh: 'test "{{.TARGET_ARCH}}" = amd64 || test "{{.TARGET_ARCH}}" = arm64'
+        msg: 'TARGET_ARCH는 amd64, arm64 중 하나여야 합니다.'
     # 플래그는 GUI 와 같은 기준을 쓴다 (build/{os}/Taskfile.yml 의 BUILD_FLAGS).
     # 이쪽도 사용자 머신에 설치되는 배포물인데 GUI 만 받던 대우였다.
     #
@@ -87,7 +101,24 @@ tasks:
     #
     # 적용 전 27.5MB·로컬 경로 354곳 → 적용 후 19.1MB·0곳.
     cmds:
-      - go build -trimpath -ldflags="-w -s" -o {{.BUILD_DIR}}/bin/pulsemetry{{exeExt}} ./cmd/telemetryctl
+      - go build -trimpath -ldflags="-w -s{{if .CLI_VERSION}} -X github.com/your-org/pulsemetry/internal/installer.Version={{.CLI_VERSION}}{{end}}" -o {{.CLI_BUILD_DIR}}/bin/pulsemetry{{.CLI_EXT}} ./cmd/telemetryctl
+
+  build:cli:all:
+    desc: Windows·macOS·Linux의 amd64·arm64 CLI 6종을 모두 빌드한다.
+    # 빌드 명령은 build:cli 한 곳에 두고 대상만 바꾼다.
+    cmds:
+      - task: build:cli
+        vars: {TARGET_OS: windows, TARGET_ARCH: amd64}
+      - task: build:cli
+        vars: {TARGET_OS: windows, TARGET_ARCH: arm64}
+      - task: build:cli
+        vars: {TARGET_OS: darwin, TARGET_ARCH: amd64}
+      - task: build:cli
+        vars: {TARGET_OS: darwin, TARGET_ARCH: arm64}
+      - task: build:cli
+        vars: {TARGET_OS: linux, TARGET_ARCH: amd64}
+      - task: build:cli
+        vars: {TARGET_OS: linux, TARGET_ARCH: arm64}
 
   build:gui:
     desc: Wails GUI와 임베드할 프런트엔드를 빌드한다.

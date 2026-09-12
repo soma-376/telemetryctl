@@ -170,8 +170,34 @@ task dev:daemon     # 데몬을 포그라운드로 실행 (옵션은 -- 뒤에)
 task cli -- status  # CLI 실행
 
 task build          # CLI + GUI → artifacts/build/{os}-{arch}
+task build:cli      # 현재 컴퓨터용 CLI만 빌드
+task build:cli TARGET_OS=linux TARGET_ARCH=arm64  # 지정한 대상용 CLI
+task build:cli:all  # Windows·macOS·Linux × amd64·arm64 CLI 6종
 task test           # 전체 검사 (빌드·vet·race 테스트·gofmt·go mod tidy·svelte-check)
 ```
+
+CLI의 `TARGET_OS`는 `windows`, `darwin`(macOS), `linux`, `TARGET_ARCH`는 `amd64`, `arm64`를
+지원합니다. 생략한 값은 현재 컴퓨터 기준입니다. CLI 빌드는 `CGO_ENABLED=0`으로 실행하며,
+결과는 `artifacts/build/{대상 OS}-{대상 CPU}/bin/pulsemetry`에 저장합니다. Windows 대상에만
+`.exe`가 붙습니다. 다른 대상용 파일도 현재 컴퓨터에서 빌드할 수 있지만, 실행 검증에는 해당
+OS·CPU 환경이 필요합니다. `task build`는 현재 컴퓨터용 GUI와 CLI를 함께 만듭니다.
+
+### CLI 릴리스
+
+`main`에 반영된 커밋에 `v0.1.0` 같은 태그를 발행하면
+`.github/workflows/release.yml`이 CLI 검사 → 6종 빌드 → GitHub Releases 업로드를 수행합니다.
+`v0.1.0-rc.1` 같은 태그는 prerelease로 게시합니다. 태그의 `v`를 제외한 버전을
+`CLI_VERSION`으로 주입하며, `pulsemetry version`과 설치 요청에 같은 버전이 사용됩니다.
+로컬에서도 `task build:cli CLI_VERSION=0.1.0`으로 버전 주입을 확인할 수 있습니다.
+
+CI는 `artifacts/release/`에 `pulsemetry_{os}_{arch}` 형식의 파일 6개(Windows만 `.exe`)와
+`SHA256SUMS`를 준비합니다. 모든 첨부 파일 업로드가 성공해야 draft Release를 공개합니다.
+같은 버전은 자동으로 덮어쓰지 않습니다. 실패 후 draft가 남으면 첨부 파일과 실패 원인을 확인하고,
+미공개 draft만 삭제한 뒤 해당 태그의 workflow를 재실행합니다. 공개된 버전의 수정은 새 태그로 발행합니다.
+
+사용자는 backend의 기존 `/bin/{filename}`에서 다운로드합니다. backend CI가 고정된 릴리스
+버전을 내려받아 체크섬을 검증하고 이미지에 포함하는 연결은 backend 저장소의 후속 작업입니다.
+파일명 계약은 [문서 허브의 enrollment API](../docs/contracts/enrollment-api.md)를 따릅니다.
 
 `go build ./...` 를 직접 쓰지 않습니다. GUI 가 Vite 산출물을 embed 하고 OS 의 창 시스템을 링크해서
 순수 Go 기준의 검사가 성립하는 범위가 아닙니다. 자세한 것은 `AGENTS.md` 「명령어」를 보세요.
