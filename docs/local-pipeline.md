@@ -119,7 +119,9 @@ internal/
   otlpdecode/   protobuf·protojson 디코드, content 제거 재인코딩(Scrub)          (proto 의존 격리)
   receiver/     loopback OTLP/HTTP 수신기 + Sink 인터페이스
   forward/      상위 Collector 전달 (유계 큐 · 제한된 재시도 · 토큰 갱신)
-  session/      이벤트 → 세션 조립, 턴 경계, 제목 휴리스틱, 파일·툴 추출          (순수 함수, 시계 미접근)
+  session/      이벤트 → 세션 조립, 턴 경계, 파일·툴 추출                       (순수 함수, 시계 미접근)
+  claudecode/   Claude Code 트랜스크립트에서 벤더 제목 조회
+  codexapp/     Codex App Server에서 사용 한도·스레드 제목 조회
   store/        SQLite 스키마·마이그레이션·쓰기·보존 정책·read-only 열기
   dashboard/    화면별 조회 API                                                   (Wails 의존 없음)
   runtimeinfo/  runtime.json (비밀 없음: 주소·pid·데이터 경로)
@@ -159,7 +161,7 @@ gui/            Wails v3 앱 (별도 go.mod, 아직 없음 — PROJ-35)
 
 | 어휘 | 소유자 | 이유 |
 |---|---|---|
-| `event.Content` · `event.ContentKind` | `event` | `otlpdecode` 가 뽑고 `session` 이 제목을 만들고 `store` 가 `turns.prompt_text` 에 쓴다. 세 지점이 같은 타입이어야 어긋남을 컴파일러가 잡는다 |
+| `event.Content` · `event.ContentKind` | `event` | `otlpdecode` 가 뽑고 `session` 이 프롬프트의 턴 귀속을 정하고 `store` 가 `turns.prompt_text` 에 쓴다. 세 지점이 같은 타입이어야 어긋남을 컴파일러가 잡는다 |
 | `event.Path` · `event.NormalizePath` | `event` | `project_hash`+`project_name`, `file_path_hash`+`file_name`, `target_hash`+`target_name` 세 쌍의 **유일한 생산자**. 전체 경로가 이 타입을 통과할 자리가 없다 |
 | `event.CumulativeState` | `event` | `session` 이 누적 계열의 리셋과 콜드 스타트를 판정한다. 규칙이 여러 벌이면 같은 스트림에서 서로 다른 비용이 나온다 |
 
@@ -187,6 +189,19 @@ gui/            Wails v3 앱 (별도 go.mod, 아직 없음 — PROJ-35)
 "얼마나 일찍 거르느냐" 의 문제이고, 창을 지나친 중복의 실질 피해는 세션 합계와 호출 순번이다.
 
 ---
+
+### 3.5 세션 제목 조회
+
+제목의 출처와 갱신 정책은 ADR 0017·0018을 따른다. `daemon/session_title.go`가 큐·재시도·
+취소·세션 상태 정리를 관리하며, 워커는 벤더별로 실행한다. `claude_title.go`와 `codex_title.go`는
+각 벤더의 조회·저장을 연결한다. Claude는 저장 성공 후 조회를 끝내고 Codex는 활동 중 이름 변경을 추적한다.
+
+종료 시 최초 조회 뒤 필요한 경우 10초·30초·60초 간격으로 최대 3회 재시도한다. 세션 메모리 TTL이
+지나면 같은 큐로 제거를 요청하며, 큐가 찼으면 다음 정리 틱으로 미룬다. 제거·재개 이전의 예약은
+취소하고 이미 큐에 들어온 재시도도 무효화한다. DB의 세션과 제목은 이 메모리 정리로 삭제하지 않는다.
+
+Claude의 파일 탐색·꼬리 읽기는 `claudecode`가 담당한다. Codex 프로세스 종료는 출력 채널이
+가득 찬 경우에도 읽기 고루틴을 취소하고 종료를 기다린다.
 
 ## 4. 프라이버시 불변식
 
@@ -410,7 +425,7 @@ NULL 일 수 있어서 한쪽만 COALESCE 하면 그런 세션이 첫 페이지�
 | `sessions_started`·`active_seconds` | `sessions` | `started_at` |
 
 **v3 에 출처가 없어 항상 0 인 필드**: `Totals` 의 `api_errors`·`retries`·`commits`·
-`pull_requests`, `SessionRow` 의 같은 셋과 `responses`·`title_source`·`summary`.
+`pull_requests`, `SessionRow` 의 같은 셋과 `responses`.
 지우지 않는 이유는 ADR 0009 가 `abandoned`·`handoff` 를 남긴 것과 같다 — 지우면 GUI TypeScript
 바인딩과 `stats --json`·`sessions --json` 출력이 깨진다.
 
@@ -1331,7 +1346,7 @@ ls ~/.config/systemd/user 2>/dev/null | grep -i pulsemetry || echo "OK: 등록�
 | 한계 | 내용·완화 |
 |---|---|
 | **파일별 라인 배분이 근사** | `claude_code.lines_of_code.count` 메트릭에는 파일명이 없다. `tool_result` 의 `tool_input` 에서 파일을 얻고 같은 시각의 증분을 귀속시키므로, 한 응답에서 여러 파일을 고치면 배분이 근사가 된다. **세션 합계(`sessions.lines_added`)는 메트릭에서 직접 받아 정확하고 파일별 배분만 근사다.** v3 의 `file_changes.additions`·`deletions` 는 이 근사를 저장하지 않고 `NULL` 로 둔다 — 스키마 문서가 "미관측은 `NULL`" 이라고 못 박았고, 근사값을 관측값처럼 담는 것보다 없는 편이 낫다. 조립기 안의 배분(`lineLedger`)은 세션 합계 검증용으로 남아 있고 `Σ배분 ≤ total` 불변식을 지킨다 |
-| **제목 품질** | `prompt_head`(첫 프롬프트 첫 문장 60자) → `files` → `fallback` 3단계 휴리스틱이다. 화면 예시(`인증 토큰 검증 및 Collector 전달 프록시 구현`) 수준은 나오지 않는다. `title_source` 컬럼이 출처를 남기므로 후속 교체가 스키마 변경 없이 가능하고, `SessionRow.TitleSource` 로 화면이 출처를 표시할 수 있다 |
+| **제목 품질** | `sessions.title`은 **벤더가 만든 제목만** 담는다(ADR 0018). Codex는 App Server의 `thread.name`(ADR 0017), Claude Code는 트랜스크립트의 `ai-title`이다. 조립기는 제목을 만들지 않으므로 그 경로가 없는 벤더는 NULL 이고, 화면이 `title → project_name → 벤더명` 순으로 폴백한다 |
 | **`abandoned` 오판 가능** | "마지막 툴 이벤트가 실패이고 이후 성공 없음" 이라는 휴리스틱이다. **화면 필터로만 쓰고 지표로 쓰지 않는다.** 판정 근거는 세션 마감 로그(`s.Diag.StatusReason`)에 남는다 |
 | **데몬 미실행 중 유실** | 위 첫 문단. PROJ-55 의 자동 실행 등록이 대부분을 막지만, 등록할 수 없는 환경과 영구 실패는 남는다 |
 | **Windows 는 자동 실행 등록이 없다** | `autostart` 명령이 `ErrUnsupportedPlatform` 으로 알리고 `telemetryctl daemon` 직접 실행을 안내한다. 작업 스케줄러 등록은 PROJ-56 이다. **경고가 아니라 정보로 출력한다** — 실패한 것이 없기 때문이다 |

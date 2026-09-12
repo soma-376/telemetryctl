@@ -30,16 +30,6 @@ const (
 	StatusHandoff Status = "handoff"
 )
 
-// TitleSource 는 sessions.title_source 값이다. 출처를 남겨야 후속 티켓이 제목 생성기를
-// 교체할 때 어느 행을 다시 만들지 고를 수 있다 (후속: llm).
-type TitleSource string
-
-const (
-	TitleFromPrompt   TitleSource = "prompt_head"
-	TitleFromFiles    TitleSource = "files"
-	TitleFromFallback TitleSource = "fallback"
-)
-
 // Action 은 tool_events.action 값이다. 툴 이름에서 파생한다.
 type Action string
 
@@ -53,9 +43,9 @@ const (
 
 // Input 은 조립기 입력 한 건이다. Event 만으로는 세션을 만들 수 없어서 두 가지를 더 받는다.
 //
-//   - Content: events 스키마에는 길이만 있고 본문은 event_content 로 따로 간다. 제목·요약
+//   - Content: events 스키마에는 길이만 있고 본문은 event_content 로 따로 간다. 제목
 //     휴리스틱은 본문이 있어야 하므로 디코더가 여기에 실어 준다. 조립기는 첫 프롬프트에서
-//     제목·요약 문자열만 뽑고 본문은 즉시 버린다 — 원문을 들고 있는 것은 store 의 몫이다.
+//     제목 문자열만 뽑고 본문은 즉시 버린다 — 원문을 들고 있는 것은 store 의 몫이다.
 //     원문이 없는 이벤트는 제로값(Kind == "")이다.
 //   - Target: tool_input 에서 얻은 대상 파일의 **정규화 결과**다. events 로는 전달되지 않고
 //     디코더가 따로 실어 준다 (otlpdecode.Target).
@@ -92,9 +82,6 @@ type Session struct {
 	EndedAt     event.Opt[event.UnixSec] // 미설정 = 진행 중 (ended_at IS NULL)
 	Status      Status
 
-	Title       string
-	TitleSource TitleSource
-	Summary     string
 	ProjectHash string
 	ProjectName string
 

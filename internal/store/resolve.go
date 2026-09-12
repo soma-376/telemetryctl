@@ -119,18 +119,19 @@ func (w *writer) writeVendors(b Batch) error {
 // RETURNING 이 **아무 행도 주지 않는다**. 그러면 이미 있는 세션의 id 를 못 받고, 그 자리에서
 // LastInsertId() 로 대신하면 직전에 삽입한 **다른** 행의 id 가 나온다 — 조용히 틀린 부모다.
 //
-// title 은 COALESCE(sessions.title, ...) 다. 스키마 문서가 "ETL 은 NULL 일 때만 기록" 이라고
-// 못 박았다 — 조립기의 제목은 휴리스틱이고 매 스냅샷마다 바뀔 수 있어, 덮어쓰면 화면의 제목이
-// 이유 없이 흔들린다. 나머지 식별 정보는 반대로 새 관측을 우선한다(처음엔 비어 있다가 나중에
-// 리소스 속성이 도착하는 것이 정상 경로다).
+// **title 은 여기서 쓰지 않는다.** 조립기는 제목을 만들지 않고, sessions.title 은 벤더가
+// 준 제목을 저장하는 UPDATE 두 개(SetClaudeTitle·SetCodexTitle)만 건드린다. 유도한 제목이
+// 없으니 승격 사다리도, 잠금도 필요 없다 (PROJ-124).
+//
+// 식별 정보는 새 관측을 우선한다 — 처음엔 비어 있다가 나중에 리소스 속성이 도착하는 것이
+// 정상 경로다.
 //
 // started_at 은 가장 이른 관측이다. 세션이 언제 시작했는지는 늦게 도착한 배치가 바꿀 수 없다.
 const sessionUpsertHead = `INSERT INTO sessions (
-  vendor_id, session_key, title, workspace_path, user_email, user_account_id,
+  vendor_id, session_key, workspace_path, user_email, user_account_id,
   terminal_type, started_at, ended_at, active_time_sec
-) VALUES (?,?,?,?,?,?,?,?,?,?)
+) VALUES (?,?,?,?,?,?,?,?,?)
 ON CONFLICT(vendor_id, session_key) DO UPDATE SET
-  title           = COALESCE(sessions.title, excluded.title),
   workspace_path  = COALESCE(excluded.workspace_path,  sessions.workspace_path),
   user_email      = COALESCE(excluded.user_email,      sessions.user_email),
   user_account_id = COALESCE(excluded.user_account_id, sessions.user_account_id),
@@ -167,7 +168,6 @@ RETURNING id`
 type sessionSeed struct {
 	vendor, key string
 
-	title         string
 	workspacePath string
 	userEmail     string
 	userAccountID string
@@ -192,7 +192,7 @@ func (s sessionSeed) sql() string {
 
 func (s sessionSeed) args() []any {
 	return []any{
-		s.vendor, s.key, nullStr(s.title), nullStr(s.workspacePath),
+		s.vendor, s.key, nullStr(s.workspacePath),
 		nullStr(s.userEmail), nullStr(s.userAccountID), nullStr(s.terminalType),
 		s.startedAt, s.endedAt, s.activeTime,
 	}
@@ -200,9 +200,8 @@ func (s sessionSeed) args() []any {
 
 // writeSessions 는 조립기 스냅샷을 먼저 쓰고, 스냅샷에 없는 세션 키를 이벤트에서 채운다.
 //
-// 스냅샷이 먼저인 이유는 title 때문이다. 이벤트 씨앗이 먼저 들어가면 title 이 NULL 인 행이
-// 만들어지고, 그 뒤 스냅샷의 COALESCE 가 제목을 채운다 — 결과는 같지만 한 배치 안에서
-// UPDATE 가 한 번 더 돈다.
+// 스냅샷이 먼저인 이유는 그것이 세션 생명주기의 정본이기 때문이다. 이벤트 씨앗이 먼저
+// 들어가면 같은 배치 안에서 UPDATE 가 한 번 더 돈다.
 func (w *writer) writeSessions(b Batch) error {
 	for _, s := range b.Sessions {
 		if s.SessionID == "" {
@@ -219,7 +218,6 @@ func (w *writer) writeSessions(b Batch) error {
 		}
 		seed := sessionSeed{
 			vendor: s.Vendor, key: s.SessionID,
-			title:         s.Title,
 			workspacePath: s.WorkspacePath,
 			userEmail:     s.UserEmail,
 			userAccountID: s.UserAccountID,

@@ -69,8 +69,6 @@ type SessionQuery struct {
 // v3 sessions 에는 v1 이 갖고 있던 15개 남짓의 비정규화 지표 컬럼이 없다. 수치는 전부
 // 승격 테이블에서 상관 서브쿼리로 다시 센다. 그래도 되살릴 수 없는 것이 남는다.
 //
-//	TitleSource  — v3 에 title_source 컬럼이 없다. 항상 빈 문자열
-//	Summary      — v3 에 summary 컬럼이 없다. 항상 빈 문자열
 //	APIErrors    — 오류 응답을 세는 입력이 v3 events 에 없다. 항상 0
 //	Retries      — 같은 이유로 항상 0
 //	Responses    — 응답 수를 담는 자리가 없다. 항상 0
@@ -91,10 +89,9 @@ type SessionRow struct {
 	EndedAt *int64 `json:"ended_at"`
 	Status  string `json:"status"`
 
+	// Title 은 벤더가 준 세션 제목이다. 없으면 빈 문자열이고, 무엇을 대신 그릴지는
+	// 표시 계층이 정한다 (PROJ-124).
 	Title string `json:"title"`
-	// TitleSource·Summary 는 v3 에 출처가 없어 항상 빈 문자열이다 (위 주석).
-	TitleSource string `json:"title_source"`
-	Summary     string `json:"summary"`
 	// WorkspacePath 는 작업 폴더 원경로, ProjectName 은 그 basename 이다 (ADR 0010).
 	WorkspacePath string `json:"workspace_path"`
 	ProjectName   string `json:"project_name"`

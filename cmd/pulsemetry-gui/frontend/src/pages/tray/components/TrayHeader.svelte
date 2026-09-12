@@ -68,7 +68,6 @@
     }
   }
 
-
   // 상태 줄. 아직 첫 조회가 끝나지 않았으면(undefined) 초록 점을 켜지 않는다 —
   // 확인하지 않은 것을 "모니터링 중" 이라고 말하면 안 된다.
   const status = $derived.by(() => {
@@ -104,6 +103,7 @@
   <span class="flex-none whitespace-nowrap" style="font-size:12px;color:#b3aba0"
     >{busy ? "조회 중" : synced}</span
   >
+
   <button
     type="button"
     disabled={busy}

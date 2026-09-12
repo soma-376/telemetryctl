@@ -56,18 +56,15 @@ func seedActivity(f *fixture) {
 	at := testNow.Add(-3 * time.Hour)
 	f.write(store.Batch{
 		Sessions: []session.Session{
-			newSession("a-1", at, func(s *session.Session) {
-				s.Title = "인증 프록시 구현"
+			newSession("a-1", at, title("인증 프록시 구현"), func(s *session.Session) {
 				s.WorkspacePath = workspaceA
 			}),
-			newSession("a-2", testNow.Add(-2*time.Hour), func(s *session.Session) {
+			newSession("a-2", testNow.Add(-2*time.Hour), title("리팩터링"), func(s *session.Session) {
 				codex(s)
-				s.Title = "리팩터링"
 				s.WorkspacePath = workspaceB
 			}),
-			newSession("a-3", testNow.Add(-time.Hour), func(s *session.Session) {
+			newSession("a-3", testNow.Add(-time.Hour), title("디버깅"), func(s *session.Session) {
 				running(s)
-				s.Title = "디버깅"
 				s.WorkspacePath = workspaceB
 			}),
 		},
@@ -360,20 +357,16 @@ func TestActivitySearchCoversFourSources(t *testing.T) {
 	at := testNow.Add(-time.Hour)
 	f.write(store.Batch{
 		Sessions: []session.Session{
-			newSession("s-title", testNow.Add(-4*time.Hour), func(s *session.Session) {
-				s.Title = "Collector 전달 구현"
+			newSession("s-title", testNow.Add(-4*time.Hour), title("Collector 전달 구현"), func(s *session.Session) {
 				s.WorkspacePath = workspaceA
 			}),
-			newSession("s-ws", testNow.Add(-3*time.Hour), func(s *session.Session) {
-				s.Title = "무관한 제목 갑"
+			newSession("s-ws", testNow.Add(-3*time.Hour), title("무관한 제목 갑"), func(s *session.Session) {
 				s.WorkspacePath = workspaceB
 			}),
-			newSession("s-file", testNow.Add(-2*time.Hour), func(s *session.Session) {
-				s.Title = "무관한 제목 을"
+			newSession("s-file", testNow.Add(-2*time.Hour), title("무관한 제목 을"), func(s *session.Session) {
 				s.WorkspacePath = workspaceA
 			}),
-			newSession("s-content", at, func(s *session.Session) {
-				s.Title = "무관한 제목 병"
+			newSession("s-content", at, title("무관한 제목 병"), func(s *session.Session) {
 				s.WorkspacePath = workspaceA
 			}),
 		},
@@ -437,12 +430,12 @@ func TestActivitySearchCoversFourSources(t *testing.T) {
 func TestActivitySearchEscapesLikeWildcards(t *testing.T) {
 	f := newFixture(t)
 	f.write(store.Batch{Sessions: []session.Session{
-		newSession("w-pct", testNow.Add(-6*time.Hour), func(s *session.Session) { s.Title = "완료율 100% 달성" }),
-		newSession("w-plain", testNow.Add(-5*time.Hour), func(s *session.Session) { s.Title = "완료율 100X 달성" }),
-		newSession("w-us", testNow.Add(-4*time.Hour), func(s *session.Session) { s.Title = "a_b 처리" }),
-		newSession("w-x", testNow.Add(-3*time.Hour), func(s *session.Session) { s.Title = "axb 처리" }),
-		newSession("w-bs", testNow.Add(-2*time.Hour), func(s *session.Session) { s.Title = `경로 c:\tmp\build` }),
-		newSession("w-nobs", testNow.Add(-time.Hour), func(s *session.Session) { s.Title = "경로 c:tmp build" }),
+		newSession("w-pct", testNow.Add(-6*time.Hour), title("완료율 100% 달성")),
+		newSession("w-plain", testNow.Add(-5*time.Hour), title("완료율 100X 달성")),
+		newSession("w-us", testNow.Add(-4*time.Hour), title("a_b 처리")),
+		newSession("w-x", testNow.Add(-3*time.Hour), title("axb 처리")),
+		newSession("w-bs", testNow.Add(-2*time.Hour), title(`경로 c:\tmp\build`)),
+		newSession("w-nobs", testNow.Add(-time.Hour), title("경로 c:tmp build")),
 	}})
 
 	tests := []struct {
@@ -479,8 +472,8 @@ func TestActivitySearchEscapesWildcardsInFilePath(t *testing.T) {
 	at := testNow.Add(-time.Hour)
 	f.write(store.Batch{
 		Sessions: []session.Session{
-			newSession("fp-us", at, func(s *session.Session) { s.Title = "파일 세션 갑" }),
-			newSession("fp-x", at.Add(time.Second), func(s *session.Session) { s.Title = "파일 세션 을" }),
+			newSession("fp-us", at, title("파일 세션 갑")),
+			newSession("fp-x", at.Add(time.Second), title("파일 세션 을")),
 		},
 		Events: []store.EventRecord{
 			toolRecord("fp-us", "t-us", "call-us", at, 1, toolSpec{
@@ -514,8 +507,7 @@ func TestActivitySearchWithoutContentStorage(t *testing.T) {
 	at := testNow.Add(-time.Hour)
 	f.write(store.Batch{
 		Sessions: []session.Session{
-			newSession("nc-1", at, func(s *session.Session) {
-				s.Title = "인증 프록시 구현"
+			newSession("nc-1", at, title("인증 프록시 구현"), func(s *session.Session) {
 				s.WorkspacePath = workspaceA
 			}),
 		},

@@ -8,6 +8,11 @@ type RateLimitsReader interface {
 	RateLimits(context.Context) (RateLimitSnapshot, error)
 }
 
+// ThreadReader 는 Codex 스레드의 표시 제목을 읽는 최소 계약이다.
+type ThreadReader interface {
+	ThreadName(context.Context, string) (string, error)
+}
+
 // RateLimitWindow 는 App Server가 정규화한 한도 창이다.
 type RateLimitWindow struct {
 	UsedPercent        int    `json:"usedPercent"`
@@ -32,4 +37,17 @@ type RateLimitSnapshot struct {
 
 type getRateLimitsResponse struct {
 	RateLimits RateLimitSnapshot `json:"rateLimits"`
+}
+
+type threadReadParams struct {
+	ThreadID     string `json:"threadId"`
+	IncludeTurns bool   `json:"includeTurns"`
+}
+
+type threadReadResponse struct {
+	Thread thread `json:"thread"`
+}
+
+type thread struct {
+	Name *string `json:"name"`
 }
