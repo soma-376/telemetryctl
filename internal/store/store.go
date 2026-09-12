@@ -1,6 +1,6 @@
 // Package store 는 로컬 파이프라인의 SQLite 저장소다 (ADR 0002).
 //
-// 스키마·마이그레이션·쓰기·보존 정책·read-only 연결까지가 이 패키지의 몫이다.
+// 스키마·스키마 초기화·쓰기·보존 정책·read-only 연결까지가 이 패키지의 몫이다.
 // 화면별 조회 API 는 10단계 internal/dashboard 소관이라 여기 없다.
 //
 // 드라이버는 순수 Go 구현인 modernc.org/sqlite 다. 드라이버 이름이 "sqlite" 이고
@@ -95,7 +95,7 @@ type DB struct {
 	cfg  config
 }
 
-// Open 은 DB 를 열고 마이그레이션을 적용한다. 파일과 상위 디렉터리가 없으면 만든다.
+// Open 은 DB 를 열고 스키마 초기화을 적용한다. 파일과 상위 디렉터리가 없으면 만든다.
 func Open(ctx context.Context, path string, opts ...Option) (*DB, error) {
 	cfg := config{
 		busyTimeout:  DefaultBusyTimeout,
@@ -157,7 +157,7 @@ func (d *DB) Meta(ctx context.Context, key string) (string, bool, error) {
 // SetMeta 는 meta 값을 쓴다.
 func (d *DB) SetMeta(ctx context.Context, key, value string) error {
 	if key == MetaSchemaVersion {
-		// 버전은 마이그레이션 러너만 옮긴다. 밖에서 고치면 적용된 DDL 과 기록된 버전이 갈린다.
+		// 버전은 스키마 초기화기만 옮긴다. 밖에서 고치면 적용된 DDL 과 기록된 버전이 갈린다.
 		return fmt.Errorf("store: %s 는 마이그레이션 러너가 소유한다", MetaSchemaVersion)
 	}
 	if err := setMetaTx(ctx, d.db, key, value); err != nil {

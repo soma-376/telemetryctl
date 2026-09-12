@@ -9,7 +9,7 @@ import (
 	"github.com/your-org/pulsemetry/internal/session"
 )
 
-// v3 에는 sessions.status 컬럼이 없다. 화면의 running/completed 는 ended_at IS NULL 로
+// v1 에는 sessions.status 컬럼이 없다. 화면의 running/completed 는 ended_at IS NULL 로
 // 계산되므로 (ADR 0009) 생명주기 시각이 곧 상태다. 이 파일은 그 시각과 active_time_sec 가
 // 스냅샷을 정확히 따라가는지 고정한다.
 

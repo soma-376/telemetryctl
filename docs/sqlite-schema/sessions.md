@@ -17,7 +17,7 @@
 | `active_time_sec` | `INTEGER` | 선택 | Claude Code 활동 시간 |
 
 `(vendor_id, session_key)`는 UNIQUE다. `turns.session_id`가 `id`를 참조하며 삭제 동작은
-`NO ACTION`이다.
+`ON DELETE CASCADE`다. 세션을 삭제하면 소유한 턴과 그 자식도 함께 삭제된다.
 
 ## 생명주기 컬럼
 
@@ -41,7 +41,8 @@ CREATE TABLE sessions (
   terminal_type   TEXT,
   started_at      INTEGER,
   ended_at        INTEGER,
-  active_time_sec INTEGER,
-  UNIQUE (vendor_id, session_key)
+  active_time_sec INTEGER CHECK (active_time_sec >= 0),
+  UNIQUE (vendor_id, session_key),
+  CHECK (ended_at >= started_at)
 );
 ```

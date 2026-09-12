@@ -101,6 +101,9 @@ Claude Code(`~/.claude/settings.json`)·Codex(`~/.codex/config.toml`)에 OTel �
 직접 받고, 세션 단위로 조립·집계해 로컬 SQLite(`~/.pulsemetry/pulsemetry.db`)에 저장한 뒤 회사
 Collector 로도 전달합니다. **끄려면 `local disable` 입니다.**
 
+> **로컬 스키마는 v1로 고정한다.** 빈 DB는 단일 DDL로 초기화하며, 개발 DB의 DDL 변경은
+> DB 재생성으로 적용한다. [SQLite 스키마 문서](docs/sqlite-schema/README.md)를 따른다.
+
 ```sh
 telemetryctl enroll --invite <코드>   # 설치 + 로컬 배선 + 자동 실행 등록 (endpoint → http://localhost:4318)
 telemetryctl sessions --since 1d

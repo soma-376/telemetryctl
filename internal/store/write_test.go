@@ -8,7 +8,7 @@ import (
 	"github.com/your-org/pulsemetry/internal/session"
 )
 
-// 이벤트 한 건이 들어가고 v3 의 부모 계층이 통째로 생기는지 본다.
+// 이벤트 한 건이 들어가고 v1 의 부모 계층이 통째로 생기는지 본다.
 // vendors → sessions → turns → events 가 한 트랜잭션에서 순서대로 만들어져야 한다.
 func TestWriteCreatesParentChain(t *testing.T) {
 	db := openTestDB(t)
@@ -110,7 +110,7 @@ func TestWriteDeduplicatesWithinBatch(t *testing.T) {
 	}
 }
 
-// 세션 스냅샷은 v3 sessions 의 식별 정보 컬럼을 채운다 (ADR 0010).
+// 세션 스냅샷은 v1 sessions 의 식별 정보 컬럼을 채운다 (ADR 0010).
 func TestWriteSessionSnapshotFillsIdentityColumns(t *testing.T) {
 	db := openTestDB(t)
 	s := newSession("sess-1", baseTime)
@@ -230,7 +230,7 @@ func TestWriteContentStorageDisabled(t *testing.T) {
 	}
 }
 
-// 프롬프트가 아닌 원문은 v3 에 저장될 컬럼이 없다. 조용히 사라지지 않고 계수에 잡혀야 한다.
+// 프롬프트가 아닌 원문은 v1 에 저장될 컬럼이 없다. 조용히 사라지지 않고 계수에 잡혀야 한다.
 func TestWriteDropsNonPromptContent(t *testing.T) {
 	db := openTestDB(t)
 	rec := evrec("claude_code.tool_result", baseTime, 0, inTurn("p1"))
