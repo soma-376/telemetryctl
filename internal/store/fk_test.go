@@ -9,8 +9,7 @@ import (
 	"github.com/your-org/pulsemetry/internal/session"
 )
 
-// v3 의 외래 키는 전부 NO ACTION 이다 (ADR 0009). CASCADE 가 없으므로 부모를 먼저 넣지
-// 않으면 그 자리에서 실패하고, 부모를 먼저 지우면 고아가 남는다. 두 방향을 다 확인한다.
+// 외래 키는 부모 없는 자식 삽입을 거부한다. 소유 관계의 삭제는 CASCADE로 처리한다 (ADR 0009).
 
 // foreign_keys PRAGMA 를 켜지 않으면 위반이 조용히 통과한다. 그런데 SQL 은 전부 성공하므로
 // 스키마만 보고는 알 수 없다 — 위반이 실제로 거부되는지로 확인한다.

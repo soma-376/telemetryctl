@@ -15,7 +15,7 @@ func seedSessions(f *fixture) {
 	f.write(store.Batch{Sessions: []session.Session{
 		newSession("s-old", testNow.Add(-72*time.Hour)),
 		newSession("s-mid", testNow.Add(-24*time.Hour), codex, func(s *session.Session) {
-			s.WorkspacePath = workspaceB
+			workspace(workspaceB)(s)
 		}),
 		newSession("s-new", testNow.Add(-time.Hour), running),
 	}})

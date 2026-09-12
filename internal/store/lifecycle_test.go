@@ -9,7 +9,7 @@ import (
 	"github.com/your-org/pulsemetry/internal/session"
 )
 
-// v3 에는 sessions.status 컬럼이 없다. 화면의 running/completed 는 ended_at IS NULL 로
+// v1 에는 sessions.status 컬럼이 없다. 화면의 running/completed 는 ended_at IS NULL 로
 // 계산되므로 (ADR 0009) 생명주기 시각이 곧 상태다. 이 파일은 그 시각과 active_time_sec 가
 // 스냅샷을 정확히 따라가는지 고정한다.
 
@@ -313,7 +313,7 @@ func TestApplyLifecycleStartsEndsAndReopens(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	start := event.SecFromTime(baseTime)
-	if err := db.ApplyLifecycle(ctx, "codex", "thr-1", start, false); err != nil {
+	if err := db.ApplyLifecycle(ctx, "codex", "thr-1", start, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	var started int64
@@ -326,13 +326,13 @@ func TestApplyLifecycleStartsEndsAndReopens(t *testing.T) {
 		t.Fatalf("start = %d/%v/%v", started, ended, activity)
 	}
 	end := start + 60
-	if err := db.ApplyLifecycle(ctx, "codex", "thr-1", end, true); err != nil {
+	if err := db.ApplyLifecycle(ctx, "codex", "thr-1", end, true, ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := scanOne(t, db, `SELECT ended_at FROM sessions WHERE session_key='thr-1'`); got != int64(end) {
 		t.Fatalf("ended_at=%v", got)
 	}
-	if err := db.ApplyLifecycle(ctx, "codex", "thr-1", start+120, false); err != nil {
+	if err := db.ApplyLifecycle(ctx, "codex", "thr-1", start+120, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := scanOne(t, db, `SELECT ended_at FROM sessions WHERE session_key='thr-1'`); got != nil {
@@ -350,7 +350,7 @@ func TestStartHookSeedsLastActivity(t *testing.T) {
 	ctx := context.Background()
 	at := event.SecFromTime(baseTime)
 
-	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-hook", at, false); err != nil {
+	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-hook", at, false, ""); err != nil {
 		t.Fatalf("ApplyLifecycle: %v", err)
 	}
 	if got := scanOne(t, db, `SELECT last_activity_at FROM sessions`); got != int64(at) {
@@ -374,7 +374,7 @@ func TestResumeHookPushesLastActivityForward(t *testing.T) {
 
 	mustWrite(t, db, Batch{Sessions: []session.Session{newSession("sess-hook", baseTime)}})
 	resumed := at + 3600
-	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-hook", resumed, false); err != nil {
+	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-hook", resumed, false, ""); err != nil {
 		t.Fatalf("ApplyLifecycle: %v", err)
 	}
 
@@ -397,7 +397,7 @@ func TestEndHookLeavesLastActivity(t *testing.T) {
 	at := event.SecFromTime(baseTime)
 
 	mustWrite(t, db, Batch{Sessions: []session.Session{newSession("sess-hook", baseTime)}})
-	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-hook", at+3600, true); err != nil {
+	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-hook", at+3600, true, ""); err != nil {
 		t.Fatalf("ApplyLifecycle: %v", err)
 	}
 	if got := scanOne(t, db, `SELECT last_activity_at FROM sessions`); got != int64(at) {
@@ -415,7 +415,7 @@ func TestHookEndSurvivesRestartStraggler(t *testing.T) {
 
 	mustWrite(t, db, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}})
 	endedAt := at + 600
-	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-1", endedAt, true); err != nil {
+	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-1", endedAt, true, ""); err != nil {
 		t.Fatalf("ApplyLifecycle: %v", err)
 	}
 
@@ -437,7 +437,7 @@ func TestHookEndYieldsToLaterActivity(t *testing.T) {
 
 	mustWrite(t, db, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}})
 	endedAt := at + 600
-	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-1", endedAt, true); err != nil {
+	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-1", endedAt, true, ""); err != nil {
 		t.Fatalf("ApplyLifecycle: %v", err)
 	}
 
@@ -457,10 +457,10 @@ func TestStartHookReopensAfterEndHook(t *testing.T) {
 	ctx := context.Background()
 	at := event.SecFromTime(baseTime)
 
-	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-1", at+600, true); err != nil {
+	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-1", at+600, true, ""); err != nil {
 		t.Fatalf("ApplyLifecycle(end): %v", err)
 	}
-	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-1", at+900, false); err != nil {
+	if err := db.ApplyLifecycle(ctx, "claude_code", "sess-1", at+900, false, ""); err != nil {
 		t.Fatalf("ApplyLifecycle(start): %v", err)
 	}
 	if got := scanOne(t, db, `SELECT ended_at FROM sessions`); got != nil {

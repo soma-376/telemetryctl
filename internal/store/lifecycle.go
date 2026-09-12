@@ -57,9 +57,10 @@ ON CONFLICT(vendor_id, session_key) DO UPDATE SET
 // 때 옛 값을 그대로 두면 ended_at 을 NULL 로 되돌리자마자 다음 스윕이 도로 닫는다.
 //
 // MAX 라 훅이 활동 시각을 뒤로 되돌리지는 못한다.
-const startLifecycleSQL = `INSERT INTO sessions (vendor_id, session_key, started_at, ended_at, last_activity_at)
-VALUES (?,?,?,NULL,?)
+const startLifecycleSQL = `INSERT INTO sessions (vendor_id, session_key, started_at, ended_at, last_activity_at, workspace_path)
+VALUES (?,?,?,NULL,?,NULLIF(?,''))
 ON CONFLICT(vendor_id, session_key) DO UPDATE SET
+  workspace_path   = COALESCE(excluded.workspace_path, sessions.workspace_path),
   started_at       = MIN(COALESCE(sessions.started_at, excluded.started_at),
                          COALESCE(excluded.started_at, sessions.started_at)),
   last_activity_at = MAX(COALESCE(sessions.last_activity_at, excluded.last_activity_at),
@@ -67,7 +68,7 @@ ON CONFLICT(vendor_id, session_key) DO UPDATE SET
   ended_at         = NULL`
 
 // ApplyLifecycle 는 명시적인 벤더 훅으로 세션을 열거나 닫는다.
-func (d *DB) ApplyLifecycle(ctx context.Context, vendor, sessionID string, at event.UnixSec, end bool) error {
+func (d *DB) ApplyLifecycle(ctx context.Context, vendor, sessionID string, at event.UnixSec, end bool, workspacePath string) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: lifecycle 트랜잭션 시작: %w", err)
@@ -83,7 +84,7 @@ ON CONFLICT(vendor) DO UPDATE SET first_seen=MIN(first_seen,excluded.first_seen)
 	}
 	args := []any{vendor, sessionID, int64(at)}
 	if !end {
-		args = append(args, int64(at))
+		args = append(args, int64(at), workspacePath)
 	}
 	if _, err := tx.ExecContext(ctx, q, args...); err != nil {
 		return fmt.Errorf("store: lifecycle session: %w", err)

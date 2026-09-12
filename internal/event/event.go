@@ -8,7 +8,7 @@
 //
 // 작업 경로·user.email·user.id·user.account_uuid 는 v3 스키마가 요구하는 컬럼이 있어
 // **로컬 저장 전용 필드**로 받는다 (ADR 0010). 해시 필드(ProjectHash·ProjectName)와
-// 원경로 필드(WorkspacePath)가 나란히 존재하며 용도가 다르다 — 각 필드의 주석을 따른다.
+// 원경로 필드(WorkspacePath)는 중복 판별에만 남긴다. 세션 경로는 시작 훅이 쓴다 (ADR 0028).
 // 상위 전달 스크럽은 internal/forward 가 원본 바이트에 대해 따로 수행하므로 이 allowlist 를
 // 넓혀도 전달 규칙은 달라지지 않는다.
 package event
@@ -125,12 +125,12 @@ type Attributes struct {
 	ProjectName string // basename 만
 
 	// ── 로컬 저장 전용 (ADR 0010) ───────────────────────────────────────────
-	// 아래 세 필드는 v3 스키마의 sessions.workspace_path · user_email · user_account_id
+	// 아래 식별 필드는 v3 스키마의 sessions.user_email · user_account_id
 	// 를 채우기 위한 값이다. **로컬 SQLite 에만 저장하고 상위로 전달하지 않는다.**
 	// 상위 전달 페이로드의 스크럽은 internal/forward 가 원본 바이트에 대해 따로 수행하므로
 	// 이 필드를 늘려도 전달 규칙은 달라지지 않는다 (ADR 0010 "근거" 절).
 
-	// WorkspacePath 는 정규화하지 않은 작업공간 원경로다. 해시가 필요하면 ProjectHash 를 쓴다.
+	// WorkspacePath는 기존 DedupKey 호환용 원경로다. 세션 조립·DB 저장에는 전달하지 않는다 (ADR 0028).
 	WorkspacePath string
 	// UserEmail 은 관측된 사용자 이메일이다 (user.email).
 	UserEmail string
