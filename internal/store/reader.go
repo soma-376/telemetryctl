@@ -67,7 +67,7 @@ func OpenReadOnly(path string, opts ...Option) (*ReadOnly, error) {
 // # 파일이 있다고 읽을 수 있는 것은 아니다
 //
 // 파일 부재만 보면 **데몬이 DB 를 만드는 중** 인 순간을 놓친다. Open 은 연결을 열어
-// 파일을 만든 뒤 마이그레이션을 실행하므로, 그 사이에는 파일이 존재하는데 테이블은 없다.
+// 파일을 만든 뒤 스키마 초기화을 실행하므로, 그 사이에는 파일이 존재하는데 테이블은 없다.
 // 그 순간에 붙은 조회 핸들은 모든 질의가 `no such table` 로 실패하고, 더 나쁘게는
 // dashboard.Reader 가 그 핸들을 붙잡은 것으로 보고 다시 붙지 않는다 — GUI 는 앱을 껐다
 // 켤 때까지 영구히 빈 화면과 에러 토스트를 반복한다.
@@ -99,7 +99,7 @@ func OpenReadOnlyIfPresent(path string, opts ...Option) (*ReadOnly, error) {
 // minReadableSchemaVersion 은 단일 DDL 세대의 버전이다 (ADR 0012).
 const minReadableSchemaVersion = schemaVersion
 
-// schemaReadable 은 마이그레이션이 조회 가능한 지점까지 진행됐는지 본다.
+// schemaReadable 은 스키마 초기화이 조회 가능한 지점까지 진행됐는지 본다.
 //
 // meta 테이블 존재 여부를 sqlite_master 로 먼저 확인하는 이유는, 없는 테이블을 SELECT
 // 하면 드라이버 메시지를 문자열로 판별해야 하기 때문이다. 그 판별은 드라이버가 바뀌면
@@ -130,7 +130,7 @@ func (r *ReadOnly) Path() string { return r.path }
 func (r *ReadOnly) SQL() *sql.DB { return r.db }
 
 // SchemaVersion 은 meta.local_schema_version 값이다. 조회 쪽이 자기가 아는 스키마인지
-// 확인할 수 있어야 한다 — 데몬이 더 새로운 버전으로 마이그레이션했을 수 있다.
+// 확인할 수 있어야 한다 — 데몬이 더 새로운 버전으로 스키마 초기화했을 수 있다.
 func (r *ReadOnly) SchemaVersion(ctx context.Context) (int, error) {
 	return readSchemaVersion(ctx, r.db)
 }

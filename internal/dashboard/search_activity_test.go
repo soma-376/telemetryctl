@@ -59,15 +59,15 @@ func seedActivity(f *TestFixture) {
 	f.TestWrite(store.Batch{
 		Sessions: []session.Session{
 			TestNewSession("a-1", at, TestTitle("인증 프록시 구현"), func(s *session.Session) {
-				s.WorkspacePath = TestWorkspaceA
+				TestWorkspace(TestWorkspaceA)(s)
 			}),
 			TestNewSession("a-2", TestNow.Add(-2*time.Hour), TestTitle("리팩터링"), func(s *session.Session) {
 				TestCodex(s)
-				s.WorkspacePath = TestWorkspaceB
+				TestWorkspace(TestWorkspaceB)(s)
 			}),
 			TestNewSession("a-3", TestNow.Add(-time.Hour), TestTitle("디버깅"), func(s *session.Session) {
 				TestRunning(s)
-				s.WorkspacePath = TestWorkspaceB
+				TestWorkspace(TestWorkspaceB)(s)
 			}),
 		},
 		Events: []store.EventRecord{
@@ -364,16 +364,16 @@ func TestActivitySearchCoversFourSources(t *testing.T) {
 	f.TestWrite(store.Batch{
 		Sessions: []session.Session{
 			TestNewSession("s-TestTitle", TestNow.Add(-4*time.Hour), TestTitle("Collector 전달 구현"), func(s *session.Session) {
-				s.WorkspacePath = TestWorkspaceA
+				TestWorkspace(TestWorkspaceA)(s)
 			}),
 			TestNewSession("s-ws", TestNow.Add(-3*time.Hour), TestTitle("무관한 제목 갑"), func(s *session.Session) {
-				s.WorkspacePath = TestWorkspaceB
+				TestWorkspace(TestWorkspaceB)(s)
 			}),
 			TestNewSession("s-file", TestNow.Add(-2*time.Hour), TestTitle("무관한 제목 을"), func(s *session.Session) {
-				s.WorkspacePath = TestWorkspaceA
+				TestWorkspace(TestWorkspaceA)(s)
 			}),
 			TestNewSession("s-content", at, TestTitle("무관한 제목 병"), func(s *session.Session) {
-				s.WorkspacePath = TestWorkspaceA
+				TestWorkspace(TestWorkspaceA)(s)
 			}),
 		},
 		Events: []store.EventRecord{
@@ -514,7 +514,7 @@ func TestActivitySearchWithoutContentStorage(t *testing.T) {
 	f.TestWrite(store.Batch{
 		Sessions: []session.Session{
 			TestNewSession("nc-1", at, TestTitle("인증 프록시 구현"), func(s *session.Session) {
-				s.WorkspacePath = TestWorkspaceA
+				TestWorkspace(TestWorkspaceA)(s)
 			}),
 		},
 		Events: []store.EventRecord{

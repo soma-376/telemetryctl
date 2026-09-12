@@ -10,7 +10,7 @@ import (
 
 // 데몬이 DB 를 만드는 **도중** 에 GUI 가 붙는 창을 고정한다 (PROJ-97).
 //
-// Open 은 연결을 열어 파일을 만든 뒤 마이그레이션을 실행한다. 그 사이에는 파일이 존재하는데
+// Open 은 연결을 열어 파일을 만든 뒤 스키마 초기화을 실행한다. 그 사이에는 파일이 존재하는데
 // 테이블이 없고, 그 순간에 붙은 조회 핸들은 모든 질의가 `no such table` 로 실패한다.
 // 더 나쁘게는 dashboard.Reader 가 그 핸들을 "붙었다" 로 보고 다시 붙지 않아, GUI 가 앱을
 // 껐다 켤 때까지 회복하지 못한다.
@@ -18,7 +18,7 @@ import (
 // 그래서 OpenReadOnlyIfPresent 는 스키마가 준비되지 않은 파일을 **파일이 없는 것과 같이**
 // 다룬다. 호출자의 재시도가 그대로 답이 되는 형태여야 한다 (ADR 0004).
 
-// openWriteRaw 는 마이그레이션 없이 쓰기 연결만 연다. 준비되지 않은 DB 를 만드는 수단이다.
+// openWriteRaw 는 스키마 초기화 없이 쓰기 연결만 연다. 준비되지 않은 DB 를 만드는 수단이다.
 func openWriteRaw(t *testing.T, path string) *sql.DB {
 	t.Helper()
 	db, err := sql.Open(DriverName, writeDSN(path, DefaultBusyTimeout))
@@ -51,7 +51,7 @@ func TestOpenReadOnlyIfPresentTreatsUnmigratedDatabaseAsAbsent(t *testing.T) {
 		},
 		{
 			name: "meta 만 만들어진 상태",
-			// migrate 가 createMetaTable 을 실행한 직후, 첫 마이그레이션 전이다.
+			// migrate 가 createMetaTable 을 실행한 직후, 도메인 스키마 초기화 전이다.
 			prepare: func(t *testing.T, path string) {
 				db := openWriteRaw(t, path)
 				if _, err := db.ExecContext(ctx, createMetaTable); err != nil {
@@ -60,8 +60,8 @@ func TestOpenReadOnlyIfPresentTreatsUnmigratedDatabaseAsAbsent(t *testing.T) {
 			},
 		},
 		{
-			name: "v3 이전에서 멈춘 상태",
-			// 마이그레이션 도중 크래시. 버전은 올랐지만 지금의 조회가 읽을 테이블이 없다.
+			name: "버전 0으로 초기화되지 않은 상태",
+			// 스키마 초기화 도중 크래시. 버전이 0이고 지금의 조회가 읽을 테이블이 없다.
 			prepare: func(t *testing.T, path string) {
 				db := openWriteRaw(t, path)
 				if _, err := db.ExecContext(ctx, createMetaTable); err != nil {
@@ -92,7 +92,7 @@ func TestOpenReadOnlyIfPresentTreatsUnmigratedDatabaseAsAbsent(t *testing.T) {
 	}
 }
 
-// 마이그레이션이 끝난 뒤에는 당연히 붙어야 한다. 위 테스트만 있으면 "항상 nil" 로도 통과한다.
+// 스키마 초기화이 끝난 뒤에는 당연히 붙어야 한다. 위 테스트만 있으면 "항상 nil" 로도 통과한다.
 func TestOpenReadOnlyIfPresentAttachesOnceMigrated(t *testing.T) {
 	dir := t.TempDir()
 	path := PathIn(dir)

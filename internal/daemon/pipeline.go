@@ -344,7 +344,7 @@ func (p *pipeline) run() {
 				c.lifecycle.Vendor, eventName, c.lifecycle.SessionID, c.lifecycle.Source)
 			ctx, cancel := context.WithTimeout(context.Background(), p.writeTimeout)
 			err := p.db.ApplyLifecycle(ctx, c.lifecycle.Vendor, c.lifecycle.SessionID,
-				at, c.lifecycle.End)
+				at, c.lifecycle.End, c.lifecycle.WorkspacePath)
 			cancel()
 			if err != nil {
 				p.log.Printf("경고: 세션 훅 반영 실패: vendor=%s event=%s session_id=%s: %v",

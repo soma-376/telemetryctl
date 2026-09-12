@@ -13,7 +13,7 @@ Claude Code, Codex 같은 제품 단위 벤더의 관측 범위와 상태를 저
 
 ```sql
 CREATE TABLE vendors (
-  vendor     TEXT PRIMARY KEY,
+  vendor     TEXT NOT NULL PRIMARY KEY,
   first_seen INTEGER NOT NULL,
   last_seen  INTEGER NOT NULL,
   status     TEXT NOT NULL

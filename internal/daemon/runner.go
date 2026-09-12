@@ -336,13 +336,9 @@ func (d *daemon) start(ctx context.Context) error {
 	// Claude Code 는 세션 제목을 자기 트랜스크립트에 남긴다. 홈을 못 찾으면 nil 이고
 	// 그때는 이 벤더의 제목이 채워지지 않는다 (ADR 0018).
 	d.claudeTitles = newClaudeTitleRefresher(ctx, claudecode.TranscriptRoot(), db, d.log, d.opts.Now)
-	// 자동 쿨다운을 틱에서 파생시킨다. 둘이 같거나 쿨다운이 더 길면 다음 틱이 자기 쿨다운에
-	// 걸려 자동 갱신이 통째로 멈춘다 (ADR 0014). 상수 두 개로 두면 한쪽만 바꿔도 그렇게 되므로,
-	// 깨질 수 없게 여기서 계산한다.
 	d.limits = vendorlimit.NewRefresher(collector, db, vendorlimit.RefreshOptions{
-		AutoCooldown: d.opts.LimitInterval / 2,
-		Now:          d.opts.Now,
-		Logger:       d.log,
+		Now:    d.opts.Now,
+		Logger: d.log,
 	})
 
 	// GUI 가 읽을 조회 핸들. 여는 데 실패해도 기동은 계속한다 — 수집은 정상이고

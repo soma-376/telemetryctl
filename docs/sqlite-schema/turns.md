@@ -21,16 +21,17 @@
 ```sql
 CREATE TABLE turns (
   id             INTEGER PRIMARY KEY,
-  session_id     INTEGER NOT NULL REFERENCES sessions (id),
+  session_id     INTEGER NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
   turn_key       TEXT NOT NULL,
-  turn_index     INTEGER,
+  turn_index     INTEGER CHECK (turn_index IS NULL OR (typeof(turn_index) = 'integer' AND turn_index >= 0)),
   client_version TEXT,
   started_at     INTEGER,
   ended_at       INTEGER,
   prompt_text    TEXT,
-  ttft_ms        INTEGER,
+  ttft_ms        INTEGER CHECK (ttft_ms >= 0),
   UNIQUE (session_id, turn_key),
-  UNIQUE (session_id, turn_index)
+  UNIQUE (session_id, turn_index),
+  CHECK (ended_at >= started_at)
 );
 
 CREATE UNIQUE INDEX ux_turns_virtual

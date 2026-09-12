@@ -43,8 +43,8 @@
 ```sql
 CREATE TABLE events (
   id          INTEGER PRIMARY KEY,
-  turn_id     INTEGER NOT NULL REFERENCES turns (id),
-  seq         INTEGER NOT NULL,
+  turn_id     INTEGER NOT NULL REFERENCES turns (id) ON DELETE CASCADE,
+  seq         INTEGER NOT NULL CHECK (typeof(seq) = 'integer' AND seq >= 1),
   event_name  TEXT NOT NULL,
   occurred_at INTEGER,
   record_hash TEXT NOT NULL UNIQUE,

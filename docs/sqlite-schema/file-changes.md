@@ -62,13 +62,13 @@ Claude Code에는 파일을 지우거나 옮기는 도구가 없다. 삭제·이
 ```sql
 CREATE TABLE file_changes (
   id           INTEGER PRIMARY KEY,
-  tool_call_id INTEGER NOT NULL REFERENCES tool_calls (id),
+  tool_call_id INTEGER NOT NULL REFERENCES tool_calls (id) ON DELETE CASCADE,
   file_path    TEXT NOT NULL,
   operation    TEXT NOT NULL
     CHECK (operation IN ('create', 'modify', 'delete', 'rename')),
   renamed_from TEXT,
-  additions    INTEGER,
-  deletions    INTEGER,
+  additions    INTEGER CHECK (additions >= 0),
+  deletions    INTEGER CHECK (deletions >= 0),
   old_hash     TEXT,
   new_hash     TEXT,
   CHECK (operation <> 'rename' OR renamed_from IS NOT NULL)

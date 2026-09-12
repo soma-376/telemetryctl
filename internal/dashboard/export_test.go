@@ -41,6 +41,7 @@ var TestVendorCodex = vendorCodex
 const TestWorkspaceA = workspaceA
 
 var TestWorkspaceB = workspaceB
+var TestWorkspace = workspace
 
 func (f *fixture) TestReader() *Reader                    { return f.reader }
 func (f *fixture) TestPath() string                       { return f.path }

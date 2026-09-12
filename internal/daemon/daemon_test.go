@@ -82,9 +82,9 @@ func TestEndToEndWalkthroughProducesScreenRows(t *testing.T) {
 	if title.Valid {
 		t.Errorf("title = %q, want NULL — 벤더 제목 경로를 타지 않았다", title.String)
 	}
-	// ADR 0010 이 로컬 저장을 허용한 식별 정보다. 이것이 비면 작업 폴더 열기가 성립하지 않는다.
-	if workspace.String != fixturePath {
-		t.Errorf("workspace_path = %q, want %q", workspace.String, fixturePath)
+	// OTel만으로는 세션 원경로를 저장하지 않는다 (ADR 0028).
+	if workspace.Valid {
+		t.Errorf("workspace_path = %q, want %q", workspace.String, "NULL")
 	}
 	if email.String != fixtureEmail {
 		t.Errorf("user_email = %q, want %q", email.String, fixtureEmail)
@@ -224,8 +224,8 @@ func TestIdentityStaysInDesignatedColumns(t *testing.T) {
 	}
 
 	// 허용된 자리에는 있어야 한다. 없으면 작업 폴더 열기와 파일 경로 검색이 성립하지 않는다.
-	if !strings.Contains(dumpText(t, db, "sessions"), fixturePath) {
-		t.Error("sessions.workspace_path 가 비었다")
+	if strings.Contains(dumpText(t, db, "sessions"), fixturePath) {
+		t.Error("시작 훅 없이 sessions에 원경로가 저장됐다")
 	}
 	if !strings.Contains(dumpText(t, db, "sessions"), fixtureEmail) {
 		t.Error("sessions.user_email 이 비었다")

@@ -27,30 +27,14 @@ export function trayQuery(q: TrayQuery, visible: () => boolean) {
   }));
 }
 
-// traySyncMutation 은 창이 열렸을 때 부른다. 자동 등급이라 데몬 쿨다운 안이면 벤더를
-// 두드리지 않고 저장된 최신값이 그대로 온다 (ADR 0014).
-export function traySyncMutation(q: TrayQuery) {
-  return trayCommand(() => Dashboard.SyncTray(q));
-}
-
-// trayRefreshMutation 은 새로고침 버튼이다. 수동 등급으로 명령한다.
+// 버튼만 벤더 갱신을 요청한다. 실패하면 마지막 정상 스냅샷은 유지한다.
 export function trayRefreshMutation(q: TrayQuery) {
-  return trayCommand(() => Dashboard.RefreshTray(q));
-}
-
-// trayCommand 는 두 갱신의 공통 몸통이다. 둘은 데몬에 어느 등급으로 명령하는지만 다르고,
-// 받은 스냅샷을 조회 캐시로 밀어 넣는 것은 같다 — 그래야 갱신 결과가 곧 화면이 된다.
-//
-// 실패해도 캐시를 건드리지 않는다. 데몬이 꺼졌다고 과거 화면까지 지울 이유가 없다.
-//
-// 성공·실패를 연결 상태에도 알린다. **갱신은 조회보다 훨씬 자주 온다** — 창을 열 때마다
-// 나가므로, 이것을 세지 않으면 데몬이 꺼진 것을 폴링 주기(60초)만큼 늦게 안다. 시도 한 번에
-// 정확히 한 번씩 불리므로 중복 집계도 없다.
-function trayCommand(run: () => Promise<TraySnapshot>) {
   const client = useQueryClient();
   return createMutation(() => ({
-    mutationFn: run,
-    onSuccess(snapshot: TraySnapshot) {
+    mutationFn: () => Dashboard.RefreshTray(q),
+    async onSuccess(snapshot: TraySnapshot) {
+      // 먼저 시작한 조회가 늦게 끝나 최신 갱신 결과를 덮지 않게 한다.
+      await client.cancelQueries({ queryKey: TRAY_KEY });
       client.setQueryData(TRAY_KEY, snapshot);
       noteSuccess();
     },

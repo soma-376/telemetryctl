@@ -5,7 +5,7 @@ import { QueryClient } from "@tanstack/svelte-query";
 // 기본값 셋이 이 앱의 결정을 담고 있다. 화면마다 다시 쓰지 않도록 여기 모아 둔다.
 
 // TRAY_STALE_MS 는 화면이 데몬을 다시 읽는 주기다. **벤더 호출 주기가 아니다** — 벤더를
-// 언제 두드릴지는 데몬의 등급별 쿨다운이 정한다 (ADR 0014). 여기는 로컬 왕복이라 싸다.
+// 언제 두드릴지는 데몬의 5분 틱과 수동 요청이 정한다 (ADR 0014). 여기는 로컬 왕복이라 싸다.
 export const TRAY_STALE_MS = 60_000;
 
 export function makeQueryClient(): QueryClient {
