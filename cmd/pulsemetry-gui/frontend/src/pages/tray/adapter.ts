@@ -8,7 +8,7 @@ import {
   type TrayMonitoring,
   type TraySnapshot,
   type VendorLimit,
-} from "$lib/ipc/dashboard";
+} from "$lib/bindings";
 import type { TrayLimitWindow, TraySession, TrayVendor } from "./types";
 
 // 경계 번역 — TraySnapshot(백엔드 모양)을 트레이 화면 타입으로 옮긴다.
@@ -16,12 +16,18 @@ import type { TrayLimitWindow, TraySession, TrayVendor } from "./types";
 // model.ts 와 나눠 둔 이유: 여기는 바깥 모양을 안쪽 모양으로 바꾸며 대표 창을 표시하고,
 // model.ts 는 표시된 대표 창의 색 같은 화면 계산을 맡는다.
 
-const AGENT_IDS = new Set<string>(["claude", "codex", "gemini", "cursor", "other"]);
+const AGENT_IDS = new Set<string>([
+  "claude",
+  "codex",
+  "gemini",
+  "cursor",
+  "other",
+]);
 
 // toAgentId 는 벤더 표기를 화면의 AgentId 로 옮긴다. 한도 조회와 로컬 파이프라인이 같은
 // 표기를 쓰기로 되어 있어(vendorlimit.Vendor 주석) 두 출처를 이 함수 하나가 받는다.
 // 모르는 벤더는 버리지 않고 "other" 로 남긴다 — 조용히 사라지면 합계가 맞지 않는다.
-export function toAgentId(vendor: string): AgentId {
+function toAgentId(vendor: string): AgentId {
   if (vendor === "claude_code") return "claude";
   return AGENT_IDS.has(vendor) ? (vendor as AgentId) : "other";
 }
@@ -85,8 +91,8 @@ function resetText(w: LimitWindow, now: Date): string {
 }
 
 // toWindows 는 한 벤더의 창들을 화면 줄로 옮기고 주간 한도를 대표로 세운다.
-// 주간 창이 없으면 5시간, 그것도 없으면 첫 창을 쓴다. 가장 빠듯한 한도는 별도
-// tightest_limit 계약이 맡으며, 대표 카드는 벤더 사이에서 같은 기간을 안정적으로 보여준다.
+// 주간 창이 없으면 5시간, 그것도 없으면 첫 창을 쓴다 — 대표 카드는 벤더 사이에서 같은
+// 기간을 안정적으로 보여주는 것이 목적이고, "가장 빠듯한 하나" 를 고르는 것이 아니다.
 function toWindows(windows: LimitWindow[], now: Date): TrayLimitWindow[] {
   const labels = windowLabels(windows);
   const weeklyAt = windows.findIndex((window) => window.period === "weekly");
@@ -106,7 +112,8 @@ function toWindows(windows: LimitWindow[], now: Date): TrayLimitWindow[] {
   });
 }
 
-const capitalize = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "");
+const capitalize = (s: string) =>
+  s ? s.charAt(0).toUpperCase() + s.slice(1) : "";
 
 // UnavailableVendor 는 한도를 읽지 못한 벤더다.
 //
@@ -134,17 +141,15 @@ const REASON_TEXT: Record<string, string> = {
   internal_error: "조회 중 오류가 났습니다",
 };
 
-export function reasonText(reason: string): string {
+function reasonText(reason: string): string {
   return REASON_TEXT[reason] ?? "한도를 알 수 없습니다";
 }
 
-export interface TrayView {
+interface TrayView {
   vendors: TrayVendor[];
   unavailable: UnavailableVendor[];
   sessions: TraySession[];
   monitoring: TrayMonitoring;
-  /** 데몬이 벤더에 한도를 물어본 시각(unix 초). 0 이면 아직 한 번도 조회하지 않았다. */
-  limitsObservedAt: number;
 }
 
 // toVendor 는 창이 하나라도 있는 벤더를 카드로 만든다.
@@ -179,7 +184,8 @@ const STATUS_TEXT: Record<string, string> = {
 function toSession(s: RecentSession): TraySession {
   const agentId = toAgentId(s.vendor);
   const parts = [AGENT_NAMES[agentId]];
-  if (s.duration_ms > 0) parts.push(formatDuration(Math.round(s.duration_ms / 60_000)));
+  if (s.duration_ms > 0)
+    parts.push(formatDuration(Math.round(s.duration_ms / 60_000)));
   const status = STATUS_TEXT[s.status];
   if (status) parts.push(status);
   return {
@@ -192,34 +198,18 @@ function toSession(s: RecentSession): TraySession {
   };
 }
 
-// unixSec 은 RFC3339 문자열을 unix 초로 옮긴다. 빈 문자열과 파싱 실패는 둘 다 0 이다 —
-// 화면은 "모른다" 를 한 가지로만 다루면 된다.
-function unixSec(rfc3339: string): number {
-  if (!rfc3339) return 0;
-  const ms = Date.parse(rfc3339);
-  return Number.isNaN(ms) ? 0 : Math.floor(ms / 1000);
+// 데몬의 벤더 관측 시각을 현지 시·분·초로 표시한다.
+export function observedAtText(observedAt: string): string {
+  const ms = Date.parse(observedAt);
+  if (!Number.isFinite(ms) || ms <= 0) return "한도 확인 이력 없음";
+  const at = new Date(ms);
+  return `${pad2(at.getHours())}:${pad2(at.getMinutes())}:${pad2(at.getSeconds())}`;
 }
 
-// syncedText 는 "40초 전" 꼴의 경과 시간이다.
-//
-// 헤더가 세는 것은 **데몬이 벤더에 한도를 물어본 시각**(limits_observed_at)이다.
-// refreshed_at 이 아니다 — 그건 GUI 가 데몬에게 물어본 시각이라 로컬 왕복이 얼마나
-// 빨랐는지만 말한다. 한도가 3시간 묵었는데 "0초 전" 이라고 하는 것이 그래서였다.
-// 세션 목록은 조회할 때마다 새것이라 낡는 것은 한도뿐이고, 헤더는 한도 카드 바로 위에 있다.
-//
-// 문자열이 아니라 시각을 화면으로 넘기는 이유: 트레이 창은 닫아도 파괴되지 않고 숨겨질
-// 뿐이라(Application.Hide) 컴포넌트가 계속 마운트돼 있다. 문자열로 굳혀 두면 다시 열어도
-// 처음 계산한 값이 그대로 남는다. TrayHeader 가 초마다 다시 계산한다.
-export function syncedText(observedAt: number, now: Date): string {
-  if (observedAt <= 0) return "";
-  const sec = Math.max(0, Math.floor(now.getTime() / 1000 - observedAt));
-  if (sec < 60) return `${sec}초 전`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}분 전`;
-  return `${Math.floor(min / 60)}시간 전`;
-}
-
-export function toTrayView(snap: TraySnapshot, now: Date = new Date()): TrayView {
+export function toTrayView(
+  snap: TraySnapshot,
+  now: Date = new Date(),
+): TrayView {
   const limits = snap.limits ?? [];
   return {
     vendors: limits
@@ -230,7 +220,8 @@ export function toTrayView(snap: TraySnapshot, now: Date = new Date()): TrayView
     unavailable: limits
       .filter(
         (r) =>
-          r.state !== LimitState.StateAvailable && (r.windows ?? []).length === 0,
+          r.state !== LimitState.StateAvailable &&
+          (r.windows ?? []).length === 0,
       )
       .map((r) => ({
         id: toAgentId(r.vendor),
@@ -239,6 +230,5 @@ export function toTrayView(snap: TraySnapshot, now: Date = new Date()): TrayView
       })),
     sessions: (snap.recent_sessions ?? []).map(toSession),
     monitoring: snap.monitoring,
-    limitsObservedAt: unixSec(snap.limits_observed_at),
   };
 }
