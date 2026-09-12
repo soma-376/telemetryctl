@@ -246,8 +246,10 @@ func (w *writer) writeSessions(b Batch) error {
 		// 활동 시간은 초 단위 정수 컬럼이다. 자르지 않고 반올림한다 — 자르면 매 스냅샷마다
 		// 소수부가 버려져 긴 세션의 활동 시간이 조금씩 뒤처진다.
 		var active any
-		if s.ActiveSeconds > 0 {
-			active = int64(math.Round(s.ActiveSeconds))
+		// int64 변환 범위를 벗어나거나 비유한 값이면 미관측으로 남긴다.
+		// float64(math.MaxInt64)는 2^63으로 반올림되므로 상한은 포함하지 않는다.
+		if rounded := math.Round(s.ActiveSeconds); s.ActiveSeconds > 0 && rounded < float64(math.MaxInt64) {
+			active = int64(rounded)
 		}
 		seed := sessionSeed{
 			vendor: s.Vendor, key: s.SessionID,
@@ -409,7 +411,7 @@ func (w *writer) turnID(sessionID int64, rec EventRecord) (int64, error) {
 
 // promptText 는 turns.prompt_text 에 쓸 사용자 프롬프트 원문이다.
 //
-// v3 에는 원문 테이블이 없다. 프롬프트만 여기 남고 나머지 원문(응답·tool_input·tool_result)은
+// v1 에는 원문 테이블이 없다. 프롬프트만 여기 남고 나머지 원문(응답·tool_input·tool_result)은
 // 저장될 자리가 없어 버려진다. --no-store-content 는 프롬프트까지 버린다 — 저장소가
 // 프라이버시 모드의 집행 지점이라는 계약은 그대로다.
 func (w *writer) promptText(rec EventRecord) string {
@@ -446,7 +448,7 @@ func (w *writer) nextTurnIndex(sessionID int64) (int64, error) {
 
 // insertEventSQL 은 payload 를 NULL 로 남긴다.
 //
-// v3 는 원본 OTLP 를 통째로 담는 catch-all 을 두지 않기로 한 ADR 0002·0003 의 결정을
+// v1 는 원본 OTLP 를 통째로 담는 catch-all 을 두지 않기로 한 ADR 0002·0003 의 결정을
 // 그대로 잇는다. 어느 경로도 원본 바이트를 붙들고 있지 않으므로 채울 값 자체가 없다.
 // 나중에 쓰게 되면 `jsonb(?)` 로 바인딩해야 한다 — CHECK 가 json_valid(payload, 8),
 // 즉 텍스트 JSON 이 아니라 **JSONB** 를 요구한다.

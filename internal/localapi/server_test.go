@@ -53,11 +53,6 @@ func TestServerAcceptsLifecycleHook(t *testing.T) {
 	}
 }
 
-func (f *fakeRefresher) RefreshAuto(context.Context) error {
-	f.calls++
-	return nil
-}
-
 func (f *fakeRefresher) RefreshManual(context.Context) error {
 	f.calls++
 	f.manual++
@@ -74,7 +69,8 @@ func TestServerTrayCarriesQueryAndSnapshot(t *testing.T) {
 			Windows: []vendorlimit.Window{{Period: vendorlimit.PeriodFiveHour, UsedRatio: .17}},
 		}},
 	}}
-	srv := httptest.NewServer(NewServer(&fakeRefresher{}, src))
+	ref := &fakeRefresher{}
+	srv := httptest.NewServer(NewServer(ref, src))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + TrayPath + "?tz=Asia/Seoul&recent_limit=7")
@@ -84,6 +80,10 @@ func TestServerTrayCarriesQueryAndSnapshot(t *testing.T) {
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
+	}
+
+	if ref.calls != 0 {
+		t.Fatal("스냅샷 조회가 벤더를 갱신했다")
 	}
 
 	// 조회 조건이 쿼리 파라미터로 건너가야 한다. 빠지면 데몬이 늘 UTC 기본값으로 답한다.
@@ -162,16 +162,15 @@ func TestServerRejectsWrongMethod(t *testing.T) {
 	}
 }
 
-// 갱신 등급이 쿼리로 건너가야 한다. 빠지면 새로고침 버튼이 자동 쿨다운에 막혀 (ADR 0014)
-// 눌러도 벤더를 조회하지 않는다.
-func TestServerRefreshCarriesManualGrade(t *testing.T) {
+// POST는 매개변수와 관계없이 수동 갱신만 요청한다.
+func TestServerRefreshIsAlwaysManual(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		query      string
 		wantManual int
 	}{
-		{"창 열기는 자동", "?tz=UTC&recent_limit=5", 0},
-		{"버튼은 수동", "?tz=UTC&recent_limit=5&" + paramManual + "=" + manualValue, 1},
+		{"매개변수 없이 수동", "?tz=UTC&recent_limit=5", 1},
+		{"버튼은 수동", "?tz=UTC&recent_limit=5&manual=1", 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ref := &fakeRefresher{}

@@ -7,7 +7,7 @@
 | `id` | `INTEGER` | 기본 키 | SQLite rowid 별칭 |
 | `vendor_id` | `TEXT` | 필수, FK | `vendors.vendor` 참조 |
 | `session_key` | `TEXT` | 필수 | Claude Code `session.id`, Codex `conversation.id` |
-| `title` | `TEXT` | 선택 | 세션 제목. ETL은 `NULL`일 때만 기록 |
+| `title` | `TEXT` | 선택 | 벤더가 제공한 제목만 저장한다(ADR 0018). 없으면 `NULL`이며 조립기 UPSERT는 이 컬럼을 수정하지 않는다 |
 | `workspace_path` | `TEXT` | 선택 | 작업공간 경로 |
 | `user_email` | `TEXT` | 선택 | 관측된 사용자 이메일 |
 | `user_account_id` | `TEXT` | 선택 | 벤더 사용자 계정 ID |
@@ -17,7 +17,7 @@
 | `active_time_sec` | `INTEGER` | 선택 | Claude Code 활동 시간 |
 
 `(vendor_id, session_key)`는 UNIQUE다. `turns.session_id`가 `id`를 참조하며 삭제 동작은
-`NO ACTION`이다.
+`ON DELETE CASCADE`다. 세션을 삭제하면 소유한 턴과 그 자식도 함께 삭제된다.
 
 ## 생명주기 컬럼
 
@@ -41,7 +41,8 @@ CREATE TABLE sessions (
   terminal_type   TEXT,
   started_at      INTEGER,
   ended_at        INTEGER,
-  active_time_sec INTEGER,
-  UNIQUE (vendor_id, session_key)
+  active_time_sec INTEGER CHECK (active_time_sec >= 0),
+  UNIQUE (vendor_id, session_key),
+  CHECK (ended_at >= started_at)
 );
 ```

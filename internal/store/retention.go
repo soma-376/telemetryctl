@@ -63,38 +63,29 @@ const staleSessionsSQL = `SELECT id FROM sessions
 WHERE ` + sessionLastActivity + ` > 0
   AND ` + sessionLastActivity + ` < ?`
 
-// pruneSteps 는 삭제 순서다. **순서가 계약이다** (ADR 0009).
-//
-// v3 의 외래 키는 전부 NO ACTION 이다. CASCADE 가 없으므로 자식에서 부모 순서로
-// 애플리케이션이 직접 정리한다:
-//
-//	file_changes → tool_calls → llm_calls → events → turns → sessions
-//
-// events 는 반드시 tool_calls · llm_calls 뒤에 온다 — 둘 다 events 를 참조한다.
-// 각 문장의 ?는 세션 id 목록 하나뿐이고, CASCADE 가 없으므로 RowsAffected() 가 정확하다.
-var pruneSteps = []struct {
+// pruneCounts 는 세션 삭제로 함께 사라질 자식 행을 센다 (ADR 0009).
+// CASCADE의 자식 삭제는 RowsAffected에 포함되지 않으므로 같은 트랜잭션에서 미리 집계한다.
+var pruneCounts = []struct {
 	name string
 	// query 는 %s 자리에 세션 id 플레이스홀더 목록이 들어간다.
 	query string
 	dst   func(*PruneResult) *int64
 }{
-	{"file_changes", `DELETE FROM file_changes WHERE tool_call_id IN (
+	{"file_changes", `SELECT COUNT(*) FROM file_changes WHERE tool_call_id IN (
 		SELECT id FROM tool_calls WHERE turn_id IN (
 			SELECT id FROM turns WHERE session_id IN (%s)))`,
 		func(r *PruneResult) *int64 { return &r.FileChanges }},
-	{"tool_calls", `DELETE FROM tool_calls WHERE turn_id IN (
+	{"tool_calls", `SELECT COUNT(*) FROM tool_calls WHERE turn_id IN (
 		SELECT id FROM turns WHERE session_id IN (%s))`,
 		func(r *PruneResult) *int64 { return &r.ToolCalls }},
-	{"llm_calls", `DELETE FROM llm_calls WHERE turn_id IN (
+	{"llm_calls", `SELECT COUNT(*) FROM llm_calls WHERE turn_id IN (
 		SELECT id FROM turns WHERE session_id IN (%s))`,
 		func(r *PruneResult) *int64 { return &r.LLMCalls }},
-	{"events", `DELETE FROM events WHERE turn_id IN (
+	{"events", `SELECT COUNT(*) FROM events WHERE turn_id IN (
 		SELECT id FROM turns WHERE session_id IN (%s))`,
 		func(r *PruneResult) *int64 { return &r.Events }},
-	{"turns", `DELETE FROM turns WHERE session_id IN (%s)`,
+	{"turns", `SELECT COUNT(*) FROM turns WHERE session_id IN (%s)`,
 		func(r *PruneResult) *int64 { return &r.Turns }},
-	{"sessions", `DELETE FROM sessions WHERE id IN (%s)`,
-		func(r *PruneResult) *int64 { return &r.Sessions }},
 }
 
 // pruneVendorsSQL 은 아무 세션도 남지 않은 오래된 벤더만 지운다.
@@ -134,14 +125,19 @@ func (d *DB) Prune(ctx context.Context, now time.Time) (PruneResult, error) {
 		return PruneResult{}, err
 	}
 
-	for _, step := range pruneSteps {
-		for _, chunk := range idChunks(ids) {
-			n, err := exec(ctx, tx, fmt.Sprintf(step.query, placeholders(len(chunk))), chunk...)
-			if err != nil {
-				return PruneResult{}, fmt.Errorf("store: %s prune: %w", step.name, err)
+	for _, chunk := range idChunks(ids) {
+		for _, step := range pruneCounts {
+			var n int64
+			if err := tx.QueryRowContext(ctx, fmt.Sprintf(step.query, placeholders(len(chunk))), chunk...).Scan(&n); err != nil {
+				return PruneResult{}, fmt.Errorf("store: %s prune 계수: %w", step.name, err)
 			}
 			*step.dst(&res) += n
 		}
+		n, err := exec(ctx, tx, `DELETE FROM sessions WHERE id IN (`+placeholders(len(chunk))+`)`, chunk...)
+		if err != nil {
+			return PruneResult{}, fmt.Errorf("store: sessions prune: %w", err)
+		}
+		res.Sessions += n
 	}
 
 	// 벤더는 세션이 다 사라진 뒤에 본다. 순서를 바꾸면 방금 지운 세션의 벤더가 남는다.
@@ -246,7 +242,7 @@ func (s purgeStep) count(scoped bool) string {
 	return `SELECT COUNT(*) FROM ` + s.table + s.where(scoped)
 }
 
-// purgeSteps 는 v3 에서 원문이 남는 자리 **전부** 다.
+// purgeSteps 는 v1 에서 원문이 남는 자리 **전부** 다.
 //
 // v1 의 event_content 처럼 통째로 지울 테이블이 없다. 원문은 세 컬럼에 흩어져 있고
 // 나머지 컬럼(수치·모델·도구 이름·오류 타입)은 원문이 아니므로 남는다 — 행을 지우면
@@ -273,7 +269,7 @@ var purgeSteps = []purgeStep{
 
 // PurgeContent 는 원문만 지운다 (telemetryctl purge --content [--before]).
 //
-// v3 에서 원문이 남는 자리는 turns.prompt_text · events.payload · tool_calls.error_message
+// v1 에서 원문이 남는 자리는 turns.prompt_text · events.payload · tool_calls.error_message
 // 세 곳이다. 행을 지우지 않고 컬럼만 NULL 로 만든다 — 세션·턴·이벤트 행과 수치는 그대로라
 // 집계는 변하지 않고 원문 검색만 불가능해진다.
 //

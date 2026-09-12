@@ -6,11 +6,8 @@
 Claude Code·Codex 의 시그널을 직접 받고, 정규화·집계해 로컬 SQLite 에 저장한 뒤 회사 Collector 로
 전달하는 구조다.
 
-> **v3 전환 중:** SQLite 스키마는 새 `vendors → sessions → turns → events` 모델로 교체됐지만,
-> 이 문서가 설명하는 쓰기·집계·조회 런타임은 아직 기존 모델을 사용한다. DB를 열면 v3 마이그레이션이
-> 기존 도메인 데이터를 삭제하므로 후속 런타임 전환 전에는 데몬·CLI 기능이 실패한다. 현재 동작을
-> 설명하는 아래 절과 ADR은 전환 전 구현 기록이며, 새 DDL 계약은 [SQLite 스키마](sqlite-schema/README.md)를
-> 우선한다.
+> **로컬 스키마는 v1로 고정한다.** 빈 DB는 단일 DDL로 초기화하며, 개발 DB의 DDL 변경은
+> DB 재생성으로 적용한다. [SQLite 스키마 문서](sqlite-schema/README.md)를 따른다.
 
 독자는 둘이다.
 
@@ -29,9 +26,10 @@ Claude Code·Codex 의 시그널을 직접 받고, 정규화·집계해 로컬 S
 | [0006](adr/0006-로컬-파이프라인을-opt-out으로-전환하고-OTel-설정을-고정한다.md) | 배선은 opt-out 기본 ON, 로컬 OTel 설정 고정, 회사 준수는 forward 가 집행 |
 | [0007](adr/0007-데몬은-비정상-종료일-때만-자동-재시작한다.md) | 자동 실행 등록의 재시작 정책 — 비정상 종료일 때만 되살린다 |
 | [0008](adr/0008-로컬-데이터를-400일간-보존한다.md) | 모든 로컬 데이터 400일 고정 보존 |
-| [0009](adr/0009-로컬-저장-모델을-v3로-전환한다.md) | 현재 저장 모델 확정 — FTS 대신 `LIKE`, `rollup_hourly` 폐기, 세션 상태 2종 |
-| [0010](adr/0010-v3가-요구하는-식별-정보를-로컬에만-저장한다.md) | v3가 요구하는 경로·이메일·계정 ID를 로컬에만 저장, 상위 전달은 불변 |
+| [0009](adr/0009-로컬-저장-모델은-세션-턴-이벤트-계층으로-관리한다.md) | v1 저장 모델 확정 — FTS 대신 `LIKE`, `rollup_hourly` 폐기(조회 시점 `GROUP BY`), 세션 상태 2종, 삭제 순서, 읽기 인덱스는 단일 DDL에 포함 |
+| [0010](adr/0010-식별-정보를-로컬에만-저장한다.md) | 로컬 모델이 요구하는 경로·이메일·계정 ID를 로컬에만 저장, 상위 전달은 불변 |
 | [0012](adr/0012-배포-전-로컬-스키마는-단일-DDL로-관리한다.md) | 배포 전에는 `schema.go`의 `schemaSQL` 하나로 전체 DDL 관리, 구형 개발 DB는 재생성 |
+| [0013](adr/0013-GUI는-데몬의-로컬-API로-대시보드를-조회한다.md) | GUI 직접 SQLite 조회를 데몬의 인증된 로컬 HTTP API로 전환 |
 
 기존 설치 아키텍처는 [설치 아키텍처](installation-architecture.md)에 있다. 이 문서의 `§4.5`·`§5.4`
 같은 표기는 그 문서의 절 번호다.
@@ -100,14 +98,14 @@ internal/dashboard  ←  telemetryctl stats·sessions·status
 
 - **원본 바이트**(`receiver.Batch.Body`)는 포워더로 간다. 포워더가 회사 manifest 의 `Privacy` 기준으로
   원문·tool details 를 제거하고 재인코딩해 상위로 보낸다.
-- **정규화 결과**(`receiver.Batch.Result`)는 세션 조립기·저장소로 간다. v3 에서 원문이 남는 자리는
+- **정규화 결과**(`receiver.Batch.Result`)는 세션 조립기·저장소로 간다. v1 에서 원문이 남는 자리는
   `turns.prompt_text` 하나뿐이다.
 
 `daemon/pipeline.go` 의 `Consume` 은 **`forward.Enqueue` 를 직렬화 지점 밖에서 먼저 호출한다.**
 SQLite 가 느려도 상위 전달이 막히지 않아야 하기 때문이다(§5.4).
 
 조립기는 `pipeline.run` 이 소유하는 고루틴 하나가 **도착 순서대로** 먹인다. 순서가 갈리면 도구 호출
-순번이 밀려 결정 이벤트와 결과 이벤트가 서로 다른 `call_key` 를 얻는다 ([ADR 0009](adr/0009-로컬-저장-모델을-v3로-전환한다.md)).
+순번이 밀려 결정 이벤트와 결과 이벤트가 서로 다른 `call_key` 를 얻는다 ([ADR 0009](adr/0009-로컬-저장-모델은-세션-턴-이벤트-계층으로-관리한다.md)).
 
 ---
 
@@ -122,7 +120,7 @@ internal/
   session/      이벤트 → 세션 조립, 턴 경계, 파일·툴 추출                       (순수 함수, 시계 미접근)
   claudecode/   Claude Code 트랜스크립트에서 벤더 제목 조회
   codexapp/     Codex App Server에서 사용 한도·스레드 제목 조회
-  store/        SQLite 스키마·마이그레이션·쓰기·보존 정책·read-only 열기
+  store/        SQLite 스키마·초기화·쓰기·보존 정책·read-only 열기
   dashboard/    화면별 조회 API                                                   (Wails 의존 없음)
   runtimeinfo/  runtime.json (비밀 없음: 주소·pid·데이터 경로)
   autostart/    로그인 시 데몬 자동 실행 등록 (launchd LaunchAgent · systemd user unit)
@@ -209,7 +207,7 @@ ADR 0003 이 정한 규칙의 구현 형태다. **로컬 저장 규칙과 상위
 
 ### 4.1 무엇이 어디에 남는가
 
-[ADR 0010](adr/0010-v3가-요구하는-식별-정보를-로컬에만-저장한다.md) 이 **로컬 저장에 한해** 지정된
+[ADR 0010](adr/0010-식별-정보를-로컬에만-저장한다.md) 이 **로컬 저장에 한해** 지정된
 컬럼에 식별 정보를 담도록 허용했다. 상위 전달 규칙은 조금도 완화되지 않았다.
 
 | 데이터 | 로컬 SQLite | 상위 Collector |
@@ -290,16 +288,14 @@ sqlite3 "$DB" "SELECT file_path FROM file_changes;"  | grep -c '/'
 
 ## 5. SQLite 스키마
 
-DDL, 테이블 관계, PRAGMA, 보존 계층, 마이그레이션 규칙은
+DDL, 테이블 관계, PRAGMA, 보존 정책, 초기화 규칙은
 [SQLite 스키마 문서](sqlite-schema/README.md)로 분리했다. 테이블별 문서는 해당 목차에서 찾을 수 있다.
 
-스키마 버전 3은 기존 도메인 데이터를 보존하거나 백필하지 않는다. `meta`와 DB 파일만 유지한다.
-**쓰기 런타임은 PROJ-85가, 세션 생명주기·보존·원문 삭제는 PROJ-86이, 조회 계층
-(`internal/dashboard`)과 CLI 출력은 PROJ-87이 v3로 옮겼다.** PROJ-87은 조회가 요구하는
-읽기 인덱스 셋(`tool_calls(turn_id)`·`turns(session_id)`·`sessions(started_at)`)을
-`internal/store/schema.go`의 최신 전체 DDL에 포함한다(ADR 0012).
+스키마 버전은 v1로 고정하고 전체 DDL은 `schemaSQL`에서 관리한다.
+읽기 인덱스 셋(`tool_calls(turn_id)`·`turns(session_id)`·`sessions(started_at)`)도
+같은 DDL에 포함한다. 기존 개발 DB의 데이터 변환은 제공하지 않는다.
 
-보존 삭제의 판정 기준은 세션의 **마지막으로 알려진 활동**이다. v3에는 `last_event_at`이 없고
+보존 삭제의 판정 기준은 세션의 **마지막으로 알려진 활동**이다. 현재 스키마에는 `last_event_at`이 없고
 `started_at`·`ended_at`이 둘 다 선택이므로, 두 값과 소속 이벤트 시각 중 **가장 늦은 것**을 쓴다.
 시작 시각만 보면 400일 전에 시작해 지금도 도는 세션이 어제 만들어진 이벤트까지 함께 잃는다.
 시각을 하나도 모르는 세션은 판정 근거가 없어 대상에서 빠진다. 컷오프 경계는 열려 있다 —
@@ -342,7 +338,7 @@ func (r *Reader) DataDir() string
 위해 있다 — GUI 가 먼저 뜨고 나중에 enroll(자동 배선) 후 데몬이 첫 기동하며 DB 를 만드는 순서가 정상이고,
 이 메서드가 없으면 그 사용자는 앱을 껐다 켜야 데이터를 본다.
 
-`Session` 의 인자는 **`sessions.id`(int64)** 다. v1 의 문자열 `session_id` 가 아니다 — v3 에서
+`Session` 의 인자는 **`sessions.id`(int64)** 다. 세션 행의 기본 키이며,
 `session_key` 는 `(vendor_id, session_key)` 로만 고유해서 그것만으로는 세션을 가리킬 수 없다.
 `SessionRow.ID`·`Hit.ID` 가 그 값을 실어 나른다.
 
@@ -386,7 +382,7 @@ func (s *Service) Stop() error            // ServiceShutdown 자리
 상태 필터와 통합 검색을 한 질의에 담고 다음 페이지 정보를 함께 돌려준다.
 
 - **검색 대상은 네 컬럼이다** — `sessions.title` · `sessions.workspace_path` ·
-  `file_changes.file_path` · `turns.prompt_text`. v3 에 FTS 가 없어 전부 와일드카드를 escape 한
+  `file_changes.file_path` · `turns.prompt_text`. v1 에 FTS 가 없어 전부 와일드카드를 escape 한
   `LIKE` 이고 (ADR 0009), 파일 경로는 `file_changes → tool_calls → turns` JOIN 으로 세션에 닿는다.
   그 JOIN 은 **`EXISTS` 안에 가둔다** — 바깥에 풀면 세션 한 줄이 자식 행 수만큼 복제돼 토큰·비용
   합계가 그 배수로 부풀어 오른다.
@@ -398,7 +394,7 @@ func (s *Service) Stop() error            // ServiceShutdown 자리
   줄 수가 `Limit` 에 딱 맞아떨어질 때 마지막 페이지를 구분하려면 이 방법뿐이다. `NextCursor` 는
   마지막 페이지에서도 마지막 줄을 가리킨다(0 으로 비우면 처음부터 다시 받는 호출자가 생긴다).
 - **`ActivityRow.WorkType` 은 아직 항상 빈 문자열이다.** 작업 유형은 턴 분류(PROJ-92)의 결과이고
-  v3 `turns` 에는 그 값을 담을 컬럼이 없다. 그 전까지 추측해 채우지 않는다.
+  v1 `turns` 에는 그 값을 담을 컬럼이 없다. 그 전까지 추측해 채우지 않는다.
 
 정렬·커서 비교는 `COALESCE(started_at, 0)` 을 **양쪽에 똑같이** 쓴다. `sessions.started_at` 이
 NULL 일 수 있어서 한쪽만 COALESCE 하면 그런 세션이 첫 페이지에는 보이고 다음 페이지부터 조용히
@@ -409,7 +405,7 @@ NULL 일 수 있어서 한쪽만 COALESCE 하면 그런 세션이 첫 페이지�
 (`dashboard.MetricCostUSD` 등 상수). `Breakdown` 은 `Dim` 다섯 가지 × `BucketBy` 세 가지
 (`BucketKey`=""·`BucketHourOfDay`·`BucketDay`) 조합이다.
 
-### 6.1.2 v3 에서 지표가 오는 곳
+### 6.1.2 v1 에서 지표가 오는 곳
 
 `rollup_hourly` 가 없으므로 집계는 **조회 시점 `GROUP BY`** 다 (ADR 0009). 지표마다 출처가
 하나뿐이고, 출처가 다른 지표를 한 질의에 JOIN 으로 묶으면 행이 곱해져 모든 `SUM` 이 부푼다 —
@@ -424,12 +420,12 @@ NULL 일 수 있어서 한쪽만 COALESCE 하면 그런 세션이 첫 페이지�
 | `prompts` | `turns` (`turn_index IS NOT NULL`) | `started_at` |
 | `sessions_started`·`active_seconds` | `sessions` | `started_at` |
 
-**v3 에 출처가 없어 항상 0 인 필드**: `Totals` 의 `api_errors`·`retries`·`commits`·
+**v1 에 출처가 없어 항상 0 인 필드**: `Totals` 의 `api_errors`·`retries`·`commits`·
 `pull_requests`, `SessionRow` 의 같은 셋과 `responses`.
 지우지 않는 이유는 ADR 0009 가 `abandoned`·`handoff` 를 남긴 것과 같다 — 지우면 GUI TypeScript
 바인딩과 `stats --json`·`sessions --json` 출력이 깨진다.
 
-`Dim` 에서 v1 의 `type` 축이 사라졌다. v3 `events` 에는 벤더 속성을 담는 컬럼이 없어 그 축을
+`Dim`은 `type` 축을 제공하지 않는다. `events`에는 벤더 속성을 담는 컬럼이 없어 그 축을
 만들 입력 자체가 없다. `DimProject` 의 키는 `project_hash` 가 아니라 **`sessions.workspace_path`**
 이고 `Label` 이 그 basename 이다 (ADR 0010).
 
@@ -440,7 +436,7 @@ NULL 일 수 있어서 한쪽만 COALESCE 하면 그런 세션이 첫 페이지�
 - **nullable 은 포인터다.** `SessionRow.EndedAt *int64`, `ToolRow.DurationMS *int64`,
   `ToolRow.Success *bool`. 0 으로 눕히면 "1970년에 끝난 세션" 과 "진행 중", "0ms 툴 호출" 과
   "소요 시간 미상" 이 구분되지 않는다. JSON 에서는 `null` 이 된다.
-- **밖으로 나가는 시각은 전부 UTC unix 초다.** v3 에는 나노초 컬럼이 없다 (ADR 0009).
+- **밖으로 나가는 시각은 전부 UTC unix 초다.** v1 에는 나노초 컬럼이 없다 (ADR 0009).
 - **슬라이스는 비어 있되 `nil` 이 아니다.** JSON `null` 에 `.map` 을 걸면 프런트엔드가 터진다.
 - **에러 메시지에 SQL 이 들어가지 않는다.** Go 의 `error` 가 Promise reject 로 전파돼 사용자에게
   그대로 보인다. `queryErr` 가 이 규칙을 소유하고, 닫힌 핸들로 호출해 `SELECT`·`FROM`·`JOIN` 부재를
@@ -463,14 +459,14 @@ enroll 전 · 데몬 첫 실행 전)는 정상이다.
 - **진짜 실패는 여전히 에러다.** 빈 경로, 디렉터리를 지목한 경로, 잘못된 시간대 문자열.
 
 **파일이 있다고 열 수 있는 것은 아니다** (PROJ-97). `store.Open` 은 연결을 열어 파일을 만든 뒤
-마이그레이션을 실행하므로, 그 사이에는 **파일은 존재하고 테이블은 없다.** 파일 부재만 보고 붙으면
+스키마를 초기화하므로, 그 사이에는 **파일은 존재하고 테이블은 없다.** 파일 부재만 보고 붙으면
 그 핸들의 모든 질의가 `no such table` 로 실패하고, `Reader` 는 이미 붙은 것으로 보아 `Reopen` 을
 건너뛴다 — 앱을 껐다 켜기 전에는 회복되지 않는다. GUI 를 먼저 켜고 나중에 `local enable` 을 하는
 것이 정상 시나리오라 이 창은 실제로 밟힌다.
 
-그래서 `store.OpenReadOnlyIfPresent` 는 스키마 준비 여부(마이그레이션 v3 이상)까지 보고, 아직이면
+그래서 `store.OpenReadOnlyIfPresent` 는 스키마 준비 여부(기록된 스키마 버전)까지 보고, 아직이면
 **파일이 없을 때와 같은 답**(`nil, nil`)을 준다. 화면은 그동안 빈 결과를 그리고, 다음 조회의 재연결이
-그대로 답이 된다. 마이그레이션 도중 크래시로 절반만 적용된 DB 도 같은 취급이다.
+그대로 답이 된다. 초기화가 완료되지 않은 DB 도 같은 취급이다.
 
 ### 6.4 `Today(tz)` 의 시간대 처리
 
@@ -635,7 +631,7 @@ Windows 에서 데몬의 prune 이 막힌다.
 
 #### `ActiveAgents` 는 날짜와 무관하다
 
-진행 중 판정은 **`ended_at IS NULL` 하나**다 (ADR 0009, v3 에는 `sessions.status` 가 없다).
+진행 중 판정은 **`ended_at IS NULL` 하나**다 (ADR 0009, v1 에는 `sessions.status` 가 없다).
 "지금 몇 개가 돌고 있나" 는 과거 날짜로 되돌릴 수 없으므로 `Home` 은 선택 날짜와 무관하게
 **지금**을 답한다. `HomeSummary.IsToday` 가 화면이 표기를 고르는 손잡이다.
 
@@ -643,7 +639,7 @@ Windows 에서 데몬의 prune 이 막힌다.
 
 하루당 질의는 넷이다 — 선택 날짜·전날 각각에 대해 승격 테이블 집계 1회(`aggregate.go`,
 출처별로 나뉜 다섯 문장)와 `llm_calls` 행 스캔 1회. 최근 세션은 목록 1회 + 그 세션들의
-`llm_calls` 1회다. **`llm_calls.called_at` 에는 인덱스가 없다**(v4 는 `ix_llm_turn` 만 둔다).
+`llm_calls` 1회다. **`llm_calls.called_at` 에는 인덱스가 없다**(`ix_llm_turn`은 `turn_id` 인덱스다).
 하루치 행 수가 커지면 이 스캔이 먼저 느려진다.
 
 ---
@@ -738,7 +734,7 @@ UTC 정시 버킷**이다. UTC+5:30·+5:45 같은 오프셋에서는 정시 버�
 
 `tokens` 는 §6.8 과 같이 **입력+출력**뿐이다. 캐시 토큰은 따로 보이되 총량에 더하지 않는다.
 
-**`reasoning_tokens` 필드는 두지 않았다.** v3 쓰기 경로에 출처가 없어(`store/promote.go` 가 이 컬럼에
+**`reasoning_tokens` 필드는 두지 않았다.** v1 쓰기 경로에 출처가 없어(`store/promote.go` 가 이 컬럼에
 `NULL` 을 넣는다) 항상 0 이 되기 때문이다. 항상 0 인 필드를 새 표면에 두면 화면이 "reasoning 0 토큰"
 이라는 잘못된 사실을 그린다. `Totals` 의 `api_errors` 와 같은 판단이고, 그쪽은 이미 나간 TS 바인딩
 때문에 지우지 못했을 뿐이다. 출처가 생기면 그때 필드를 더한다.
@@ -1145,12 +1141,12 @@ telemetryctl status
 - `stats` 의 합계 행은 `dim=total` 을 따로 질의해 만든다. 표시된 행의 합으로 계산하면 `--limit`
   으로 잘렸을 때 조용히 틀린 숫자가 된다.
 - `--group project` 의 키는 `sessions.workspace_path` 이고 표에는 basename 이 나온다 —
-  v3 에는 `project_hash` 컬럼이 없다 (ADR 0010). `--status abandoned|handoff` 는 어휘로만
-  남아 있고 v3 에서 산출되지 않아 항상 빈 결과다 (ADR 0009).
+  v1 에는 `project_hash` 컬럼이 없다 (ADR 0010). `--status abandoned|handoff` 는 어휘로만
+  남아 있고 v1 에서 산출되지 않아 항상 빈 결과다 (ADR 0009).
 - 사람용 출력과 `--json` 이 한 구조체에서 나오고, 표 셀은 그 구조체 필드에서만 만든다 — 표는 JSON
   의 부분집합이다. JSON 시각은 UTC unix 초로 통일하되 `timezone`·`utc_offset_seconds` 를 함께 실어
   기계가 로컬 시각을 복원할 수 있게 한다.
-- `purge --content` 는 v3 에서 원문이 남는 세 컬럼(`turns.prompt_text`·`events.payload`·
+- `purge --content` 는 v1 에서 원문이 남는 세 컬럼(`turns.prompt_text`·`events.payload`·
   `tool_calls.error_message`)을 한 트랜잭션으로 비운다. 행을 지우지 않고 컬럼만 `NULL` 로 만들어
   세션·턴·이벤트 행과 집계 수치는 남기고 원문만 없앤다. 컬럼별 계수를 함께 출력한다.
 - `purge --content` 는 지우기 전에 대상 행 수와 되돌릴 수 없음을 알린다. 이 계수는 실제 삭제와
@@ -1380,8 +1376,8 @@ SQL 스윕이 보완한다(ADR 0019, ADR 0020).
 
 | 한계 | 내용·완화 |
 |---|---|
-| **파일별 라인 배분이 근사** | `claude_code.lines_of_code.count` 메트릭에는 파일명이 없다. `tool_result` 의 `tool_input` 에서 파일을 얻고 같은 시각의 증분을 귀속시키므로, 한 응답에서 여러 파일을 고치면 배분이 근사가 된다. **세션 합계(`sessions.lines_added`)는 메트릭에서 직접 받아 정확하고 파일별 배분만 근사다.** v3 의 `file_changes.additions`·`deletions` 는 이 근사를 저장하지 않고 `NULL` 로 둔다 — 스키마 문서가 "미관측은 `NULL`" 이라고 못 박았고, 근사값을 관측값처럼 담는 것보다 없는 편이 낫다. 조립기 안의 배분(`lineLedger`)은 세션 합계 검증용으로 남아 있고 `Σ배분 ≤ total` 불변식을 지킨다 |
-| **제목 품질** | `sessions.title`은 **벤더가 만든 제목만** 담는다(ADR 0018). Codex는 App Server의 `thread.name`(ADR 0017), Claude Code는 트랜스크립트의 `ai-title`이다. 조립기는 제목을 만들지 않으므로 그 경로가 없는 벤더는 NULL 이고, 화면이 `title → project_name → 벤더명` 순으로 폴백한다 |
+| **파일별 라인 배분이 근사** | `claude_code.lines_of_code.count` 메트릭에는 파일명이 없다. `tool_result` 의 `tool_input` 에서 파일을 얻고 같은 시각의 증분을 귀속시키므로, 한 응답에서 여러 파일을 고치면 배분이 근사가 된다. **세션 합계(`sessions.lines_added`)는 메트릭에서 직접 받아 정확하고 파일별 배분만 근사다.** v1 의 `file_changes.additions`·`deletions` 는 이 근사를 저장하지 않고 `NULL` 로 둔다 — 스키마 문서가 "미관측은 `NULL`" 이라고 못 박았고, 근사값을 관측값처럼 담는 것보다 없는 편이 낫다. 조립기 안의 배분(`lineLedger`)은 세션 합계 검증용으로 남아 있고 `Σ배분 ≤ total` 불변식을 지킨다 |
+| **제목 품질** | `sessions.title`은 **벤더가 만든 제목만** 담는다(ADR 0018). Codex는 App Server의 `thread.name`(ADR 0017), Claude Code는 트랜스크립트의 `ai-title`이다. 조립기는 제목을 만들지 않으므로 그 경로가 없는 벤더는 NULL 이고, 화면은 제목이 없으면 벤더명으로 표시한다 |
 | **`abandoned` 오판 가능** | "마지막 툴 이벤트가 실패이고 이후 성공 없음" 이라는 휴리스틱이다. **화면 필터로만 쓰고 지표로 쓰지 않는다.** 판정 근거는 세션 마감 로그(`s.Diag.StatusReason`)에 남는다 |
 | **데몬 미실행 중 유실** | 위 첫 문단. PROJ-55 의 자동 실행 등록이 대부분을 막지만, 등록할 수 없는 환경과 영구 실패는 남는다 |
 | **Windows 는 자동 실행 등록이 없다** | `autostart` 명령이 `ErrUnsupportedPlatform` 으로 알리고 `telemetryctl daemon` 직접 실행을 안내한다. 작업 스케줄러 등록은 PROJ-56 이다. **경고가 아니라 정보로 출력한다** — 실패한 것이 없기 때문이다 |
@@ -1437,26 +1433,23 @@ PowerShell은 `& '실행 경로' hook codex`를 사용하고, Linux·macOS의 PO
 
 ## 10. 범위 밖 · 후속 티켓
 
-1. **SQLite v3 런타임 전환** — `vendors`, `sessions`, `turns`, `events`, `llm_calls`, `tool_calls`,
-   `file_changes`에 맞춰 디코드 결과의 ETL, 쓰기, 조회, 보존과 GUI 계약을 교체하고 전체 테스트를
-   복구한다
-2. **데몬 자동 실행 등록 — Windows** (PROJ-56, 작업 스케줄러). macOS·리눅스는 PROJ-55 에서 끝났다
+1. **데몬 자동 실행 등록 — Windows** (PROJ-56, 작업 스케줄러). macOS·리눅스는 PROJ-55 에서 끝났다
    (7.7절, ADR 0007). Settings 「시작 프로그램」 토글은 `autostart.Manager` 를 감싸면 되고,
    등록 상태를 `state.json` 에 두지 않으므로 토글의 진실원은 OS 서비스 관리자 하나다
-3. **Insights 경고 카드·제안** — 반복 실패 감지, 유사 프롬프트 탐지, 벤더 전환 분석
-4. **제목·요약 품질 개선** (`title_source='llm'`) — 프롬프트를 외부로 보내는 문제라 **별도 프라이버시
+2. **Insights 경고 카드·제안** — 반복 실패 감지, 유사 프롬프트 탐지, 벤더 전환 분석
+3. **제목·요약 품질 개선** (`title_source='llm'`) — 프롬프트를 외부로 보내는 문제라 **별도 프라이버시
    검토가 선행**되어야 한다. ADR 0003 은 원문이 로컬을 떠나지 않는다는 전제 위에 서 있고, 그 전제를
    깨는 결정은 새 ADR 을 요구한다
-5. **Gemini CLI · Cursor 연동** — OTLP 지원 여부 조사부터. 스키마의 `vendor` 는 제약이 없어 받을 수는
+4. **Gemini CLI · Cursor 연동** — OTLP 지원 여부 조사부터. 스키마의 `vendor` 는 제약이 없어 받을 수는
    있으나 자동 설정과 시그널 매핑이 없다
-6. **Settings 의 Cloud 탭** — 회사 서버 조회. 로컬 DB 가 아니라 회사 API 를 읽으므로 별도 경로다
-7. **`contracts/enrollment-manifest.schema.json` 에 `127.0.0.1` 허용** — 서버 저장소와 협의 필요.
+5. **Settings 의 Cloud 탭** — 회사 서버 조회. 로컬 DB 가 아니라 회사 API 를 읽으므로 별도 경로다
+6. **`contracts/enrollment-manifest.schema.json` 에 `127.0.0.1` 허용** — 서버 저장소와 협의 필요.
    지금은 `localhost` 표기로 우회한다(7.3절)
-8. **gRPC 상위 전달** — 현재는 `forward.ErrGRPCUnsupported` 로 거부한다
-9. **`resource_attributes` → `OTEL_RESOURCE_ATTRIBUTES` 배선** (회사 단위 태깅)
-10. **`gui/` CI 스텝** — 6.7절
-11. **`wails3 generate bindings` 생성물 최신성 CI 검증** — GUI 티켓에서 정한다
-12. **툴 출력 본문 파싱** — 「테스트 실행 (2 실패)」의 실패 건수 같은 것. 지금은 성공/실패 여부만
+7. **gRPC 상위 전달** — 현재는 `forward.ErrGRPCUnsupported` 로 거부한다
+8. **`resource_attributes` → `OTEL_RESOURCE_ATTRIBUTES` 배선** (회사 단위 태깅)
+9. **`gui/` CI 스텝** — 6.7절
+10. **`wails3 generate bindings` 생성물 최신성 CI 검증** — GUI 티켓에서 정한다
+11. **툴 출력 본문 파싱** — 「테스트 실행 (2 실패)」의 실패 건수 같은 것. 지금은 성공/실패 여부만
     저장한다
-13. **systemd `Type=notify`** (`sd_notify`) — `enable --now` 가 반환될 때 데몬이 이미 수신 가능함을
+12. **systemd `Type=notify`** (`sd_notify`) — `enable --now` 가 반환될 때 데몬이 이미 수신 가능함을
     systemd 가 알게 한다. 지금은 CLI 가 `/healthz` 폴링으로 대신한다 (ADR 0007 Follow-up)
