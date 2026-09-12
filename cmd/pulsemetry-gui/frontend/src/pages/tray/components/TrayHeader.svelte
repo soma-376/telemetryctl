@@ -97,6 +97,7 @@
   <span class="flex-none whitespace-nowrap" style="font-size:12px;color:#b3aba0"
     >{busy ? "조회 중" : `${synced} 조회`}</span
   >
+
   <button
     type="button"
     disabled={busy}

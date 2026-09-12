@@ -189,8 +189,8 @@ func TestAttributeValueCoercion(t *testing.T) {
 			name: "conversation.id 는 Codex 의 session.id 다",
 			key:  "conversation.id", value: anyStr("conv_42"),
 			check: func(t *testing.T, c carrier) {
-				if c.sessionID != "conv_42" {
-					t.Errorf("sessionID = %q", c.sessionID)
+				if c.conversationID != "conv_42" {
+					t.Errorf("conversationID = %q", c.conversationID)
 				}
 			},
 		},
@@ -229,6 +229,16 @@ func TestStructuredContentIsSerialized(t *testing.T) {
 	}
 	if want := "file_path"; !strings.Contains(body.body, want) {
 		t.Errorf("직렬화 결과에 %q 가 없다: %s", want, body.body)
+	}
+}
+
+func TestCodexConversationIDTakesPriorityOverSessionID(t *testing.T) {
+	c := carrier{sessionID: "otel-session", conversationID: "codex-thread"}
+	if got := c.sessionIDFor("codex"); got != "codex-thread" {
+		t.Fatalf("Codex session ID = %q", got)
+	}
+	if got := c.sessionIDFor("claude_code"); got != "otel-session" {
+		t.Fatalf("Claude session ID = %q", got)
 	}
 }
 

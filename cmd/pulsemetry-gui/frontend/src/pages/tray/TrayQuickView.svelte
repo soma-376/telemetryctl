@@ -121,6 +121,5 @@
       onRequestQuit={requestQuit}
     />
   {/if}
-
   <QuitDialog open={quitOpen} onClose={() => (quitOpen = false)} />
 </div>

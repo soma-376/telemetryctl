@@ -31,6 +31,8 @@ import (
 	"time"
 
 	"github.com/your-org/pulsemetry/internal/autostart"
+	"github.com/your-org/pulsemetry/internal/claudecode"
+	"github.com/your-org/pulsemetry/internal/codexapp"
 	"github.com/your-org/pulsemetry/internal/dashboard"
 	"github.com/your-org/pulsemetry/internal/dashboard/tray"
 	"github.com/your-org/pulsemetry/internal/forward"
@@ -148,6 +150,8 @@ type Options struct {
 	ForwardTokens forward.TokenSource
 	// VendorLimitCollector 는 테스트가 실제 벤더에 연결하지 않게 하는 seam 이다.
 	VendorLimitCollector vendorlimit.VendorCollector
+	// CodexThreadReader 는 테스트가 실제 App Server를 띄우지 않게 하는 seam 이다.
+	CodexThreadReader codexapp.ThreadReader
 
 	// Ready 는 기동이 끝나 요청을 받을 수 있게 된 순간 한 번 호출된다.
 	// runtime.json 에 쓴 것과 같은 값을 준다.
@@ -220,6 +224,9 @@ type daemon struct {
 	tokens         forward.TokenSource
 	limitCollector *vendorlimit.Collector
 	limits         *vendorlimit.Refresher
+	codex          *codexapp.Client
+	codexTitles    *titleRefresher
+	claudeTitles   *titleRefresher
 	// query 는 GUI 조회에 쓰는 read-only 핸들이다. 쓰기 커넥션(db)과 별개다 —
 	// dashboard 는 mode=ro 를 강제하고, 조회가 쓰기를 할 수 없다는 것이 그 계약이다.
 	query *dashboard.Service
@@ -275,10 +282,24 @@ func (d *daemon) start(ctx context.Context) error {
 	}
 
 	collector := d.opts.VendorLimitCollector
+	threadReader := d.opts.CodexThreadReader
 	if collector == nil {
-		d.limitCollector = vendorlimit.NewCollector(vendorlimit.Options{})
+		d.codex = codexapp.New(codexapp.Options{})
+		d.limitCollector = vendorlimit.NewCollector(vendorlimit.Options{CodexClient: d.codex})
 		collector = d.limitCollector
 	}
+	// 제목 조회는 thread.name만 읽으며 대화 원문을 요청하지 않는다. 따라서 원문 보관
+	// 설정과 무관하게 벤더가 제공한 제목을 저장할 수 있다 (ADR 0017·0018).
+	if threadReader == nil {
+		if d.codex == nil {
+			d.codex = codexapp.New(codexapp.Options{})
+		}
+		threadReader = d.codex
+	}
+	d.codexTitles = newCodexTitleRefresher(ctx, threadReader, db, d.log)
+	// Claude Code 는 세션 제목을 자기 트랜스크립트에 남긴다. 홈을 못 찾으면 nil 이고
+	// 그때는 이 벤더의 제목이 채워지지 않는다 (ADR 0018).
+	d.claudeTitles = newClaudeTitleRefresher(ctx, claudecode.TranscriptRoot(), db, d.log, d.opts.Now)
 	d.limits = vendorlimit.NewRefresher(collector, db, vendorlimit.RefreshOptions{
 		Now:    d.opts.Now,
 		Logger: d.log,
@@ -307,6 +328,8 @@ func (d *daemon) start(ctx context.Context) error {
 		WriteTimeout: storeWriteTimeout,
 		PruneTimeout: storePruneTimeout,
 		SessionTTL:   sessionMemoryTTL,
+		CodexTitles:  d.codexTitles,
+		ClaudeTitles: d.claudeTitles,
 	})
 
 	if err := d.startReceiver(); err != nil {
@@ -599,6 +622,10 @@ func (d *daemon) shutdown() {
 			d.log.Printf("경고: 제한 시간 안에 파이프라인을 비우지 못했다. 미저장 집계가 남을 수 있다")
 		}
 	}
+	if d.codexTitles != nil {
+		d.codexTitles.Close()
+	}
+	d.claudeTitles.Close()
 
 	if d.fwd != nil {
 		ctx, cancel := context.WithDeadline(context.Background(), stageDeadline(overall, stage))
@@ -616,6 +643,11 @@ func (d *daemon) shutdown() {
 	if d.limitCollector != nil {
 		if err := d.limitCollector.Close(); err != nil {
 			d.log.Printf("경고: 벤더 한도 수집기 종료 실패: %v", err)
+		}
+	}
+	if d.codex != nil {
+		if err := d.codex.Close(); err != nil {
+			d.log.Printf("경고: Codex App Server 종료 실패: %v", err)
 		}
 	}
 

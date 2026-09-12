@@ -154,9 +154,18 @@ func (a *Assembler) Session(id string) (Session, bool) {
 // 데몬은 오래 살고 세션은 계속 쌓이므로 이 호출이 없으면 맵이 무한히 자란다.
 // 지워진 session.id 가 다시 등장하면 새 세션으로 시작한다.
 func (a *Assembler) Prune(before event.UnixSec) int {
+	return a.PruneIf(before, nil)
+}
+
+// PruneIf 는 제거 대상 세션에 allow를 호출하고, 허용된 세션만 메모리에서 제거한다.
+// 연관 상태의 정리가 준비되지 않으면 false를 반환해 다음 정리까지 보류할 수 있다.
+func (a *Assembler) PruneIf(before event.UnixSec, allow func(Session) bool) int {
 	n := 0
 	for id, s := range a.sessions {
 		if v, ok := s.ended.Get(); ok && v < before {
+			if allow != nil && !allow(s.session()) {
+				continue
+			}
 			delete(a.sessions, id)
 			a.turns.Forget(id)
 			n++
