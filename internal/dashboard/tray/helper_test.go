@@ -183,18 +183,6 @@ type stubCollector struct {
 	snap  vendorlimit.Snapshot
 }
 
-// builderSource 는 데몬 전용 Builder를 GUI 캐시 테스트에만 연결한다. 운영 Builder에
-// 외부 갱신 메서드를 억지로 추가하지 않기 위한 테스트 어댑터다.
-type builderSource struct{ *Builder }
-
-func (s builderSource) RefreshManual(ctx context.Context, q Query) (Snapshot, error) {
-	return s.Snapshot(ctx, q)
-}
-
-func (s builderSource) RefreshAuto(ctx context.Context, q Query) (Snapshot, error) {
-	return s.Snapshot(ctx, q)
-}
-
 func (c *stubCollector) collect(context.Context) vendorlimit.Snapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -208,28 +196,23 @@ func (c *stubCollector) count() int {
 	return c.calls
 }
 
-// newTestCache 는 벽시계와 실제 한도 조회에 닿지 않는 캐시다. 출처는 같은 프로세스의
-// Builder 라 로컬 질의는 진짜로 돌고, 한도만 stub 으로 갈아끼운다.
-func newTestCache(svc *dashboard.Service, snap vendorlimit.Snapshot) (*Cache, *stubCollector, *time.Time) {
+// newTestBuilder 는 벽시계와 실제 한도 조회에 닿지 않는 조립기다. 로컬 질의는 진짜로
+// 돌고, 한도만 stub 으로 갈아끼운다.
+func newTestBuilder(svc *dashboard.Service, snap vendorlimit.Snapshot) (*Builder, *stubCollector, *time.Time) {
 	col := &stubCollector{snap: snap}
 	clock := testNow
 	b := NewBuilder(svc)
 	b.now = func() time.Time { return clock }
 	b.limits = col.collect
-	m := New(builderSource{b})
-	m.now = func() time.Time { return clock }
-	return m, col, &clock
+	return b, col, &clock
 }
 
-// newTestCacheWithLimits 는 한도 조회를 통째로 갈아끼운 캐시다. 로컬 질의는 진짜로 돈다.
-func newTestCacheWithLimits(svc *dashboard.Service, limits func(context.Context) vendorlimit.Snapshot) *Cache {
-	clock := testNow
+// newTestBuilderWithLimits 는 한도 조회를 통째로 갈아끼운 조립기다. 로컬 질의는 진짜로 돈다.
+func newTestBuilderWithLimits(svc *dashboard.Service, limits func(context.Context) vendorlimit.Snapshot) *Builder {
 	b := NewBuilder(svc)
-	b.now = func() time.Time { return clock }
+	b.now = func() time.Time { return testNow }
 	b.limits = limits
-	m := New(builderSource{b})
-	m.now = func() time.Time { return clock }
-	return m
+	return b
 }
 
 // ── 단언 보조 ───────────────────────────────────────────────────────────────
