@@ -14,6 +14,7 @@ import (
 )
 
 type Result struct {
+	ManagedEntries []ManagedEntry
 	Path           string
 	BackupPath     string
 	OriginalSHA256 string

@@ -300,5 +300,5 @@ func MergeClaude(path string, m *contract.Manifest, token string, _ bool) (Resul
 	if err := AtomicWriteFile(path, out, 0o600); err != nil {
 		return Result{}, err
 	}
-	return Result{Path: path, ManagedKeys: keys, Created: !existed}, nil
+	return Result{Path: path, ManagedKeys: keys, ManagedEntries: captureManaged(root, keys), Created: !existed}, nil
 }

@@ -38,13 +38,12 @@ ADR [0003](0003-원문과-tool-details를-로컬에만-보관.md) 이 정한 방
    `state.Local.Enabled` 를 켠다. 사용자의 탈출구는 `telemetryctl local disable` 이다.
 2. **로컬 OTel 설정은 회사 manifest 와 무관하게 고정한다** (`installer.localProfile`). endpoint 는
    `http://localhost:<port>`, protocol 은 `http/protobuf`, compression 은 없음, signals 는 셋 다 켬,
-   privacy 는 벤더 설정에 나타나는 다섯 항목만 고정한다 — `collect_assistant_responses` 만 끄고
+   privacy 는 벤더 설정에 나타나는 다섯 항목을 켠다 — `collect_assistant_responses`·
    `collect_user_prompts`·`collect_tool_details`·`collect_tool_content`·`collect_raw_api_bodies` 를 켠다.
    `collect_user_email` 은 어느 벤더 설정에도 나타나지 않으므로 회사 값을 그대로 둔다 — 로컬에서 켜 봤자
    쓰이지 않고, [ADR 0003](0003-원문과-tool-details를-로컬에만-보관.md) 이 `user.email` 을 절대 저장 금지
    목록에 넣었다(그 allowlist 스키마가 두 번째 방어선이다 — 회사가 이 값을 켜도 로컬 저장은 막힌다).
-   값은 PROJ-45 티켓의 참고 자료를 따른다.
-   응답 원문만 끄는 이유는 로컬 파이프라인이 그것을 쓰지 않으면서 배치 크기만 키우기 때문이다.
+   응답 원문도 로컬 수집에 포함한다. 상위 전달 허용 여부는 회사 manifest로 별도 판단한다.
 3. **회사 manifest 준수는 전적으로 `internal/forward` 가 집행한다.** 축이 둘이다.
    - `Signals` — 회사가 끈 시그널은 `Enqueue` 가 큐에 넣지 않는다 (신규).
    - `Privacy` — 회사가 금지한 원문은 `Scrub` 이 지운 뒤 보낸다 (기존).

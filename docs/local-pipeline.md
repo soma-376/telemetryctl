@@ -970,7 +970,7 @@ telemetryctl local disable [--data-dir <경로>] [--state <경로>]
    | `otlp.protocol` | `http/protobuf` |
    | `otlp.compression` | 없음 — 수신기는 `identity`·`gzip` 만 풀고, loopback 에서 압축이 벌어 주는 것이 없다 |
    | `signals` | 셋 다 `true` |
-   | `privacy` | `collect_assistant_responses` 만 `false`, 나머지 `true` |
+   | `privacy` | 벤더 설정에 쓰는 다섯 항목 `true` (`collect_user_email`은 회사 값 유지) |
 
    회사 값이 살아남는 것은 벤더 설정에 나타나지 않는 필드뿐이다 — `collect_user_email`,
    `repository_allowlist`, `timeout_ms`, 그리고 Codex `environment` 가 파생되는 `resource_attributes`.
@@ -1355,9 +1355,10 @@ SQL 스윕이 보완한다(ADR 0019, ADR 0020).
 세션 이름이 없으므로 이름은 같은 ID로 App Server에서 비동기 조회하고, 확인되면
 `Codex 세션 제목 확인: session_id=... title=...` 로그를 별도로 남긴다.
 
-훅 소유권은 별도 state나 fingerprint 파일이 아니라 `type=command`, Pulsemetry 실행 파일 이름,
-예약 서브커맨드 `hook codex`의 일치로 판정한다. 따라서 경로가 바뀐 재배선도 중복을 만들지 않고,
-로컬 배선 해제는 사용자 handler를 남긴 채 Pulsemetry handler만 제거한다.
+명시적 재배선의 훅 후보는 `type=command`, Pulsemetry 실행 파일 이름,
+예약 서브커맨드 `hook codex`의 일치로 판정한다. 따라서 경로가 바뀐 재배선도 중복을 만들지 않는다.
+uninstall은 이 후보 판정만으로 삭제하지 않고 `managed-settings.json`의 마지막 적용 지문을
+비교한다. 사용자 변경을 보존하는 제거·drift 정책은 [설치 해제](uninstall.md)와 ADR 0022를 따른다.
 
 ---
 

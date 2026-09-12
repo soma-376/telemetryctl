@@ -619,7 +619,7 @@ func TestStateSchemaMigrationV3ToV5(t *testing.T) {
 			OTLP:          contract.OTLP{Endpoint: h.upstream.srv.URL, Protocol: "http/protobuf"},
 			Signals:       contract.Signals{Logs: true},
 		},
-		"targets": []installer.Target{{Tool: "claude", Path: "/x", ManagedKeys: []string{"k"}}},
+		"targets": []installer.Target{{Tool: "claude", Path: "/x"}},
 	}
 	raw := mustJSON(t, v3)
 	if err := os.WriteFile(h.statePath, raw, 0o600); err != nil {

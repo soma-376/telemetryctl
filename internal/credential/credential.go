@@ -45,10 +45,14 @@ const (
 
 // knownAccounts 는 Set/Get/Delete 가 허용하는 계정 전체다.
 var knownAccounts = map[Account]struct{}{
+	AccountLocalControl: {},
 	AccountInstallation: {},
 	AccountLocalIngest:  {},
 	AccountTelemetry:    {},
 }
+
+// AccountLocalControl은 벤더 설정으로 전달하지 않는 데몬 종료 전용 자격증명이다.
+const AccountLocalControl Account = "local-control"
 
 // resolve 는 Account 를 키링 조회 좌표로 바꾼다. Account 는 string 기반이라
 // credential.Account("instalation") 같은 값이 만들어질 수 있는데, 그대로 키링에
