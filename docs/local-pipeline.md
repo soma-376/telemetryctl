@@ -28,6 +28,8 @@ Claude Code·Codex 의 시그널을 직접 받고, 정규화·집계해 로컬 S
 | [0008](adr/0008-로컬-데이터를-400일간-보존한다.md) | 모든 로컬 데이터 400일 고정 보존 |
 | [0009](adr/0009-로컬-저장-모델은-세션-턴-이벤트-계층으로-관리한다.md) | v1 저장 모델 확정 — FTS 대신 `LIKE`, `rollup_hourly` 폐기(조회 시점 `GROUP BY`), 세션 상태 2종, 삭제 순서, 읽기 인덱스는 단일 DDL에 포함 |
 | [0010](adr/0010-식별-정보를-로컬에만-저장한다.md) | 로컬 모델이 요구하는 경로·이메일·계정 ID를 로컬에만 저장, 상위 전달은 불변 |
+| [0012](adr/0012-배포-전-로컬-스키마는-단일-DDL로-관리한다.md) | 배포 전에는 `schema.go`의 `schemaSQL` 하나로 전체 DDL 관리, 구형 개발 DB는 재생성 |
+| [0013](adr/0013-GUI는-데몬의-로컬-API로-대시보드를-조회한다.md) | GUI 직접 SQLite 조회를 데몬의 인증된 로컬 HTTP API로 전환 |
 
 기존 설치 아키텍처는 [설치 아키텍처](installation-architecture.md)에 있다. 이 문서의 `§4.5`·`§5.4`
 같은 표기는 그 문서의 절 번호다.
@@ -46,9 +48,9 @@ Claude Code·Codex 의 시그널을 직접 받고, 정규화·집계해 로컬 S
 
 화면별 조회 계약이 대상으로 삼는 네 화면은 Home · Activity · Session Detail · Tray다.
 
-유지되는 구조 원칙 (변경 없음):
-- SQLite/WAL, 데몬이 소유하고 **GUI는 read-only**로 연다 (ADR 0002)
-- GUI는 `internal/dashboard`를 **직접 import**한다. **로컬 HTTP 조회 API를 만들지 않는다** (ADR 0004)
+유지되는 구조 원칙:
+- SQLite/WAL의 읽기·쓰기는 데몬이 소유하고 GUI는 DB를 열지 않는다 (ADR 0013)
+- GUI는 인증된 localhost API로 데몬이 조립한 화면 스냅샷을 받는다 (ADR 0013)
 - 모든 로컬 데이터 **400일 보존** (ADR 0008)
 
 > **현재 미충족 항목.** `cmd/pulsemetry-gui`(Wails v3 + Svelte)는 `develop`에 없고
@@ -115,7 +117,9 @@ internal/
   otlpdecode/   protobuf·protojson 디코드, content 제거 재인코딩(Scrub)          (proto 의존 격리)
   receiver/     loopback OTLP/HTTP 수신기 + Sink 인터페이스
   forward/      상위 Collector 전달 (유계 큐 · 제한된 재시도 · 토큰 갱신)
-  session/      이벤트 → 세션 조립, 턴 경계, 제목 휴리스틱, 파일·툴 추출          (순수 함수, 시계 미접근)
+  session/      이벤트 → 세션 조립, 턴 경계, 파일·툴 추출                       (순수 함수, 시계 미접근)
+  claudecode/   Claude Code 트랜스크립트에서 벤더 제목 조회
+  codexapp/     Codex App Server에서 사용 한도·스레드 제목 조회
   store/        SQLite 스키마·초기화·쓰기·보존 정책·read-only 열기
   dashboard/    화면별 조회 API                                                   (Wails 의존 없음)
   runtimeinfo/  runtime.json (비밀 없음: 주소·pid·데이터 경로)
@@ -155,7 +159,7 @@ gui/            Wails v3 앱 (별도 go.mod, 아직 없음 — PROJ-35)
 
 | 어휘 | 소유자 | 이유 |
 |---|---|---|
-| `event.Content` · `event.ContentKind` | `event` | `otlpdecode` 가 뽑고 `session` 이 제목을 만들고 `store` 가 `turns.prompt_text` 에 쓴다. 세 지점이 같은 타입이어야 어긋남을 컴파일러가 잡는다 |
+| `event.Content` · `event.ContentKind` | `event` | `otlpdecode` 가 뽑고 `session` 이 프롬프트의 턴 귀속을 정하고 `store` 가 `turns.prompt_text` 에 쓴다. 세 지점이 같은 타입이어야 어긋남을 컴파일러가 잡는다 |
 | `event.Path` · `event.NormalizePath` | `event` | `project_hash`+`project_name`, `file_path_hash`+`file_name`, `target_hash`+`target_name` 세 쌍의 **유일한 생산자**. 전체 경로가 이 타입을 통과할 자리가 없다 |
 | `event.CumulativeState` | `event` | `session` 이 누적 계열의 리셋과 콜드 스타트를 판정한다. 규칙이 여러 벌이면 같은 스트림에서 서로 다른 비용이 나온다 |
 
@@ -183,6 +187,19 @@ gui/            Wails v3 앱 (별도 go.mod, 아직 없음 — PROJ-35)
 "얼마나 일찍 거르느냐" 의 문제이고, 창을 지나친 중복의 실질 피해는 세션 합계와 호출 순번이다.
 
 ---
+
+### 3.5 세션 제목 조회
+
+제목의 출처와 갱신 정책은 ADR 0017·0018을 따른다. `daemon/session_title.go`가 큐·재시도·
+취소·세션 상태 정리를 관리하며, 워커는 벤더별로 실행한다. `claude_title.go`와 `codex_title.go`는
+각 벤더의 조회·저장을 연결한다. Claude는 저장 성공 후 조회를 끝내고 Codex는 활동 중 이름 변경을 추적한다.
+
+종료 시 최초 조회 뒤 필요한 경우 10초·30초·60초 간격으로 최대 3회 재시도한다. 세션 메모리 TTL이
+지나면 같은 큐로 제거를 요청하며, 큐가 찼으면 다음 정리 틱으로 미룬다. 제거·재개 이전의 예약은
+취소하고 이미 큐에 들어온 재시도도 무효화한다. DB의 세션과 제목은 이 메모리 정리로 삭제하지 않는다.
+
+Claude의 파일 탐색·꼬리 읽기는 `claudecode`가 담당한다. Codex 프로세스 종료는 출력 채널이
+가득 찬 경우에도 읽기 고루틴을 취소하고 종료를 기다린다.
 
 ## 4. 프라이버시 불변식
 
@@ -356,7 +373,7 @@ func (s *Service) Stop() error            // ServiceShutdown 자리
 | Settings 연결 상태 | `Vendors()` |
 | Insights MCP 카드 | `MCPUsage(n)` |
 | Settings 저장소·데몬 상태 | `Status()` |
-| Tray 스냅샷 (상태·마지막 갱신·활성/최근 세션·벤더 한도·가장 빠듯한 한도) | `Service.Tray(q)` · `Service.RefreshTray(q)` |
+| Tray 스냅샷 (상태·마지막 갱신·활성/최근 세션·벤더 한도·가장 빠듯한 한도) | `GET /v1/tray` · `POST /v1/tray/refresh` |
 | 세션의 작업 폴더 열기 | `Service.OpenWorkspace(sessionID)` |
 
 ### 6.1.2 Activity 목록 (`Activity`, PROJ-90)
@@ -404,7 +421,7 @@ NULL 일 수 있어서 한쪽만 COALESCE 하면 그런 세션이 첫 페이지�
 | `sessions_started`·`active_seconds` | `sessions` | `started_at` |
 
 **v1 에 출처가 없어 항상 0 인 필드**: `Totals` 의 `api_errors`·`retries`·`commits`·
-`pull_requests`, `SessionRow` 의 같은 셋과 `responses`·`title_source`·`summary`.
+`pull_requests`, `SessionRow` 의 같은 셋과 `responses`.
 지우지 않는 이유는 ADR 0009 가 `abandoned`·`handoff` 를 남긴 것과 같다 — 지우면 GUI TypeScript
 바인딩과 `stats --json`·`sessions --json` 출력이 깨진다.
 
@@ -510,9 +527,9 @@ func (d *Dashboard) Tray(ctx context.Context, q dashboard.TrayQuery) (dashboard.
 쓰는 것만으로 좁힌다. 반환 타입은 `dashboard` 패키지 것을 그대로 써서 TS 모델이 원본 구조체에서
 나오게 한다 — GUI 전용 DTO 를 만들면 필드가 늘 때마다 두 곳을 고쳐야 한다.
 
-DB 경로는 `runtime.json`(7.4절)의 `database_path` 에서 얻거나, `~/.pulsemetry/pulsemetry.db` 를
-직접 쓴다. **GUI 는 SQLite 를 직접 열지 않는다** — 스키마 지식은 `internal/dashboard` 밖으로 나가지
-않는다.
+데몬은 `runtime.json`(7.4절)의 `database_path`와 로컬 저장소를 소유한다. **GUI는 SQLite를
+직접 열지 않고** `runtime.json`의 loopback endpoint를 찾아 로컬 API를 호출한다. 스키마 지식은
+데몬의 `internal/dashboard`와 `internal/store` 밖으로 나가지 않는다.
 
 읽기 커넥션은 최대 4개, 유휴 30초에 닫힌다. 화면을 오래 안 보는 동안 파일 핸들을 붙잡고 있으면
 Windows 에서 데몬의 prune 이 막힌다.
@@ -735,14 +752,8 @@ UTC 정시 버킷**이다. UTC+5:30·+5:45 같은 오프셋에서는 정시 버�
 마지막 갱신 시각, 활성·최근 세션, 벤더 한도, 가장 빠듯한 한도. 다섯 번 물으면 다섯 개의 실패
 지점과 다섯 개의 로딩 상태가 생긴다.
 
-```go
-func NewTrayMonitor(r *Reader) *TrayMonitor
-func (m *TrayMonitor) Snapshot(ctx context.Context, q TrayQuery) (TraySnapshot, error) // 주기 준수
-func (m *TrayMonitor) Refresh(ctx context.Context, q TrayQuery) (TraySnapshot, error)  // 즉시 갱신
-```
-
-`Service` 가 모니터를 **하나만** 들고 있다 (`Service.Tray` · `Service.RefreshTray`). 호출마다 새로
-만들면 "마지막 정상 스냅샷" 이 매번 사라져 실패가 곧 빈 화면이 된다.
+데몬의 `tray.Builder`가 SQLite에서 스냅샷을 조립하고, GUI의 `tray.Cache`가 로컬 API의 마지막
+정상 응답을 하나만 보관한다. 캐시를 호출마다 만들면 마지막 정상값이 매번 사라져 실패가 곧 빈 화면이 된다.
 
 #### 로컬 부분은 새 SQL 을 쓰지 않는다
 
@@ -753,21 +764,29 @@ func (m *TrayMonitor) Refresh(ctx context.Context, q TrayQuery) (TraySnapshot, e
 |---|---|
 | `monitoring.*` | `Status()` — `Available` · `Daemon.Running/Stale` · `NewestEventAt` · `RunningSessions` |
 | `active_agents` · `active_sessions` · `recent_sessions` | `Home(q)` |
-| `limits` · `limits_observed_at` | `internal/vendorlimit`.`Collect` |
+| `limits` · `limits_observed_at` | 데몬이 `vendor_limit_snapshots`에 upsert한 최신 행 |
 | `tightest_limit` | `limits` 에서 계산 |
 
-#### 갱신 주기는 60초다 (`DefaultTrayInterval`)
+#### 벤더 한도는 데몬이 주기적으로 갱신한다
 
-주기를 정하는 것은 로컬 조회가 아니라 **벤더 한도 조회**다. 한 응답으로 묶인 이상 주기는 가장 비싼
-쪽에 맞춘다.
+데몬은 기동 직후 한 번, 이후 5분마다 모든 벤더를 갱신한다. 수동 갱신의 첫 요청은 즉시 실행하고,
+동시에 들어온 자동·수동 요청은 진행 중인 한 번의 결과를 공유한다. 성공 완료 뒤 10초 동안 다시
+요청하면 외부 API를 호출하지 않고 저장된 최신 값을 반환한다. GUI의 60초 주기는 외부 API 호출
+주기가 아니라 로컬 스냅샷을 다시 읽는 화면 캐시 주기다.
+
+GUI Go 서비스는 `runtime.json`의 loopback endpoint로 `GET /v1/tray`를 보내고, 데몬이
+SQLite에서 조립한 트레이 스냅샷을 받는다. 사용자가 새로고침을 누르면
+`POST /v1/tray/refresh`를 보낸다. 데몬은 두 벤더 조회와 SQLite upsert를 마친 뒤 갱신된
+트레이 스냅샷을 `200`으로 반환한다. 두 요청 모두 기존 local ingest token과
+`X-Pulsemetry-Local: 1`을 재사용한다. GUI 프로세스는 SQLite를 직접 열지 않는다(ADR 0013).
 
 - 벤더 한도는 남의 비공개 API 다. 초 단위로 두드리면 차단이 **사용자 계정**에 걸린다.
 - 한도 창은 5시간·7일 단위로 움직인다. 1분 사이에 의미 있게 변하지 않는다.
 - 트레이는 계속 보고 있는 화면이 아니다. 1분 지연은 인지되지 않는다.
 
-`Snapshot` 은 주기 안이면 직전 값을 그대로 준다. 단 **조회 조건(`TrayQuery`)이 달라지면** 주기와
+GUI의 `tray.Cache`는 주기 안이면 직전 값을 그대로 준다. 단 **조회 조건(`tray.Query`)이 달라지면** 주기와
 무관하게 다시 만든다 — 시간대가 다른 스냅샷을 캐시라고 돌려주면 화면이 남의 날짜를 그린다.
-트레이의 「새로고침」 같은 명시적 조작은 `RefreshTray` 로 주기를 건너뛴다.
+트레이의 「새로고침」 같은 명시적 조작은 로컬 캐시 주기를 건너뛰되, 위 10초 외부 호출 제한은 지킨다.
 
 #### 새로고침 실패 = 마지막 정상 스냅샷 + stale
 
@@ -784,9 +803,15 @@ func (m *TrayMonitor) Refresh(ctx context.Context, q TrayQuery) (TraySnapshot, e
 
 #### 부분 장애가 다른 벤더와 최근 세션을 지우지 않는다
 
-`vendorlimit.Collect` 는 error 를 반환하지 않고 벤더마다 `state`·`reason` 을 돌려준다. 여기서는 그
-결과를 **손대지 않고 그대로** 실어 보낸다 — 실패한 벤더도 `unavailable` 로 자리를 지켜야 화면이
+`vendorlimit.Collector`는 error를 반환하지 않고 벤더마다 `state`·`reason`을 만든다. 데몬은 결과를
+벤더 기본 키로 upsert하고 GUI는 이를 **손대지 않고 그대로** 실어 보낸다 — 실패한 벤더도 `unavailable` 로 자리를 지켜야 화면이
 "아직 로딩 중" 과 구분한다. 한 벤더의 실패는 `stale` 사유가 아니다.
+
+Codex 사용 한도는 자격증명 파일이나 비공개 HTTP API를 직접 읽지 않는다(ADR 0011).
+데몬 수명과 같은 `vendorlimit.Collector`가 `codex app-server --stdio` 프로세스 하나를
+지연 시작해 재사용하고, `account/rateLimits/read` 응답만 공통 `Result`로 정규화한다.
+인증·토큰 갱신·상위 요청 헤더는 Codex 프로세스가 소유한다. App Server 실행 실패나 프로토콜
+불일치는 Codex 결과 하나만 `unavailable`로 만들며 Claude Code와 로컬 조회는 계속 반환한다.
 
 #### 「가장 빠듯한 한도」 는 결정론이다
 
@@ -1322,7 +1347,7 @@ ls ~/.config/systemd/user 2>/dev/null | grep -i pulsemetry || echo "OK: 등록�
 | 한계 | 내용·완화 |
 |---|---|
 | **파일별 라인 배분이 근사** | `claude_code.lines_of_code.count` 메트릭에는 파일명이 없다. `tool_result` 의 `tool_input` 에서 파일을 얻고 같은 시각의 증분을 귀속시키므로, 한 응답에서 여러 파일을 고치면 배분이 근사가 된다. **세션 합계(`sessions.lines_added`)는 메트릭에서 직접 받아 정확하고 파일별 배분만 근사다.** v1 의 `file_changes.additions`·`deletions` 는 이 근사를 저장하지 않고 `NULL` 로 둔다 — 스키마 문서가 "미관측은 `NULL`" 이라고 못 박았고, 근사값을 관측값처럼 담는 것보다 없는 편이 낫다. 조립기 안의 배분(`lineLedger`)은 세션 합계 검증용으로 남아 있고 `Σ배분 ≤ total` 불변식을 지킨다 |
-| **제목 품질** | `prompt_head`(첫 프롬프트 첫 문장 60자) → `files` → `fallback` 3단계 휴리스틱이다. 화면 예시(`인증 토큰 검증 및 Collector 전달 프록시 구현`) 수준은 나오지 않는다. `title_source` 컬럼이 출처를 남기므로 후속 교체가 스키마 변경 없이 가능하고, `SessionRow.TitleSource` 로 화면이 출처를 표시할 수 있다 |
+| **제목 품질** | `sessions.title`은 **벤더가 만든 제목만** 담는다(ADR 0018). Codex는 App Server의 `thread.name`(ADR 0017), Claude Code는 트랜스크립트의 `ai-title`이다. 조립기는 제목을 만들지 않으므로 그 경로가 없는 벤더는 NULL 이고, 화면은 제목이 없으면 벤더명으로 표시한다 |
 | **`abandoned` 오판 가능** | "마지막 툴 이벤트가 실패이고 이후 성공 없음" 이라는 휴리스틱이다. **화면 필터로만 쓰고 지표로 쓰지 않는다.** 판정 근거는 세션 마감 로그(`s.Diag.StatusReason`)에 남는다 |
 | **데몬 미실행 중 유실** | 위 첫 문단. PROJ-55 의 자동 실행 등록이 대부분을 막지만, 등록할 수 없는 환경과 영구 실패는 남는다 |
 | **Windows 는 자동 실행 등록이 없다** | `autostart` 명령이 `ErrUnsupportedPlatform` 으로 알리고 `telemetryctl daemon` 직접 실행을 안내한다. 작업 스케줄러 등록은 PROJ-56 이다. **경고가 아니라 정보로 출력한다** — 실패한 것이 없기 때문이다 |

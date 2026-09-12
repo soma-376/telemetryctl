@@ -184,13 +184,14 @@ type carrier struct {
 	attr    event.Attributes
 	measure event.Measures
 
-	sessionID   string
-	turnKey     string
-	callKey     string
-	eventID     string
-	eventName   string
-	serviceName string
-	tsFallback  event.UnixNano
+	sessionID      string
+	conversationID string
+	turnKey        string
+	callKey        string
+	eventID        string
+	eventName      string
+	serviceName    string
+	tsFallback     event.UnixNano
 
 	content [contentKindCount]rawContent
 
@@ -216,15 +217,27 @@ func (c *carrier) applyAll(kvs []*commonpb.KeyValue) {
 	}
 }
 
+func (c carrier) sessionIDFor(vendorID string) string {
+	if vendorID == "codex" && c.conversationID != "" {
+		return c.conversationID
+	}
+	return c.sessionID
+}
+
 // apply 는 속성 하나를 allowlist 에 비춰 반영한다. 어느 테이블에도 없으면 아무 일도 하지 않는다.
 func (c *carrier) apply(key string, v *commonpb.AnyValue) {
 	if v == nil {
 		return
 	}
 	switch key {
-	case "session.id", "session_id", "conversation.id", "conversation_id":
+	case "session.id", "session_id":
 		if s := anyString(v); s != "" {
 			c.sessionID = s
+		}
+		return
+	case "conversation.id", "conversation_id":
+		if s := anyString(v); s != "" {
+			c.conversationID = s
 		}
 		return
 	case "prompt.id", "prompt_id", "turn.id", "turn_id":

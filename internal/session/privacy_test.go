@@ -35,7 +35,7 @@ var forbiddenInSession = []string{fixtureRepoFile, fixtureRepoRoot, "/Users/", "
 // TestNoFullPathsInAssembledSession 은 디코더가 새로 실어 주는 경로(Input.Target)가
 // 세션 조립 결과 어디에도 전체 문자열로 남지 않음을 단언한다.
 //
-// 프롬프트 원문에는 경로가 들어올 수 있고 제목·요약은 거기서 파생되므로, 이 픽스처의
+// 프롬프트 원문에는 경로가 들어올 수 있고 제목은 거기서 파생되므로, 이 픽스처의
 // 프롬프트에는 일부러 경로를 넣지 않는다. 원문 쪽 규칙은 event_content 의 몫이다 (ADR 0003).
 func TestNoFullPathsInAssembledSession(t *testing.T) {
 	const start = 1_700_000_000

@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/your-org/pulsemetry/internal/dashboard"
+	"github.com/your-org/pulsemetry/internal/dashboard/tray"
 	"github.com/your-org/pulsemetry/internal/store"
 	"github.com/your-org/pulsemetry/internal/vendorlimit"
 )
@@ -211,8 +212,10 @@ func TestScreenContract_Activity_ListsTheStoredSession(t *testing.T) {
 	if row.SessionKey != fixtureSession {
 		t.Errorf("session_key = %q, want %q", row.SessionKey, fixtureSession)
 	}
-	if !strings.Contains(row.Title, "temporality") {
-		t.Errorf("title = %q — 첫 프롬프트에서 파생된 제목이어야 한다", row.Title)
+	// 제목은 벤더가 준 것만 담는다. 이 픽스처는 OTel 이벤트만 있고 벤더 제목 경로
+	// (트랜스크립트·App Server)를 타지 않으므로 비어 있는 것이 맞다 (PROJ-124).
+	if row.Title != "" {
+		t.Errorf("title = %q — 벤더 제목이 없으면 비어 있어야 한다", row.Title)
 	}
 	if row.ProjectName != filepath.Base(fixturePath) {
 		t.Errorf("project_name = %q, want %q", row.ProjectName, filepath.Base(fixturePath))
@@ -393,12 +396,12 @@ func TestScreenContract_Tray_SummarizesLocalStateWithoutCredentials(t *testing.T
 	f := newScreenFixture(t)
 	ctx := context.Background()
 
-	snap, err := f.svc.Tray(ctx, dashboard.TrayQuery{TZ: screenTZ})
+	snap, err := tray.NewBuilder(f.svc).Snapshot(ctx, tray.Query{TZ: screenTZ})
 	if err != nil {
 		t.Fatalf("Tray: %v", err)
 	}
 	// 데몬은 이미 멈췄고 DB 는 있다 — paused 다.
-	if snap.Monitoring.State != dashboard.TrayStatePaused {
+	if snap.Monitoring.State != tray.StatePaused {
 		t.Errorf("state = %q, want paused (DB 는 있고 데몬은 멈췄다)", snap.Monitoring.State)
 	}
 	if !snap.Monitoring.DatabaseAvailable {
@@ -407,32 +410,30 @@ func TestScreenContract_Tray_SummarizesLocalStateWithoutCredentials(t *testing.T
 	if snap.Monitoring.LastEventAt == 0 {
 		t.Error("last_event_at = 0 — 저장된 이벤트의 신선도가 트레이에 닿지 않는다")
 	}
-	if snap.Stale {
-		t.Errorf("Stale = true (%s) — 로컬 조회는 성공했다", snap.StaleReason)
-	}
 	// 진행 중인 세션 하나가 있다.
 	if snap.ActiveSessions != 1 || len(snap.ActiveAgents) != 1 {
 		t.Errorf("활성 세션 = %d / 에이전트 = %v, want 1 / [claude_code]",
 			snap.ActiveSessions, snap.ActiveAgents)
 	}
-	// 벤더는 전부 자리를 지키되 저장된 조회 결과가 없어 unavailable 이다.
+	// 벤더는 전부 자리를 지키되 자격증명이 없어 unavailable 이다.
 	if len(snap.Limits) != len(vendorlimit.SupportedVendors()) {
 		t.Fatalf("한도 결과 = %d건, want %d (실패한 벤더도 자리를 지킨다)",
 			len(snap.Limits), len(vendorlimit.SupportedVendors()))
 	}
 	for _, res := range snap.Limits {
 		if res.State != vendorlimit.StateUnavailable {
-			t.Errorf("%s state = %q — 저장된 조회 결과가 없는데 available 이다", res.Vendor, res.State)
+			t.Errorf("%s state = %q — 자격증명이 없는데 available 이다", res.Vendor, res.State)
 		}
-		if res.Reason != vendorlimit.ReasonNotProbed {
-			t.Errorf("%s reason = %q, want not_probed", res.Vendor, res.Reason)
+		// 데몬이 기동 직후 한 번 조회하므로 여기까지 오면 모든 벤더에 실제 결과가 있다.
+		// 무엇으로 실패했는지는 환경마다 다르다 (Claude 는 자격증명 파일 부재, Codex 는
+		// App Server 부재). 계약은 "not_probed 가 아니다" — 그 값이 나오면 기동 시
+		// 1회 조회가 돌지 않았다는 뜻이다 (runner.go 의 refreshLimitsLogged).
+		if res.Reason == "" || res.Reason == vendorlimit.ReasonNotProbed {
+			t.Errorf("%s reason = %q — 기동 시 한도 조회가 돌지 않았다", res.Vendor, res.Reason)
 		}
 		if res.Windows == nil {
 			t.Errorf("%s windows = nil — JSON 에서 null 이 되어 화면이 분기해야 한다", res.Vendor)
 		}
-	}
-	if snap.Tightest.Found {
-		t.Error("가장 빠듯한 한도가 있다고 한다 — available 한 창이 하나도 없다")
 	}
 }
 

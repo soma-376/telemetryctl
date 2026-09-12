@@ -207,8 +207,6 @@ func newSession(id string, at time.Time) session.Session {
 		StartedAt:   sec,
 		LastEventAt: sec,
 		Status:      session.StatusRunning,
-		Title:       "인증 토큰 검증",
-		TitleSource: session.TitleFromPrompt,
 		ProjectHash: "phash",
 		ProjectName: "telemetryctl",
 

@@ -37,11 +37,6 @@ type Service struct {
 	// 필드 초기화에서 서비스를 만든다) 여기 담아 두고 Start 가 보고한다.
 	initErr error
 
-	// tray 는 트레이 스냅샷의 갱신 주기와 마지막 정상값을 들고 있다 (tray.go).
-	// 서비스 하나에 하나여야 한다 — 호출마다 새로 만들면 "마지막 정상 스냅샷" 이
-	// 매번 사라져 실패가 곧 빈 화면이 된다.
-	tray *TrayMonitor
-
 	// opener 는 작업 폴더를 여는 자리다 (openfolder.go). 운영 경로는 exec 로 OS 파일
 	// 관리자를 argv 호출한다. 비공개 필드라 GUI 가 바꿔치기할 수 없고, 패키지 안의
 	// 테스트만 진짜 실행을 대신할 수 있다.
@@ -52,19 +47,32 @@ type Service struct {
 //
 // 실패하지 않는다. 경로가 잘못됐다는 사실은 Start 가 보고한다 — GUI 는 서비스를
 // 필드 초기화에서 만들고 기동은 나중에 하므로 생성자에 error 를 둘 자리가 없다.
-func NewService(dbPath string) *Service {
+func NewService(dbPath string, opts ...Option) *Service {
 	r, err := newReader(dbPath)
 	if err != nil {
 		// 조회는 전부 "미설치" 로 동작해야 한다. 경로가 없어도 now 가 살아 있는 Reader 를
 		// 둔다 — nil 을 두면 Start 를 건너뛴 호출자가 그 자리에서 터진다.
 		r = &Reader{now: time.Now}
-		return newServiceFor(r, err)
+		return newServiceFor(r, err, opts...)
 	}
-	return newServiceFor(r, nil)
+	return newServiceFor(r, nil, opts...)
 }
 
-func newServiceFor(r *Reader, initErr error) *Service {
-	return &Service{reader: r, initErr: initErr, tray: NewTrayMonitor(r), opener: execOpener{}}
+// Option 은 NewService 의 조립 손잡이다 (store.Option 과 같은 꼴).
+type Option func(*Service)
+
+// WithClock 은 "지금" 의 기준 시각을 바꾼다. 시간대 경계 조회가 벽시계에 흔들리면 하루 중
+// 언제 도느냐에 따라 통과했다 실패했다 하므로, 테스트가 이 손잡이를 쓴다.
+func WithClock(now func() time.Time) Option {
+	return func(s *Service) { s.reader.now = now }
+}
+
+func newServiceFor(r *Reader, initErr error, opts ...Option) *Service {
+	s := &Service{reader: r, initErr: initErr, opener: execOpener{}}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Start 는 GUI 의 ServiceStartup 자리다. DB 부재는 실패가 아니다.
@@ -82,6 +90,19 @@ func (s *Service) Stop() error { return s.reader.Close() }
 
 // Reader 는 하위 조회 핸들이다. 이 서비스가 아직 감싸지 않은 질의가 필요한 호출자를 위한 것이다.
 func (s *Service) Reader() *Reader { return s.reader }
+
+// Querier 는 하위 화면 패키지가 자기 질의를 할 때 쓸 핸들이다. ok=false 면 DB 가 없다.
+//
+// ok 를 따로 두는 이유는 호출자가 nil 리터럴을 넘겨야 하기 때문이다. nil *sql.DB 를 그대로
+// 인터페이스에 담으면 non-nil 인터페이스가 되어 상대의 nil 검사를 빠져나간다.
+func (s *Service) Querier() (Querier, bool) {
+	s.reconnect()
+	db, ok := s.reader.db()
+	if !ok {
+		return nil, false
+	}
+	return db, true
+}
 
 // Available 은 DB 파일이 실제로 열려 있는지 알려준다.
 func (s *Service) Available() bool { return s.reader.Available() }
@@ -143,26 +164,17 @@ func (s *Service) MCPUsage(ctx context.Context, lastNSessions int) ([]MCPRow, er
 	return s.reader.MCPUsage(ctx, lastNSessions)
 }
 
+// RecentActivity 는 진행 중인 세션과 최근 세션 목록이다. 목록만 필요한 화면(트레이)이
+// Home 의 카드·창 계산까지 떠안지 않도록 둔 표면이다.
+func (s *Service) RecentActivity(ctx context.Context, q RecentQuery) (RecentActivity, error) {
+	s.reconnect()
+	return s.reader.RecentActivity(ctx, q)
+}
+
 // Status 는 로컬 파이프라인의 현재 상태다. 화면의 "아직 데이터 없음" 안내가 이것을 본다.
 func (s *Service) Status(ctx context.Context) (Status, error) {
 	s.reconnect()
 	return s.reader.Status(ctx)
-}
-
-// Tray 는 트레이 한 장이다 — 모니터링 상태·마지막 갱신 시각·활성/최근 세션·벤더 한도·
-// 가장 빠듯한 한도가 한 응답에 들어 있다 (tray.go).
-//
-// 갱신 주기(DefaultTrayInterval) 안이면 직전 스냅샷을 그대로 준다. 갱신이 실패해도
-// 에러가 아니라 마지막 정상 스냅샷 + Stale 이다.
-func (s *Service) Tray(ctx context.Context, q TrayQuery) (TraySnapshot, error) {
-	s.reconnect()
-	return s.tray.Snapshot(ctx, q)
-}
-
-// RefreshTray 는 주기를 무시하고 즉시 다시 만든다. 트레이의 "새로고침" 이 부른다.
-func (s *Service) RefreshTray(ctx context.Context, q TrayQuery) (TraySnapshot, error) {
-	s.reconnect()
-	return s.tray.Refresh(ctx, q)
 }
 
 // OpenWorkspace 는 세션의 작업 폴더를 OS 파일 관리자로 연다.

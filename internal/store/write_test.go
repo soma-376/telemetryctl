@@ -136,8 +136,9 @@ func TestWriteSessionSnapshotFillsIdentityColumns(t *testing.T) {
 	if vendorID != "claude_code" || key != "sess-1" {
 		t.Errorf("식별자 = %q/%q", vendorID, key)
 	}
-	if title != "인증 토큰 검증" {
-		t.Errorf("title = %v", title)
+	// 조립기는 제목을 만들지 않는다. 벤더 제목이 오기 전까지 NULL 이다 (PROJ-124).
+	if title != nil {
+		t.Errorf("title = %v, want NULL", title)
 	}
 	if workspace != s.WorkspacePath || email != s.UserEmail || account != s.UserAccountID {
 		t.Errorf("식별 정보가 안 실렸다: %v / %v / %v", workspace, email, account)
@@ -153,19 +154,19 @@ func TestWriteSessionSnapshotFillsIdentityColumns(t *testing.T) {
 	}
 }
 
-// 스키마 문서가 "ETL 은 title 이 NULL 일 때만 기록" 이라고 못 박았다.
-// 조립기 제목은 휴리스틱이라 매 스냅샷마다 바뀔 수 있어, 덮어쓰면 화면 제목이 이유 없이 흔들린다.
-func TestWriteSessionKeepsFirstTitle(t *testing.T) {
+// 스냅샷은 제목을 건드리지 않는다. sessions.title 은 벤더 제목 UPDATE 만 쓰므로,
+// 스냅샷이 여러 번 와도 이미 저장된 제목을 지우거나 덮지 않아야 한다 (PROJ-124).
+func TestWriteSessionDoesNotTouchTitle(t *testing.T) {
 	db := openTestDB(t)
-	first := newSession("sess-1", baseTime)
-	mustWrite(t, db, Batch{Sessions: []session.Session{first}})
+	mustWrite(t, db, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}})
+	if err := db.SetClaudeTitle(context.Background(), "sess-1", "벤더가 준 제목"); err != nil {
+		t.Fatal(err)
+	}
 
-	second := newSession("sess-1", baseTime)
-	second.Title = "다른 제목"
-	mustWrite(t, db, Batch{Sessions: []session.Session{second}})
+	mustWrite(t, db, Batch{Sessions: []session.Session{newSession("sess-1", baseTime)}})
 
-	if got := scanOne(t, db, `SELECT title FROM sessions`); got != "인증 토큰 검증" {
-		t.Fatalf("title = %v — 두 번째 스냅샷이 제목을 덮었다", got)
+	if got := scanOne(t, db, `SELECT title FROM sessions`); got != "벤더가 준 제목" {
+		t.Fatalf("title = %v — 스냅샷이 벤더 제목을 건드렸다", got)
 	}
 	if n := countRows(t, db, "sessions"); n != 1 {
 		t.Fatalf("sessions = %d행, want 1", n)

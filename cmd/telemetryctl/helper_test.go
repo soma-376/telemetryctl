@@ -56,8 +56,6 @@ func seed(t *testing.T, dataDir string, at time.Time) {
 				SessionID: "sess-claude", Vendor: "claude_code",
 				StartedAt: sec, LastEventAt: sec + 600, EndedAt: event.Some(sec + 600),
 				Status: session.StatusCompleted,
-				// 한글 제목이 열 정렬 검증의 재료다.
-				Title: "인증 토큰 검증 프록시 구현", TitleSource: session.TitleFromPrompt,
 				// 프로젝트 이름은 워크스페이스 경로의 basename 이다 (ADR 0010).
 				WorkspacePath: workspaceClaude,
 				ActiveSeconds: 300,
@@ -66,7 +64,6 @@ func seed(t *testing.T, dataDir string, at time.Time) {
 				SessionID: "sess-codex", Vendor: "codex",
 				StartedAt: sec + 60, LastEventAt: sec + 120,
 				Status:        session.StatusRunning,
-				Title:         "테스트 보강",
 				WorkspacePath: workspaceCodex,
 				ActiveSeconds: 60,
 			},
@@ -75,6 +72,18 @@ func seed(t *testing.T, dataDir string, at time.Time) {
 	}
 	if _, err := db.Write(context.Background(), batch); err != nil {
 		t.Fatalf("store.Write: %v", err)
+	}
+
+	// 제목은 벤더가 준 것만 저장하므로 스냅샷으로는 넣을 수 없다 (PROJ-124).
+	// 한글 제목이 열 정렬 검증의 재료라 실제 경로와 같게 UPDATE 로 넣는다.
+	for key, title := range map[string]string{
+		"sess-claude": "인증 토큰 검증 프록시 구현",
+		"sess-codex":  "테스트 보강",
+	} {
+		if _, err := db.SQL().ExecContext(context.Background(),
+			`UPDATE sessions SET title = ? WHERE session_key = ?`, title, key); err != nil {
+			t.Fatalf("제목 주입: %v", err)
+		}
 	}
 }
 

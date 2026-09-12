@@ -151,6 +151,27 @@ func TestHealthzNeedsNoAuth(t *testing.T) {
 	assertNoCORS(t, rec)
 }
 
+func TestLocalAPIRequiresAuthBeforeDelegating(t *testing.T) {
+	calls := 0
+	rc, _, _ := newTestReceiver(t, func(opt *Options) {
+		opt.LocalAPI = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			calls++
+			w.WriteHeader(http.StatusOK)
+		})
+	})
+
+	unauthorized := do(rc, httptest.NewRequest(http.MethodGet, "/v1/tray", nil))
+	if unauthorized.Code != http.StatusUnauthorized || calls != 0 {
+		t.Fatalf("인증 없는 요청 status=%d calls=%d", unauthorized.Code, calls)
+	}
+
+	authorized := do(rc, authedRequest(http.MethodPost, "/v1/tray/refresh", "", nil))
+	if authorized.Code != http.StatusOK || calls != 1 {
+		t.Fatalf("인증된 요청 status=%d calls=%d", authorized.Code, calls)
+	}
+	assertNoCORS(t, authorized)
+}
+
 func TestUnsupportedMediaType(t *testing.T) {
 	rc, _, _ := newTestReceiver(t, nil)
 

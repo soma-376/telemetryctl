@@ -7,7 +7,7 @@
 | `id` | `INTEGER` | 기본 키 | SQLite rowid 별칭 |
 | `vendor_id` | `TEXT` | 필수, FK | `vendors.vendor` 참조 |
 | `session_key` | `TEXT` | 필수 | Claude Code `session.id`, Codex `conversation.id` |
-| `title` | `TEXT` | 선택 | 세션 제목. ETL은 `NULL`일 때만 기록 |
+| `title` | `TEXT` | 선택 | 벤더가 제공한 제목만 저장한다(ADR 0018). 없으면 `NULL`이며 조립기 UPSERT는 이 컬럼을 수정하지 않는다 |
 | `workspace_path` | `TEXT` | 선택 | 작업공간 경로 |
 | `user_email` | `TEXT` | 선택 | 관측된 사용자 이메일 |
 | `user_account_id` | `TEXT` | 선택 | 벤더 사용자 계정 ID |
