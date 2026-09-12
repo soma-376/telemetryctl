@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/your-org/pulsemetry/internal/event"
@@ -18,7 +19,9 @@ import (
 // 무시했는데 승격은 저장" 하는 경로가 생기고, llm_calls.source_event_id 와
 // tool_calls.decision_event_id 는 각각 UNIQUE 라 그 순간 배치 전체가 실패한다.
 type EventRecord struct {
-	Event event.Event
+	// Payload는 이벤트별 수신 JSON이며 정규화·중복 판정에 사용하지 않는다.
+	Payload json.RawMessage
+	Event   event.Event
 
 	// Contents 는 이 이벤트에서 뽑힌 원문이다. v3 에는 원문 테이블이 없고
 	// 사용자 프롬프트만 turns.prompt_text 로 살아남는다. 나머지는 저장되지 않는다.
@@ -36,8 +39,8 @@ type EventRecord struct {
 	// tool_calls.target 으로 간다.
 	TargetPath string
 
-	// File 은 이 이벤트가 만든 파일 변경이다. Operation 이 빈 값이면 없다.
-	File session.FileChange
+	// Files는 이 이벤트가 만든 파일별 변경이다. 한 패치로 여러 파일을 수정할 수 있다.
+	Files []session.FileChange
 }
 
 // Batch 는 한 트랜잭션으로 적용되는 쓰기 단위다.

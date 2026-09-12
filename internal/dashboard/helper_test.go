@@ -256,7 +256,7 @@ func toolRecord(sessionKey, turnKey, callKey string, at time.Time, seq int, spec
 		TurnKey:    turnKey,
 		CallKey:    callKey,
 		TargetPath: spec.Target,
-		File:       spec.File,
+		Files:      []session.FileChange{spec.File},
 	}
 }
 

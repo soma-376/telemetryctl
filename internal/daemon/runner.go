@@ -503,7 +503,7 @@ func (d *daemon) startReceiver() error {
 		Token:      token,
 		Sink:       d.pipe,
 		Logger:     d.log,
-		Decode:     otlpdecode.Options{InstallationID: d.state.InstallationID},
+		Decode:     otlpdecode.Options{InstallationID: d.state.InstallationID, SkipPayload: !d.state.Local.StoreContent || d.opts.NoStoreContent},
 		Now:        d.opts.Now,
 		LocalAPI:   localapi.WithActivity(localapi.NewServer(d.limits, tray.NewBuilder(d.query), d.pipe), d.query),
 	})

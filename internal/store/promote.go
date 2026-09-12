@@ -126,7 +126,28 @@ func (w *writer) promote(recs []EventRecord, turnIDs, eventIDs []int64) error {
 	if err := w.promoteLLMCalls(recs, turnIDs, eventIDs); err != nil {
 		return err
 	}
+	if err := w.promoteTurnTTFT(recs, turnIDs); err != nil {
+		return err
+	}
 	return w.promoteToolCalls(recs, turnIDs, eventIDs)
+}
+
+// ttft 는 턴을 만든 이벤트가 아니라 그 뒤의 스트림 이벤트에 실려 온다. 턴 UPSERT 는
+// 새 턴일 때만 도므로 여기서 따로 갱신한다. 먼저 관측한 값을 남긴다 — 한 턴에 LLM 호출이
+// 여러 번이면 첫 응답까지의 지연이 턴의 체감 지연이다.
+const updateTurnTTFTSQL = `UPDATE turns SET ttft_ms = COALESCE(ttft_ms, ?) WHERE id = ?`
+
+func (w *writer) promoteTurnTTFT(recs []EventRecord, turnIDs []int64) error {
+	for i, rec := range recs {
+		ttft, ok := rec.Event.Measure.TTFTMS.Get()
+		if !ok || turnIDs[i] == 0 {
+			continue
+		}
+		if _, err := w.tx.ExecContext(w.ctx, updateTurnTTFTSQL, ttft, turnIDs[i]); err != nil {
+			return fmt.Errorf("store: turns.ttft_ms UPDATE: %w", err)
+		}
+	}
+	return nil
 }
 
 func (w *writer) promoteLLMCalls(recs []EventRecord, turnIDs, eventIDs []int64) error {
@@ -139,7 +160,7 @@ func (w *writer) promoteLLMCalls(recs []EventRecord, turnIDs, eventIDs []int64) 
 			turnIDs[i], eventIDs[i], nullSec(rec.Event.TS.Sec()), nullStr(rec.Event.Attr.Model),
 			optInt(m.InputTokens), optInt(m.OutputTokens),
 			optInt(m.CacheReadTokens), optInt(m.CacheCreationTokens), optInt(m.ReasoningTokens),
-			optFloat(m.CostUSD), optInt(m.DurationMS), nil,
+			optFloat(m.CostUSD), optInt(m.DurationMS), nullStr(rec.Event.Attr.RequestID),
 		)
 		if err != nil {
 			return fmt.Errorf("store: llm_calls INSERT (name=%q): %w", rec.Event.Name, err)
@@ -191,17 +212,21 @@ func (w *writer) promoteToolCalls(recs []EventRecord, turnIDs, eventIDs []int64)
 // 된다. file_changes 에는 그것을 막을 UNIQUE 가 없다. 그리고 결정만 있고 결과가 없는 호출은
 // 실행되지 않았다는 뜻이라 — 거부된 편집이 그 경우다 — 파일이 바뀌지도 않았다.
 func (w *writer) promoteFileChange(rec EventRecord, role toolRole, toolCallID int64) error {
-	if role != toolRoleResult || rec.File.Operation == "" || rec.File.Path == "" {
+	if role != toolRoleResult {
 		return nil
 	}
-	f := rec.File
-	_, err := w.tx.ExecContext(w.ctx, insertFileChangeSQL,
-		toolCallID, f.Path, f.Operation, nullStr(f.RenamedFrom),
-		optInt(f.Additions), optInt(f.Deletions), nullStr(f.OldHash), nullStr(f.NewHash),
-	)
-	if err != nil {
-		return fmt.Errorf("store: file_changes INSERT (op=%q): %w", f.Operation, err)
+	for _, f := range rec.Files {
+		if f.Operation == "" || f.Path == "" {
+			continue
+		}
+		_, err := w.tx.ExecContext(w.ctx, insertFileChangeSQL,
+			toolCallID, f.Path, f.Operation, nullStr(f.RenamedFrom),
+			optInt(f.Additions), optInt(f.Deletions), nullStr(f.OldHash), nullStr(f.NewHash),
+		)
+		if err != nil {
+			return fmt.Errorf("store: file_changes INSERT (op=%q): %w", f.Operation, err)
+		}
+		w.res.FileChangesInserted++
 	}
-	w.res.FileChangesInserted++
 	return nil
 }

@@ -63,13 +63,13 @@ var privacyRules = []struct {
 		// tool details = 툴이 무엇을 대상으로 어떻게 불렸는지. 파일 경로·명령이 여기 있다.
 		allowed: func(p contract.Privacy) bool { return p.CollectToolDetails },
 		keys: []string{
-			"tool_input", "tool_parameters", "tool_arguments", "tool.arguments",
+			"tool_input", "tool_parameters", "tool_arguments", "tool.arguments", "arguments",
 			"command", "full_command", "file_path", "file_paths",
 		},
 	},
 	{
 		allowed:  func(p contract.Privacy) bool { return p.CollectToolContent },
-		keys:     []string{"tool_result", "tool_output", "tool_response"},
+		keys:     []string{"tool_result", "tool_output", "tool_response", "output"},
 		suffixes: []string{"tool_result"},
 	},
 	{

@@ -74,6 +74,9 @@ var stringAttrs = map[string]func(*event.Attributes, string){
 	"app_version":     func(a *event.Attributes, v string) { a.AppVersion = v },
 	"service.version": func(a *event.Attributes, v string) { a.AppVersion = v },
 
+	// Claude Code 는 api_request·assistant_response·api_response_body 에 같은 값을 싣는다.
+	"request_id": func(a *event.Attributes, v string) { a.RequestID = v },
+
 	"entrypoint":                  func(a *event.Attributes, v string) { a.Entrypoint = v },
 	"environment":                 func(a *event.Attributes, v string) { a.Environment = v },
 	"deployment.environment":      func(a *event.Attributes, v string) { a.Environment = v },
@@ -110,6 +113,7 @@ var intMeasures = map[string]func(*event.Measures, int64){
 	"reasoning_token_count":   func(m *event.Measures, v int64) { m.ReasoningTokens = event.Some(v) },
 
 	"duration_ms":               func(m *event.Measures, v int64) { m.DurationMS = event.Some(v) },
+	"ttft_ms":                   func(m *event.Measures, v int64) { m.TTFTMS = event.Some(v) },
 	"status_code":               func(m *event.Measures, v int64) { m.StatusCode = event.Some(v) },
 	"http.response.status_code": func(m *event.Measures, v int64) { m.StatusCode = event.Some(v) },
 	"attempt":                   func(m *event.Measures, v int64) { m.Attempt = event.Some(v) },
@@ -200,6 +204,9 @@ type carrier struct {
 	tsFallback     event.UnixNano
 
 	content [contentKindCount]rawContent
+	// 일반 속성과 충돌하지 않도록 벤더·이벤트를 확정한 뒤 매핑한다.
+	codexArguments rawContent
+	codexOutput    rawContent
 
 	// target 은 tool_input 에서 뽑아 정규화한 대상 파일이다.
 	target event.Path
@@ -207,6 +214,9 @@ type carrier struct {
 	// NOT NULL 이라 basename 만으로는 행을 만들 수 없어 따로 싣는다 (ADR 0010).
 	// **로컬 저장 전용**이다 — 상위 전달과 관련된 코드는 target 만 본다.
 	targetRaw string
+	// targetAdd·targetDel 은 tool_input 원문에서 센 줄 수다. 로컬 저장 전용이다.
+	targetAdd event.Opt[int64]
+	targetDel event.Opt[int64]
 }
 
 type rawContent struct {
@@ -236,6 +246,12 @@ func (c *carrier) apply(key string, v *commonpb.AnyValue) {
 		return
 	}
 	switch key {
+	case "arguments":
+		c.codexArguments = rawContent{body: anyText(v), set: true}
+		return
+	case "output":
+		c.codexOutput = rawContent{body: anyText(v), set: true}
+		return
 	case "session.id", "session_id":
 		if s := anyString(v); s != "" {
 			c.sessionID = s
@@ -348,6 +364,7 @@ func (c *carrier) apply(key string, v *commonpb.AnyValue) {
 		if kind == event.ContentToolInput {
 			if p, raw := toolInputTarget(v); p.Hash != "" {
 				c.target, c.targetRaw = p, raw
+				c.targetAdd, c.targetDel = toolInputLines(v)
 			}
 		}
 	}

@@ -156,10 +156,10 @@ func seedEvents(at time.Time) []store.EventRecord {
 				r.Event.Measure.Success = event.Some(true)
 				r.CallKey = fmt.Sprintf("claude-call-%d", i)
 				r.TargetPath = workspaceClaude + "/apply.go"
-				r.File = session.FileChange{
+				r.Files = []session.FileChange{{
 					Path: workspaceClaude + "/apply.go", Operation: session.OperationModify,
 					Additions: event.Some(int64(3)), Deletions: event.Some(int64(1)),
-				}
+				}}
 			})
 	}
 

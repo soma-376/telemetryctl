@@ -197,7 +197,7 @@ func TestEndToEndWalkthroughProducesScreenRows(t *testing.T) {
 //
 // 식별 정보가 허용된 자리는 sessions(workspace_path·user_email·user_account_id) ·
 // tool_calls(target·error_message) · file_changes(file_path) 뿐이다. 그 밖의 테이블에는
-// 없어야 하고, organization.id 는 어디에도 있으면 안 된다 — allowlist 에 자리가 없다.
+// 정규화 컬럼에서는 이 규칙을 지킨다. 수신 payload는 ADR 0025의 예외다.
 func TestIdentityStaysInDesignatedColumns(t *testing.T) {
 	h := start(t, harnessOptions{})
 	h.postFixture("logs_session_walkthrough.json")
@@ -205,7 +205,7 @@ func TestIdentityStaysInDesignatedColumns(t *testing.T) {
 
 	db := h.openDB()
 
-	for _, table := range []string{"events", "turns", "vendors", "llm_calls"} {
+	for _, table := range []string{"turns", "vendors", "llm_calls"} {
 		dump := dumpText(t, db, table)
 		if strings.Contains(dump, fixturePath) {
 			t.Errorf("%s 에 전체 경로가 들어갔다 (%s)", table, fixturePath)
@@ -214,9 +214,9 @@ func TestIdentityStaysInDesignatedColumns(t *testing.T) {
 			t.Errorf("%s 에 user.email 이 들어갔다", table)
 		}
 	}
-	// organization.id 는 v3 에 대응 컬럼이 없다. 어느 테이블에도 있으면 안 된다.
+	// organization.id는 수신 payload 외의 정규화 테이블에 저장하지 않는다.
 	for _, table := range []string{
-		"vendors", "sessions", "turns", "events", "llm_calls", "tool_calls", "file_changes",
+		"vendors", "sessions", "turns", "llm_calls", "tool_calls", "file_changes",
 	} {
 		if strings.Contains(dumpText(t, db, table), fixtureOrgID) {
 			t.Errorf("%s 에 organization.id 가 들어갔다", table)
@@ -233,10 +233,18 @@ func TestIdentityStaysInDesignatedColumns(t *testing.T) {
 	if !strings.Contains(dumpText(t, db, "file_changes"), fixtureFilePath) {
 		t.Error("file_changes.file_path 가 원경로가 아니다")
 	}
+	var raw string
+	if err := db.QueryRow("SELECT json(payload) FROM events WHERE payload IS NOT NULL LIMIT 1").Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(raw, fixtureEmail) || !strings.Contains(raw, fixtureOrgID) {
+		t.Fatal("payload lost received identity")
+	}
+
 }
 
 // TestNoStoreContentDropsBodies 는 --no-store-content 가 저장소 단계에서 집행되는지 본다.
-// v3 에서 원문이 남는 자리는 turns.prompt_text 하나뿐이다.
+// 수신 payload도 기존 원문 OFF 설정을 따른다.
 func TestNoStoreContentDropsBodies(t *testing.T) {
 	h := start(t, harnessOptions{
 		daemon: func(o *Options) { o.NoStoreContent = true },
@@ -245,6 +253,9 @@ func TestNoStoreContentDropsBodies(t *testing.T) {
 	h.stop()
 
 	db := h.openDB()
+	if n := countRows(t, db, `SELECT COUNT(*) FROM events WHERE payload IS NOT NULL`); n != 0 {
+		t.Fatal("payload retained with content OFF")
+	}
 	if n := countRows(t, db, `SELECT COUNT(*) FROM turns WHERE prompt_text IS NOT NULL`); n != 0 {
 		t.Errorf("prompt_text 가 %d행 남았다 (--no-store-content)", n)
 	}

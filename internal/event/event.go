@@ -118,6 +118,8 @@ type Attributes struct {
 	AppVersion     string
 	Entrypoint     string
 	Environment    string
+	// RequestID 는 벤더가 준 API 요청 식별자다 (llm_calls.request_id).
+	RequestID string
 
 	// ProjectHash·ProjectName 은 NormalizePath 의 결과다. **상위 전달과 관련된 코드는
 	// 이 두 필드만 쓴다** — 전체 경로를 되돌릴 수 없는 형태이기 때문이다 (ADR 0003).
@@ -180,6 +182,8 @@ type Measures struct {
 	ReasoningTokens     Opt[int64] // 출력 토큰의 부분집합. llm_calls에 저장하며 총량에 더하지 않는다.
 
 	DurationMS Opt[int64]
+	// TTFTMS 는 첫 토큰까지의 지연이다 (turns.ttft_ms).
+	TTFTMS     Opt[int64]
 	StatusCode Opt[int64]
 	Attempt    Opt[int64]
 	Success    Opt[bool]

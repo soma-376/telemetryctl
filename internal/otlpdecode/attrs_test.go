@@ -40,6 +40,26 @@ func TestAttributeValueCoercion(t *testing.T) {
 			},
 		},
 		{
+			// Codex 가 codex.sse_event 에 싣는다. 이 값이 turns.ttft_ms 의 유일한 출처다.
+			name: "ttft_ms 를 받는다",
+			key:  "ttft_ms", value: anyInt64(1420),
+			check: func(t *testing.T, c carrier) {
+				if got, ok := c.measure.TTFTMS.Get(); !ok || got != 1420 {
+					t.Errorf("ttft_ms = (%d, %v)", got, ok)
+				}
+			},
+		},
+		{
+			// Claude Code 가 api_request 등에 싣는다. llm_calls.request_id 의 출처다.
+			name: "request_id 를 받는다",
+			key:  "request_id", value: anyStr("req_011CVkbQ"),
+			check: func(t *testing.T, c carrier) {
+				if c.attr.RequestID != "req_011CVkbQ" {
+					t.Errorf("request_id = %q", c.attr.RequestID)
+				}
+			},
+		},
+		{
 			name: "input_tokens 가 문자열로 와도 받는다",
 			key:  "input_tokens", value: anyStr("1820"),
 			check: func(t *testing.T, c carrier) {

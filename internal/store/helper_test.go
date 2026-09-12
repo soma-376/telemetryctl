@@ -82,7 +82,7 @@ func targetPath(p string) func(*EventRecord) {
 }
 
 func fileChange(op, path string) func(*EventRecord) {
-	return func(r *EventRecord) { r.File = session.FileChange{Path: path, Operation: op} }
+	return func(r *EventRecord) { r.Files = []session.FileChange{{Path: path, Operation: op}} }
 }
 
 func promptBody(body string) func(*EventRecord) {
@@ -397,9 +397,7 @@ const (
 
 // seedRawContent 는 v3 에서 원문이 남을 수 있는 세 컬럼을 모두 채운다.
 //
-// events.payload 는 쓰기 경로가 항상 NULL 로 두므로(insertEventSQL) SQL 로 직접 심는다.
-// purge 가 "지금 채워지지 않는 컬럼" 을 빠뜨리면 나중에 그 컬럼을 쓰기 시작하는 순간
-// 조용히 원문이 남게 된다.
+// purge 대상을 고정하기 위해 payload는 SQL로 직접 심는다.
 func seedRawContent(t *testing.T, db *DB, at time.Time) {
 	t.Helper()
 	mustWrite(t, db, Batch{

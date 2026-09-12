@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -447,15 +448,10 @@ func (w *writer) nextTurnIndex(sessionID int64) (int64, error) {
 
 // ── events ──────────────────────────────────────────────────────────────────
 
-// insertEventSQL 은 payload 를 NULL 로 남긴다.
-//
-// v3 는 원본 OTLP 를 통째로 담는 catch-all 을 두지 않기로 한 ADR 0002·0003 의 결정을
-// 그대로 잇는다. 어느 경로도 원본 바이트를 붙들고 있지 않으므로 채울 값 자체가 없다.
-// 나중에 쓰게 되면 `jsonb(?)` 로 바인딩해야 한다 — CHECK 가 json_valid(payload, 8),
-// 즉 텍스트 JSON 이 아니라 **JSONB** 를 요구한다.
+// insertEventSQL은 수신 JSON을 SQLite JSONB로 저장한다. 원문 OFF는 NULL이다.
 const insertEventSQL = `INSERT INTO events (
   turn_id, seq, event_name, occurred_at, record_hash, payload
-) VALUES (?,?,?,?,?,NULL)
+) VALUES (?,?,?,?,?,jsonb(?))
 ON CONFLICT(record_hash) DO NOTHING`
 
 // writeEvents 는 중복을 걸러 낸 뒤 도착 순서대로 seq 를 매겨 넣는다.
@@ -500,7 +496,11 @@ func (w *writer) writeEvents(recs []EventRecord, turnIDs []int64) ([]int64, erro
 
 		seq := w.nextSeq(turnID)
 		e := rec.Event
-		outRes, err := stmt.ExecContext(w.ctx, turnID, seq, e.Name, nullSec(e.TS.Sec()), hashes[i])
+		var payload any
+		if w.db.cfg.storeContent && len(rec.Payload) > 0 && len(rec.Payload) <= event.MaxPayloadBytes && json.Valid(rec.Payload) {
+			payload = string(rec.Payload)
+		}
+		outRes, err := stmt.ExecContext(w.ctx, turnID, seq, e.Name, nullSec(e.TS.Sec()), hashes[i], payload)
 		if err != nil {
 			return nil, fmt.Errorf("store: events INSERT (name=%q): %w", e.Name, err)
 		}

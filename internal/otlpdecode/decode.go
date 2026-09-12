@@ -17,6 +17,8 @@ import (
 
 // Options 는 디코더가 페이로드에서 알아낼 수 없는 값이다.
 type Options struct {
+	// SkipPayload는 원문 저장 OFF일 때 payload 생성도 건너뛴다.
+	SkipPayload bool
 	// InstallationID 는 events.installation_id 로 그대로 들어간다. 비어 있으면 모든 이벤트가
 	// Validate 에서 거부된다 — 호출자가 반드시 채운다.
 	InstallationID string
@@ -67,7 +69,9 @@ func (r Rejected) add(o Rejected) Rejected {
 // Contents 와 Targets 는 Events 와 나란히 놓인 희소 슬라이스다 — 이벤트마다 있지도 않고
 // events 테이블에 자리도 없어서 Event 안에 넣지 않았다. 둘 다 EventIndex 로 이벤트를 가리킨다.
 type Result struct {
-	Events []event.Event
+	Payloads        []Payload
+	PayloadsDropped int
+	Events          []event.Event
 	// Contents 는 원문이다. Events 와 분리돼 있고 event_content 로만 간다 —
 	// 상위 Collector 로는 절대 나가지 않는다 (ADR 0003).
 	Contents []Content
@@ -75,6 +79,8 @@ type Result struct {
 	// 정규화된 해시+basename 과 로컬 저장 전용 원경로를 함께 싣는다 (ADR 0010).
 	Targets  []Target
 	Rejected Rejected
+	// Patches는 파일 변경을 확정하지 못한 이유별 건수다. 이벤트 자체의 거절과 구분한다.
+	Patches PatchDiagnostics
 }
 
 // Decode 는 시그널 종류에 맞는 디코더를 부른다. traces 는 정규화하지 않고 빈 결과를 준다 —
@@ -99,14 +105,17 @@ func DecodeMetrics(data []byte, enc Encoding, opt Options) (Result, error) {
 		return Result{}, fmt.Errorf("otlpdecode: metrics 페이로드 디코드: %w", err)
 	}
 	d := newDecoder(opt)
-	for _, rm := range req.GetResourceMetrics() {
+	resources := payloadRoot(data, enc, &req, opt.SkipPayload).children("resourceMetrics")
+	for ri, rm := range req.GetResourceMetrics() {
+		scopes := payloadAt(resources, ri).children("scopeMetrics")
 		base := carrier{}
 		base.applyAll(rm.GetResource().GetAttributes())
-		for _, sm := range rm.GetScopeMetrics() {
+		for si, sm := range rm.GetScopeMetrics() {
+			metrics := payloadAt(scopes, si).children("metrics")
 			scoped := base
 			scoped.applyAll(sm.GetScope().GetAttributes())
-			for _, m := range sm.GetMetrics() {
-				d.metric(scoped, m)
+			for mi, m := range sm.GetMetrics() {
+				d.metric(scoped, m, payloadAt(metrics, mi))
 			}
 		}
 	}
@@ -120,14 +129,21 @@ func DecodeLogs(data []byte, enc Encoding, opt Options) (Result, error) {
 		return Result{}, fmt.Errorf("otlpdecode: logs 페이로드 디코드: %w", err)
 	}
 	d := newDecoder(opt)
-	for _, rl := range req.GetResourceLogs() {
+	resources := payloadRoot(data, enc, &req, opt.SkipPayload).children("resourceLogs")
+	for ri, rl := range req.GetResourceLogs() {
+		scopes := payloadAt(resources, ri).children("scopeLogs")
 		base := carrier{}
 		base.applyAll(rl.GetResource().GetAttributes())
-		for _, sl := range rl.GetScopeLogs() {
+		for si, sl := range rl.GetScopeLogs() {
+			logs := payloadAt(scopes, si).children("logRecords")
 			scoped := base
 			scoped.applyAll(sl.GetScope().GetAttributes())
-			for _, rec := range sl.GetLogRecords() {
+			for li, rec := range sl.GetLogRecords() {
+				before := len(d.events)
 				d.logRecord(scoped, rec)
+				if len(d.events) > before {
+					d.appendPayload(payloadAt(logs, li))
+				}
 			}
 		}
 	}
@@ -159,12 +175,16 @@ type seqKey struct {
 }
 
 type decoder struct {
-	opt      Options
-	events   []event.Event
-	contents []Content
-	targets  []Target
-	rejected Rejected
-	seq      map[seqKey]int
+	payloads        []Payload
+	payloadBytes    int
+	payloadsDropped int
+	opt             Options
+	events          []event.Event
+	contents        []Content
+	targets         []Target
+	rejected        Rejected
+	patches         PatchDiagnostics
+	seq             map[seqKey]int
 }
 
 func newDecoder(opt Options) *decoder {
@@ -172,7 +192,7 @@ func newDecoder(opt Options) *decoder {
 }
 
 func (d *decoder) result() Result {
-	return Result{Events: d.events, Contents: d.contents, Targets: d.targets, Rejected: d.rejected}
+	return Result{Payloads: d.payloads, PayloadsDropped: d.payloadsDropped, Events: d.events, Contents: d.contents, Targets: d.targets, Rejected: d.rejected, Patches: d.patches}
 }
 
 // metric 은 메트릭 하나의 데이터포인트를 이벤트로 옮긴다.
@@ -185,7 +205,7 @@ func (d *decoder) result() Result {
 //
 // 셋 다 Claude Code·Codex 가 현재 내보내지 않는 타입이다. 그래서 폐기하되 벤더가 나중에
 // 내보내기 시작하면 UnsupportedMetricType 카운터로 즉시 드러나게 해 둔다.
-func (d *decoder) metric(base carrier, m *metricspb.Metric) {
+func (d *decoder) metric(base carrier, m *metricspb.Metric, raw *payloadNode) {
 	sum := m.GetSum()
 	if sum == nil {
 		d.rejected.UnsupportedMetricType += otherDataPointCount(m)
@@ -198,7 +218,8 @@ func (d *decoder) metric(base carrier, m *metricspb.Metric) {
 		d.rejected.UnspecifiedTemporality += len(sum.GetDataPoints())
 		return
 	}
-	for _, dp := range sum.GetDataPoints() {
+	points := raw.child("sum").children("dataPoints")
+	for pi, dp := range sum.GetDataPoints() {
 		c := base
 		c.applyAll(dp.GetAttributes())
 
@@ -221,6 +242,8 @@ func (d *decoder) metric(base carrier, m *metricspb.Metric) {
 		}
 		if !d.emit(ev, &c) {
 			d.rejected.Datapoints++
+		} else {
+			d.appendPayload(payloadAt(points, pi))
 		}
 	}
 }
@@ -267,6 +290,14 @@ func (d *decoder) logRecord(base carrier, rec *logspb.LogRecord) {
 // emit 은 벤더·installation_id·sequence 를 채우고 검증을 통과한 이벤트만 결과에 넣는다.
 func (d *decoder) emit(ev event.Event, c *carrier) bool {
 	ev.Vendor = vendorOf(c.serviceName, ev.Name, d.opt.Vendor)
+	if ev.Signal == event.SignalLog && ev.Vendor == "codex" && ev.Name == "codex.tool_result" {
+		if c.codexArguments.set {
+			c.content[contentOrdinal(event.ContentToolInput)] = c.codexArguments
+		}
+		if c.codexOutput.set {
+			c.content[contentOrdinal(event.ContentToolResult)] = c.codexOutput
+		}
+	}
 	// Codex의 conversation.id가 App Server thread ID다. session.id는 다른 실행
 	// 범위의 식별자일 수 있으므로 둘 다 왔을 때 conversation.id를 우선한다.
 	ev.SessionID = c.sessionIDFor(ev.Vendor)
@@ -284,7 +315,11 @@ func (d *decoder) emit(ev event.Event, c *carrier) bool {
 	d.events = append(d.events, ev)
 	dedupKey := ev.DedupKey()
 	d.appendContents(index, dedupKey, c)
-	d.appendTarget(index, dedupKey, c)
+	if ev.Signal == event.SignalLog && ev.Vendor == "codex" && ev.Name == "codex.tool_result" && ev.Attr.ToolName == "apply_patch" {
+		d.appendPatchTargets(index, dedupKey, ev, c)
+	} else {
+		d.appendTarget(index, dedupKey, c)
+	}
 	return true
 }
 
@@ -315,6 +350,7 @@ func (d *decoder) appendTarget(index int, dedupKey string, c *carrier) {
 	}
 	d.targets = append(d.targets, Target{
 		EventIndex: index, DedupKey: dedupKey, Path: c.target, RawPath: c.targetRaw,
+		Additions: c.targetAdd, Deletions: c.targetDel,
 	})
 }
 
