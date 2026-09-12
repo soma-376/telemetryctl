@@ -24,17 +24,17 @@
 ```sql
 CREATE TABLE llm_calls (
   id                 INTEGER PRIMARY KEY,
-  turn_id            INTEGER NOT NULL REFERENCES turns (id),
+  turn_id            INTEGER NOT NULL REFERENCES turns (id) ON DELETE CASCADE,
   source_event_id    INTEGER NOT NULL UNIQUE REFERENCES events (id),
   called_at          INTEGER,
   model              TEXT,
-  input_tokens       INTEGER,
-  output_tokens      INTEGER,
-  cache_read_tokens  INTEGER,
-  cache_write_tokens INTEGER,
-  reasoning_tokens   INTEGER,
-  cost_usd           NUMERIC,
-  duration_ms        INTEGER,
+  input_tokens       INTEGER CHECK (input_tokens >= 0),
+  output_tokens      INTEGER CHECK (output_tokens >= 0),
+  cache_read_tokens  INTEGER CHECK (cache_read_tokens >= 0),
+  cache_write_tokens INTEGER CHECK (cache_write_tokens >= 0),
+  reasoning_tokens   INTEGER CHECK (reasoning_tokens >= 0),
+  cost_usd           NUMERIC CHECK (cost_usd >= 0),
+  duration_ms        INTEGER CHECK (duration_ms >= 0),
   request_id         TEXT
 );
 

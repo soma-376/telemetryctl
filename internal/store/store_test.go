@@ -48,7 +48,7 @@ func TestOpenAppliesMigrations(t *testing.T) {
 			t.Fatalf("legacy sqlite_master 조회 (%s): %v", name, err)
 		}
 		if n != 0 {
-			t.Errorf("v3 에 제거돼야 할 객체 %s 가 남았다", name)
+			t.Errorf("v1 에 제거돼야 할 객체 %s 가 남았다", name)
 		}
 	}
 }
@@ -57,8 +57,8 @@ func TestSchemaNamedIndexesAndForeignKeys(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 
-	// v3 가 만든 넷과 v4 가 더한 읽기 인덱스 셋이 전부다. 목록 밖의 인덱스가 생기면
-	// 아래 계수 단언이 잡는다 — 인덱스는 마이그레이션으로만 늘어야 한다.
+	// 단일 DDL의 기본 인덱스 넷과 읽기 인덱스 셋이 전부다. 목록 밖의 인덱스가 생기면
+	// 아래 계수 단언이 잡는다 — 인덱스 변경은 단일 DDL과 함께 검증한다.
 	indexes := []string{
 		"ux_turns_virtual", "ix_events_name", "ix_llm_turn", "ix_fc_tool",
 		"ix_tool_calls_turn", "ix_turns_session", "ix_sessions_started",
@@ -102,9 +102,13 @@ func TestSchemaNamedIndexesAndForeignKeys(t *testing.T) {
 	}
 	for table, parents := range fks {
 		for parent, want := range parents {
+			action := "CASCADE"
+			if parent == "vendors" || parent == "events" {
+				action = "NO ACTION"
+			}
 			var n int
 			if err := db.SQL().QueryRowContext(ctx,
-				`SELECT COUNT(*) FROM pragma_foreign_key_list(?) WHERE "table" = ?`, table, parent).Scan(&n); err != nil {
+				`SELECT COUNT(*) FROM pragma_foreign_key_list(?) WHERE "table" = ? AND on_delete = ?`, table, parent, action).Scan(&n); err != nil {
 				t.Fatalf("외래 키 조회 (%s -> %s): %v", table, parent, err)
 			}
 			if n != want {
@@ -121,8 +125,8 @@ func TestSchemaNamedIndexesAndForeignKeys(t *testing.T) {
 		}
 		nonDefaultDeletes += n
 	}
-	if nonDefaultDeletes != 0 {
-		t.Fatalf("DDL에 없는 외래 키 삭제 동작 = %d개", nonDefaultDeletes)
+	if nonDefaultDeletes != 5 {
+		t.Fatalf("연쇄 삭제 외래 키 = %d개, want 5", nonDefaultDeletes)
 	}
 }
 
@@ -342,7 +346,7 @@ func TestMetaRoundTrip(t *testing.T) {
 		t.Fatalf("Meta = (%q, %v, %v), want (inst-2, true, nil)", v, ok, err)
 	}
 
-	// 스키마 버전은 마이그레이션 러너만 옮긴다.
+	// 스키마 버전은 스키마 초기화기만 옮긴다.
 	if err := db.SetMeta(ctx, MetaSchemaVersion, "99"); err == nil {
 		t.Fatal("SetMeta 가 local_schema_version 을 허용했다")
 	}
