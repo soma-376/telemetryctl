@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -79,9 +82,9 @@ func TestEndToEndWalkthroughProducesScreenRows(t *testing.T) {
 	if title.Valid {
 		t.Errorf("title = %q, want NULL — 벤더 제목 경로를 타지 않았다", title.String)
 	}
-	// ADR 0010 이 로컬 저장을 허용한 식별 정보다. 이것이 비면 작업 폴더 열기가 성립하지 않는다.
-	if workspace.String != fixturePath {
-		t.Errorf("workspace_path = %q, want %q", workspace.String, fixturePath)
+	// OTel만으로는 세션 원경로를 저장하지 않는다 (ADR 0028).
+	if workspace.Valid {
+		t.Errorf("workspace_path = %q, want %q", workspace.String, "NULL")
 	}
 	if email.String != fixtureEmail {
 		t.Errorf("user_email = %q, want %q", email.String, fixtureEmail)
@@ -221,8 +224,8 @@ func TestIdentityStaysInDesignatedColumns(t *testing.T) {
 	}
 
 	// 허용된 자리에는 있어야 한다. 없으면 작업 폴더 열기와 파일 경로 검색이 성립하지 않는다.
-	if !strings.Contains(dumpText(t, db, "sessions"), fixturePath) {
-		t.Error("sessions.workspace_path 가 비었다")
+	if strings.Contains(dumpText(t, db, "sessions"), fixturePath) {
+		t.Error("시작 훅 없이 sessions에 원경로가 저장됐다")
 	}
 	if !strings.Contains(dumpText(t, db, "sessions"), fixtureEmail) {
 		t.Error("sessions.user_email 이 비었다")
@@ -736,14 +739,17 @@ func TestFixedPortFailsInsteadOfFallingBack(t *testing.T) {
 // 폴백이 일어나도 state.Local.ListenPort(설정된 의도)는 그대로여야 한다. 그 값이
 // 실제 포트로 덮이면 "설정과 현실이 어긋났다"는 신호가 사라져 12단계가 재병합
 // 필요를 판단할 근거를 잃는다.
-func TestPortFallbackLogsRemergeNeedWithoutTouchingState(t *testing.T) {
+// 재배선 대상이 없으면 재병합이 실패한다. 그때는 예전처럼 수동 안내로 물러나고
+// "설정된 의도"인 state.Local.ListenPort 를 덮지 않아야 한다 — 덮으면 다음 기동이
+// 어긋난 포트를 요청하고, 재병합이 필요하다는 신호도 사라진다.
+func TestPortFallbackKeepsIntentWhenRemergeFails(t *testing.T) {
 	busy, err := listenBusy(t)
 	if err != nil {
 		t.Skipf("포트를 잡을 수 없는 환경: %v", err)
 	}
 
 	h := start(t, harnessOptions{
-		state:  func(st *installer.State) { st.Local.ListenPort = busy },
+		state:  func(st *installer.State) { st.Local = installer.Local{Enabled: true, ListenPort: busy} },
 		daemon: func(o *Options) { o.ListenPort = 0 }, // 상태 파일 값을 쓰게 한다
 	})
 	if h.info.ListenPort == busy {
@@ -751,7 +757,7 @@ func TestPortFallbackLogsRemergeNeedWithoutTouchingState(t *testing.T) {
 	}
 	logs := h.logs.String()
 	if !strings.Contains(logs, "재병합") {
-		t.Errorf("폴백했는데 재병합 필요 로그가 없다:\n%s", logs)
+		t.Errorf("재병합에 실패했는데 안내 로그가 없다: %s", logs)
 	}
 	h.stop()
 
@@ -760,7 +766,7 @@ func TestPortFallbackLogsRemergeNeedWithoutTouchingState(t *testing.T) {
 		t.Fatal(err)
 	}
 	if st.Local.ListenPort != busy {
-		t.Errorf("state.Local.ListenPort = %d, want %d — 데몬이 '설정된 의도'를 덮었다",
+		t.Errorf("state.Local.ListenPort = %d, want %d — 재병합이 실패했는데 의도를 덮었다",
 			st.Local.ListenPort, busy)
 	}
 	// 런타임 사실은 runtime.json 쪽에 있었어야 한다.
@@ -848,4 +854,80 @@ func listenBusy(t *testing.T) (int, error) {
 		t.Cleanup(func() { l6.Close() })
 	}
 	return port, nil
+}
+
+// 포트 폴백이 나면 벤더 설정이 잡히지 않은 옛 포트를 계속 가리켜 수집이 조용히 멈춘다.
+// 데몬이 실제 포트로 다시 써야 한다.
+func TestPortFallbackRewiresVendorConfigs(t *testing.T) {
+	claudePath := filepath.Join(t.TempDir(), "settings.json")
+	taken := freePort(t)
+	// 요청할 포트를 미리 점유해 폴백을 강제한다.
+	blocker, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", taken))
+	if err != nil {
+		t.Fatalf("포트 점유: %v", err)
+	}
+	defer blocker.Close() //nolint:errcheck
+
+	h := prepare(t, harnessOptions{state: func(st *installer.State) {
+		st.Local = installer.Local{Enabled: true, ListenPort: taken}
+		st.Targets = []installer.Target{{Tool: "claude", Path: claudePath}}
+		// localProfile 은 회사 manifest 를 검증한다. 하네스 기본값은 테스트 서버
+		// (http://127.0.0.1)라 계약을 통과하지 못한다.
+		st.Manifest.OTLP.Endpoint = "https://collector.example.com"
+	}})
+	h.run(harnessOptions{daemon: func(o *Options) { o.ListenPort = taken }})
+
+	if h.info.ListenPort == taken {
+		t.Fatalf("폴백이 일어나지 않았다 (port=%d)", h.info.ListenPort)
+	}
+
+	raw, err := os.ReadFile(claudePath)
+	if err != nil {
+		t.Fatalf("벤더 설정 읽기: %v / 로그: %s", err, h.logs.String())
+	}
+	var root struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(raw, &root); err != nil {
+		t.Fatalf("벤더 설정 파싱: %v\n%s", err, raw)
+	}
+	want := fmt.Sprintf("http://localhost:%d", h.info.ListenPort)
+	if got := root.Env["OTEL_EXPORTER_OTLP_ENDPOINT"]; got != want {
+		t.Fatalf("endpoint = %q, want %q — 벤더가 잡히지 않은 포트를 가리킨다", got, want)
+	}
+	// 훅 URL 도 같은 포트에서 파생하므로 함께 옮겨야 한다.
+	if !strings.Contains(string(raw), want+"/v1/hooks/") {
+		t.Fatalf("훅 URL 이 새 포트로 안 옮겨졌다:\n%s", raw)
+	}
+}
+
+// 로컬 배선이 꺼져 있으면 벤더 설정은 회사를 가리키므로 폴백과 무관하다.
+func TestPortFallbackLeavesCompanyDirectConfigsAlone(t *testing.T) {
+	claudePath := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(claudePath, []byte(`{"env":{"OTEL_EXPORTER_OTLP_ENDPOINT":"https://collector.example.com"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	taken := freePort(t)
+	blocker, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", taken))
+	if err != nil {
+		t.Fatalf("포트 점유: %v", err)
+	}
+	defer blocker.Close() //nolint:errcheck
+
+	h := prepare(t, harnessOptions{state: func(st *installer.State) {
+		st.Local = installer.Local{Enabled: false, ListenPort: taken}
+		st.Targets = []installer.Target{{Tool: "claude", Path: claudePath}}
+		// localProfile 은 회사 manifest 를 검증한다. 하네스 기본값은 테스트 서버
+		// (http://127.0.0.1)라 계약을 통과하지 못한다.
+		st.Manifest.OTLP.Endpoint = "https://collector.example.com"
+	}})
+	h.run(harnessOptions{daemon: func(o *Options) { o.ListenPort = taken }})
+
+	raw, err := os.ReadFile(claudePath)
+	if err != nil {
+		t.Fatalf("벤더 설정 읽기: %v", err)
+	}
+	if !strings.Contains(string(raw), "collector.example.com") {
+		t.Fatalf("회사 직결 설정을 건드렸다:\n%s", raw)
+	}
 }

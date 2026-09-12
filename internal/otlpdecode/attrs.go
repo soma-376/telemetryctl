@@ -82,8 +82,8 @@ var stringAttrs = map[string]func(*event.Attributes, string){
 
 // pathAttrs 는 작업 디렉터리 경로를 담고 오는 속성이다. 값은 두 갈래로 들어간다 —
 // event.NormalizePath 를 거친 project_hash + project_name 과, 정규화하지 않은 원경로를 담는
-// Attributes.WorkspacePath 다 (ADR 0010). 앞쪽은 상위 전달과 관련된 코드가, 뒤쪽은
-// sessions.workspace_path 저장만이 쓴다.
+// Attributes.WorkspacePath다. 원경로는 기존 이벤트 중복 판별 키를 유지하기 위해 남기며,
+// 세션 경로 저장에는 사용하지 않는다 (ADR 0028).
 // 벤더가 이 중 무엇을 쓰는지 확정되지 않아 후보를 넓게 잡는다.
 var pathAttrs = map[string]struct{}{
 	"cwd":            {},

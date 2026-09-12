@@ -67,6 +67,11 @@ func (f *fixture) write(b store.Batch) {
 	if _, err := f.db.Write(context.Background(), b); err != nil {
 		f.t.Fatalf("store.Write: %v", err)
 	}
+	for _, s := range b.Sessions {
+		if err := f.db.ApplyLifecycle(context.Background(), s.Vendor, s.SessionID, s.StartedAt, false, workspaceA); err != nil {
+			f.t.Fatal(err)
+		}
+	}
 }
 
 // breakQueries 는 조회 커넥션을 끊어 로컬 질의를 실제로 실패시킨다. Querier 에는 Close 가
@@ -94,7 +99,6 @@ func newSession(key string, started time.Time, mods ...func(*session.Session)) s
 		LastEventAt:   sec + 600,
 		EndedAt:       event.Some(sec + 600),
 		Status:        session.StatusCompleted,
-		WorkspacePath: workspaceA,
 		ActiveSeconds: 120,
 	}
 	for _, m := range mods {

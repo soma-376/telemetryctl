@@ -5,6 +5,7 @@
 //	POST /v1/metrics · /v1/logs · /v1/traces
 //	GET  /healthz    (인증 없음, status 명령이 사용)
 //	GET  /v1/tray · POST /v1/tray/refresh (인증된 로컬 GUI API)
+//	POST /v1/hooks/session-start · /session-end (인증된 벤더 수명주기 훅)
 //	그 외             404
 //
 // # 이 패키지가 지키는 상한선은 §5.4 다
@@ -48,6 +49,11 @@ const (
 	// LocalAPIPathPrefix 는 GUI 가 부르는 로컬 API 경로의 접두다. 개별 경로는
 	// internal/localapi 가 정하고, 여기서는 인증만 태워 그대로 넘긴다 (ServeHTTP).
 	LocalAPIPathPrefix = "/v1/tray"
+	// HookAPIPathPrefix 아래는 벤더 lifecycle 훅이 POST 하는 경로다. localapi 가 핸들러를
+	// 붙이고 config 가 벤더 설정에 URL 을 쓴다. 세 곳이 같은 값을 봐야 해서 여기 모은다.
+	HookAPIPathPrefix    = "/v1/hooks/"
+	HookSessionStartPath = HookAPIPathPrefix + "session-start"
+	HookSessionEndPath   = HookAPIPathPrefix + "session-end"
 
 	// DefaultMaxBodyBytes 는 요청 본문 상한이다 (계획서 「수신기 설계」의 4 MiB).
 	// gzip 은 **압축 해제 후** 크기에 이 값을 건다 (body.go).
@@ -339,6 +345,10 @@ func (rc *Receiver) logf(format string, args ...any) {
 // 로컬 데몬에 요청을 던질 수 있게 된다. OPTIONS 를 405 로 끊는 것도 같은 이유다 —
 // preflight 가 성공하지 못하면 브라우저는 본 요청을 보내지 않는다.
 func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == HookSessionStartPath || r.URL.Path == HookSessionEndPath {
+		finish := rc.observeHook(&w, r)
+		defer finish()
+	}
 	if r.Method == http.MethodOptions {
 		// 경로를 보지 않고 먼저 끊는다. 존재 여부를 알려 줄 이유가 없다.
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -349,7 +359,7 @@ func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rc.serveHealth(w, r)
 		return
 	}
-	if strings.HasPrefix(r.URL.Path, LocalAPIPathPrefix) && rc.opt.LocalAPI != nil {
+	if (strings.HasPrefix(r.URL.Path, LocalAPIPathPrefix) || strings.HasPrefix(r.URL.Path, HookAPIPathPrefix)) && rc.opt.LocalAPI != nil {
 		if ok, reason := rc.authorize(r); !ok {
 			total := rc.stats.unauthorized.Add(1)
 			rc.logUnauthorized(reason, total)

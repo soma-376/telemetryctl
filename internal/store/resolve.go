@@ -42,6 +42,13 @@ type writer struct {
 
 type sessionRef struct{ vendor, key string }
 
+func maxSec(a, b event.UnixSec) event.UnixSec {
+	if b > a {
+		return b
+	}
+	return a
+}
+
 type turnRef struct {
 	sessionID int64
 	key       string
@@ -122,45 +129,58 @@ func (w *writer) writeVendors(b Batch) error {
 // **title 은 여기서 쓰지 않는다.** 조립기는 제목을 만들지 않고, sessions.title 은 벤더가
 // 준 제목을 저장하는 UPDATE 두 개(SetClaudeTitle·SetCodexTitle)만 건드린다. 유도한 제목이
 // 없으니 승격 사다리도, 잠금도 필요 없다 (PROJ-124).
+// workspace_path도 쓰지 않는다. 세션 원경로는 시작·재개 훅만 저장한다 (ADR 0028).
 //
 // 식별 정보는 새 관측을 우선한다 — 처음엔 비어 있다가 나중에 리소스 속성이 도착하는 것이
 // 정상 경로다.
 //
 // started_at 은 가장 이른 관측이다. 세션이 언제 시작했는지는 늦게 도착한 배치가 바꿀 수 없다.
+//
+// last_activity_at 은 그 거울상인 MAX 다. 두 컬럼 다 도착 순서에 기대지 않는다.
+//
+// 이 컬럼이 head 에 있어 **두 UPSERT 가 모두 갱신한다.** "이 시각에 활동이 있었다" 는
+// 이벤트 하나만 봐도 알 수 있다. 이벤트 씨앗을 빼면 조립기가 놓친 세션의 활동 시각이
+// 멈춰 유휴 스윕이 살아 있는 세션을 마감한다.
+//
+// 그 값이 재개 판정의 근거이기도 하다. 마감보다 **뒤**인 활동이 오면 세션은 살아 있다 —
+// 마감 이전 시각의 낙오 배치는 마감을 흔들지 못한다 (ADR 0021). 두 씨앗이 같은 규칙을
+// 타므로 경로별 예외가 없다.
 const sessionUpsertHead = `INSERT INTO sessions (
-  vendor_id, session_key, workspace_path, user_email, user_account_id,
-  terminal_type, started_at, ended_at, active_time_sec
-) VALUES (?,?,?,?,?,?,?,?,?)
+  vendor_id, session_key, user_email, user_account_id,
+  terminal_type, started_at, last_activity_at, active_time_sec
+) VALUES (?,?,?,?,?,?,?,?)
 ON CONFLICT(vendor_id, session_key) DO UPDATE SET
-  workspace_path  = COALESCE(excluded.workspace_path,  sessions.workspace_path),
-  user_email      = COALESCE(excluded.user_email,      sessions.user_email),
-  user_account_id = COALESCE(excluded.user_account_id, sessions.user_account_id),
-  terminal_type   = COALESCE(excluded.terminal_type,   sessions.terminal_type),
-  started_at      = MIN(COALESCE(excluded.started_at, sessions.started_at),
-                        COALESCE(sessions.started_at, excluded.started_at)),
+  user_email       = COALESCE(excluded.user_email,      sessions.user_email),
+  user_account_id  = COALESCE(excluded.user_account_id, sessions.user_account_id),
+  terminal_type    = COALESCE(excluded.terminal_type,   sessions.terminal_type),
+  started_at       = MIN(COALESCE(excluded.started_at, sessions.started_at),
+                         COALESCE(sessions.started_at, excluded.started_at)),
+  last_activity_at = MAX(COALESCE(excluded.last_activity_at, sessions.last_activity_at),
+                         COALESCE(sessions.last_activity_at, excluded.last_activity_at)),
+  ended_at         = CASE
+                       WHEN sessions.ended_at IS NOT NULL
+                        AND COALESCE(excluded.last_activity_at, 0) > sessions.ended_at
+                       THEN NULL
+                       ELSE sessions.ended_at
+                     END,
 `
 
-// upsertSessionSQL 은 조립기 스냅샷용이다. **생명주기의 정본은 스냅샷 하나뿐이다.**
+// upsertSessionSQL 은 조립기 스냅샷용이고 seedSessionSQL 은 이벤트 씨앗용이다.
+// **둘의 차이는 active_time_sec 하나뿐이다.**
 //
-// ended_at 을 COALESCE 가 아니라 excluded 그대로 쓰는 것이 핵심이다. v1 에는 status 컬럼이
-// 없고 화면의 running/completed 는 `ended_at IS NULL` 로 계산된다 (ADR 0009). 마감된 세션에
-// 같은 session.id 로 이벤트가 다시 오면 조립기는 마감을 되돌리는데(state.observe), 저장 쪽이
-// COALESCE 로 옛 ended_at 을 붙들고 있으면 실제로는 돌고 있는 세션이 화면에서 영원히
-// completed 로 남는다. 스냅샷이 "진행 중"이라고 말하면 컬럼도 NULL 로 돌아가야 한다.
+// ended_at 은 어느 쪽도 쓰지 않는다. 생명주기의 정본은 DB 이고 쓰는 주체는 벤더 훅과
+// SQL 유휴 스윕 둘뿐이다 (ADR 0021). 스냅샷은 조립기가 본 것의 요약일 뿐, 세션이
+// 끝났는지는 조립기가 볼 수 없는 사실(훅이 왔는지, 재시작 전에 무슨 일이 있었는지)에
+// 달려 있다. 재개만 head 의 한 줄로 표현한다.
 //
-// active_time_sec 는 반대로 단조 증가다. 데몬이 재시작하면 조립기는 그 세션의 활동 시간을
-// 0 부터 다시 세므로, 새 값을 그대로 쓰면 이미 기록된 시간이 줄어든다. 활동 시간은 세션
-// 안에서 줄어들 수 없는 값이라 MAX 로 지킨다.
-const upsertSessionSQL = sessionUpsertHead + `  ended_at        = excluded.ended_at,
-  active_time_sec = MAX(COALESCE(excluded.active_time_sec, sessions.active_time_sec),
-                        COALESCE(sessions.active_time_sec, excluded.active_time_sec))
+// active_time_sec 는 단조 증가다. 데몬이 재시작하면 조립기는 그 세션의 활동 시간을
+// 0 부터 다시 세므로, 새 값을 그대로 쓰면 이미 기록된 시간이 줄어든다. 이벤트 하나는
+// 활동 시간을 모르므로 씨앗은 건드리지 않는다.
+const upsertSessionSQL = sessionUpsertHead + `  active_time_sec  = MAX(COALESCE(excluded.active_time_sec, sessions.active_time_sec),
+                         COALESCE(sessions.active_time_sec, excluded.active_time_sec))
 RETURNING id`
 
-// seedSessionSQL 은 이벤트 씨앗용이다. 이벤트 하나는 세션이 끝났는지 얼마나 활동했는지를
-// 모르므로 두 컬럼을 **건드리지 않는다**. 스냅샷 규칙을 여기에도 쓰면, 스냅샷 없이 이벤트만
-// 저장되는 틱마다 마감된 세션의 ended_at 이 NULL 로 지워진다.
-const seedSessionSQL = sessionUpsertHead + `  ended_at        = sessions.ended_at,
-  active_time_sec = sessions.active_time_sec
+const seedSessionSQL = sessionUpsertHead + `  active_time_sec  = sessions.active_time_sec
 RETURNING id`
 
 // sessionSeed 는 sessions 한 행에 쓸 값이다. 이벤트에서 오는 최소 씨앗과 조립기 스냅샷의
@@ -168,17 +188,16 @@ RETURNING id`
 type sessionSeed struct {
 	vendor, key string
 
-	workspacePath string
 	userEmail     string
 	userAccountID string
 	terminalType  string
 
-	startedAt  any
-	endedAt    any
-	activeTime any
+	startedAt      any
+	lastActivityAt any
+	activeTime     any
 
-	// lifecycle 은 이 씨앗이 세션 생명주기(ended_at · active_time_sec)의 정본인지다.
-	// 조립기 스냅샷만 true 다 — 이벤트 하나는 세션이 끝났는지 모른다.
+	// lifecycle 은 이 씨앗이 활동 시간의 정본인지다. 조립기 스냅샷만 true 다 —
+	// 이벤트 하나는 세션이 얼마나 활동했는지 모른다.
 	lifecycle bool
 }
 
@@ -192,9 +211,9 @@ func (s sessionSeed) sql() string {
 
 func (s sessionSeed) args() []any {
 	return []any{
-		s.vendor, s.key, nullStr(s.workspacePath),
+		s.vendor, s.key,
 		nullStr(s.userEmail), nullStr(s.userAccountID), nullStr(s.terminalType),
-		s.startedAt, s.endedAt, s.activeTime,
+		s.startedAt, s.lastActivityAt, s.activeTime,
 	}
 }
 
@@ -203,6 +222,20 @@ func (s sessionSeed) args() []any {
 // 스냅샷이 먼저인 이유는 그것이 세션 생명주기의 정본이기 때문이다. 이벤트 씨앗이 먼저
 // 들어가면 같은 배치 안에서 UPDATE 가 한 번 더 돈다.
 func (w *writer) writeSessions(b Batch) error {
+	// 같은 배치의 이벤트가 스냅샷보다 늦을 수 있다. 아래 이벤트 루프는 스냅샷이 이미
+	// 처리한 세션을 건너뛰므로, 여기서 미리 접어 두지 않으면 그 시각이 유실된다.
+	eventSeen := map[sessionRef]event.UnixSec{}
+	for _, rec := range b.Events {
+		e := rec.Event
+		if e.SessionID == "" {
+			continue
+		}
+		ref := sessionRef{e.Vendor, e.SessionID}
+		if ts := e.TS.Sec(); ts > eventSeen[ref] {
+			eventSeen[ref] = ts
+		}
+	}
+
 	for _, s := range b.Sessions {
 		if s.SessionID == "" {
 			return errors.New("store: session_key 가 빈 세션")
@@ -220,14 +253,13 @@ func (w *writer) writeSessions(b Batch) error {
 		}
 		seed := sessionSeed{
 			vendor: s.Vendor, key: s.SessionID,
-			workspacePath: s.WorkspacePath,
-			userEmail:     s.UserEmail,
-			userAccountID: s.UserAccountID,
-			terminalType:  s.TerminalType,
-			startedAt:     nullSec(s.StartedAt),
-			endedAt:       optSec(s.EndedAt),
-			activeTime:    active,
-			lifecycle:     true,
+			userEmail:      s.UserEmail,
+			userAccountID:  s.UserAccountID,
+			terminalType:   s.TerminalType,
+			startedAt:      nullSec(s.StartedAt),
+			lastActivityAt: nullSec(maxSec(s.LastEventAt, eventSeen[sessionRef{s.Vendor, s.SessionID}])),
+			activeTime:     active,
+			lifecycle:      true,
 		}
 		if _, err := w.sessionID(seed); err != nil {
 			return err
@@ -245,11 +277,12 @@ func (w *writer) writeSessions(b Batch) error {
 		}
 		seed := sessionSeed{
 			vendor: e.Vendor, key: e.SessionID,
-			workspacePath: e.Attr.WorkspacePath,
 			userEmail:     e.Attr.UserEmail,
 			userAccountID: e.Attr.UserAccountID,
 			terminalType:  e.Attr.TerminalType,
-			startedAt:     nullSec(e.TS.Sec()),
+			// 이벤트 하나에게 이 시각은 시작이자 마지막 활동이다. MIN·MAX 가 갈라 준다.
+			startedAt:      nullSec(e.TS.Sec()),
+			lastActivityAt: nullSec(e.TS.Sec()),
 		}
 		if _, err := w.sessionID(seed); err != nil {
 			return err

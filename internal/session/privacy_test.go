@@ -9,7 +9,7 @@ import (
 
 // 이 패키지의 계약: 식별 정보가 **지정된 필드 밖으로는** 조립기를 지나가지 않는다.
 //
-// ADR 0010 이 v3 스키마가 요구하는 값(작업 경로 원문·이메일·계정 ID)에 한해 로컬 저장을
+// ADR 0010 이 v3 스키마가 요구하는 값(이메일·계정 ID)에 한해 로컬 저장을
 // 열었다. 그래서 검사를 통째로 푸는 대신 그 필드들만 예외로 두고 나머지는 그대로 유지한다 —
 // 조립 결과는 sessions · turns · file_changes 로 그대로 나가고, 예외 목록 밖에서 한 번 새면
 // SQLite 에 영구히 남아 GUI 화면까지 흐른다.
@@ -25,7 +25,7 @@ const (
 // 이 목록은 예외이지 면제가 아니다. 스캐너는 이 필드들만 건너뛰고 나머지를 전부 훑는다.
 // 목록을 늘리는 것은 ADR 개정을 요구하는 결정이다.
 var localOnlyFields = []string{
-	"WorkspacePath", // sessions.workspace_path
+
 	"UserEmail",     // sessions.user_email
 	"UserAccountID", // sessions.user_account_id
 }
@@ -53,7 +53,7 @@ func TestNoFullPathsInAssembledSession(t *testing.T) {
 	a.Add(metricEv("s1", "claude_code.lines_of_code.count", start+60, 30, typ("added")))
 	a.Add(metricEv("s1", "claude_code.lines_of_code.count", start+60, 4, typ("removed")))
 
-	s := only(t, a.Advance(start+3600))
+	s := only(t, a.Snapshot())
 
 	// 전제 확인: 파일·툴 행이 실제로 만들어졌다. 비어 있으면 아래 단언이 공허하게 통과한다.
 	if len(s.Files) != 2 {
@@ -68,9 +68,6 @@ func TestNoFullPathsInAssembledSession(t *testing.T) {
 
 	// 예외 필드에는 실제로 값이 있어야 한다. 비어 있으면 아래 루프가 "새지 않는다" 를
 	// 증명하는 게 아니라 "채워지지 않았다" 를 통과시키는 것이 된다.
-	if s.WorkspacePath != fixtureRepoRoot {
-		t.Fatalf("workspace_path = %q, want %q", s.WorkspacePath, fixtureRepoRoot)
-	}
 	if s.UserEmail != fixtureEmail || s.UserAccountID != fixtureAccount {
 		t.Fatalf("식별 정보가 안 실렸다: %q / %q", s.UserEmail, s.UserAccountID)
 	}

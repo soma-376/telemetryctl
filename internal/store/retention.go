@@ -33,16 +33,24 @@ const idChunk = 500
 
 // sessionLastActivity 는 세션의 "마지막으로 알려진 활동" 시각이다.
 //
-// v1 에는 last_event_at 이 없고 started_at·ended_at 은 **둘 다 선택**이다. 그래서 하나를
-// 고르는 것이 아니라 알고 있는 값 중 **가장 늦은 것**을 쓴다. COALESCE 로 우선순위를 매기면
-// 400일 전에 시작해 지금도 도는 긴 세션이 started_at 만으로 오래된 것이 되어, 어제 만들어진
-// 이벤트까지 함께 사라진다.
+// 세 시각이 전부 선택이라 하나를 고르지 않고 아는 값 중 **가장 늦은 것**을 쓴다.
+// COALESCE 로 우선순위를 매기면 400일 전에 시작해 지금도 도는 긴 세션이 started_at 만으로
+// 오래된 것이 되어, 어제 만들어진 이벤트까지 함께 사라진다.
 //
 // 0 은 "모른다" 는 뜻이다. nullSec 이 0 이하의 시각을 전부 NULL 로 눕히므로 저장된 시각은
 // 항상 0 보다 크다 — 0 이 실제 값과 부딪힐 일이 없다.
+//
+// **화면(dashboard.lastActivityExpr)과 달리 turns·events 서브쿼리를 유지한다.** 화면이
+// 보는 행은 언제나 쓰기 경로가 만든 것이라 last_activity_at 이 채워져 있지만, 여기는
+// 아무도 예상하지 못한 행까지 판정해야 하는 삭제 경로다. 세 컬럼이 모두 NULL 인 세션에
+// 이벤트만 달려 있으면 컬럼만으로는 "모른다" 가 되어 영원히 안 지워진다.
+//
+// 두 식이 어긋나도 안전한 방향이다. 이 식이 화면 쪽보다 크거나 같으므로, 화면에 보이는
+// 세션을 보존 정책이 먼저 지우는 일은 생기지 않는다.
 const sessionLastActivity = `MAX(
   COALESCE(sessions.ended_at, 0),
   COALESCE(sessions.started_at, 0),
+  COALESCE(sessions.last_activity_at, 0),
   COALESCE((SELECT MAX(COALESCE(e.occurred_at, t.ended_at, t.started_at))
               FROM turns t LEFT JOIN events e ON e.turn_id = t.id
              WHERE t.session_id = sessions.id), 0))`

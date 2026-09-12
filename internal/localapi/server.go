@@ -44,8 +44,34 @@ type TraySource interface {
 
 // NewServer 는 데몬이 receiver 에 넘길 핸들러다. 요청이 여기 닿았다는 것은 receiver 가
 // 이미 인증을 통과시켰다는 뜻이다.
-func NewServer(refresher LimitRefresher, trays TraySource) http.Handler {
+func NewServer(refresher LimitRefresher, trays TraySource, hookSinks ...HookSink) http.Handler {
 	mux := http.NewServeMux()
+	var hooks HookSink
+	if len(hookSinks) > 0 {
+		hooks = hookSinks[0]
+	}
+	handleLifecycle := func(end bool) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if hooks == nil {
+				http.NotFound(w, r)
+				return
+			}
+			defer r.Body.Close() //nolint:errcheck
+			event, err := DecodeHook(
+				http.MaxBytesReader(w, r.Body, 64<<10), r.URL.Query().Get(paramVendor), end)
+			if err != nil {
+				http.Error(w, "invalid hook payload", http.StatusBadRequest)
+				return
+			}
+			if err := hooks.SubmitLifecycle(r.Context(), event); err != nil {
+				http.Error(w, "hook unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}
+	mux.HandleFunc("POST "+SessionStartPath, handleLifecycle(false))
+	mux.HandleFunc("POST "+SessionEndPath, handleLifecycle(true))
 
 	mux.HandleFunc("POST "+TrayRefreshPath, func(w http.ResponseWriter, r *http.Request) {
 		if err := refresher.RefreshManual(r.Context()); err != nil {

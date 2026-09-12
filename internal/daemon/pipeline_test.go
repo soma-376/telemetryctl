@@ -10,10 +10,62 @@ import (
 	"testing"
 	"time"
 
+	"github.com/your-org/pulsemetry/internal/event"
+	"github.com/your-org/pulsemetry/internal/localapi"
 	"github.com/your-org/pulsemetry/internal/otlpdecode"
 	"github.com/your-org/pulsemetry/internal/receiver"
 	"github.com/your-org/pulsemetry/internal/store"
 )
+
+func TestLifecycleHookStartsEndsAndReopensSession(t *testing.T) {
+	db := openTestStore(t)
+	t.Cleanup(func() { _ = db.Close() })
+	now := time.Unix(fixtureUnix, 0).UTC()
+	logs := &syncBuffer{}
+	p := newTestPipeline(t, db, logs, func() time.Time { return now })
+	ctx := context.Background()
+	e := localapi.LifecycleEvent{Vendor: "codex", SessionID: "thr-hook", Source: "startup"}
+	if err := p.SubmitLifecycle(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if got := logs.String(); !strings.Contains(got, `세션 훅 수신: vendor=codex event=start session_id=thr-hook source="startup"`) {
+		t.Fatalf("시작 훅 로그가 없음: %q", got)
+	}
+	var started int64
+	var ended any
+	if err := db.SQL().QueryRow(`SELECT started_at, ended_at FROM sessions WHERE session_key='thr-hook'`).Scan(&started, &ended); err != nil {
+		t.Fatal(err)
+	}
+	if started != now.Unix() || ended != nil {
+		t.Fatalf("start=%d end=%v", started, ended)
+	}
+	now = now.Add(time.Minute)
+	e.End = true
+	if err := p.SubmitLifecycle(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if got := logs.String(); !strings.Contains(got, `세션 훅 수신: vendor=codex event=end session_id=thr-hook`) {
+		t.Fatalf("종료 훅 로그가 없음: %q", got)
+	}
+	if err := db.SQL().QueryRow(`SELECT ended_at FROM sessions WHERE session_key='thr-hook'`).Scan(&ended); err != nil {
+		t.Fatal(err)
+	}
+	if ended != now.Unix() {
+		t.Fatalf("end=%v", ended)
+	}
+	now = now.Add(time.Minute)
+	e.End = false
+	e.Source = "resume"
+	if err := p.SubmitLifecycle(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SQL().QueryRow(`SELECT ended_at FROM sessions WHERE session_key='thr-hook'`).Scan(&ended); err != nil {
+		t.Fatal(err)
+	}
+	if ended != nil {
+		t.Fatalf("resume end=%v", ended)
+	}
+}
 
 // newTestPipeline 은 수신기 없이 파이프라인만 띄운다. 저장 실패·조립기 정리처럼
 // HTTP 를 거치지 않고 봐야 하는 경로를 위한 것이다.
@@ -214,5 +266,135 @@ func TestPipelineIgnoresCommandsAfterClose(t *testing.T) {
 	p.submit(cmdFlush) // 막히지도 panic 하지도 않아야 한다
 	if !p.close(time.Now().Add(time.Second)) {
 		t.Error("close 를 두 번 부르면 안전해야 한다")
+	}
+}
+
+// PROJ-67 의 재현 절차다. 데몬을 껐다 켜면 조립기 맵이 비어 그 전에 돌던 세션을
+// Advance 가 볼 수 없다. DB 유휴 스윕이 그것을 마감해야 한다.
+func TestSweepClosesSessionsLostToRestart(t *testing.T) {
+	db := openTestStore(t)
+	t.Cleanup(func() { _ = db.Close() })
+
+	base := time.Unix(fixtureUnix, 0).UTC()
+	now := base
+	first := newTestPipeline(t, db, &syncBuffer{}, func() time.Time { return now })
+	feedSession(t, first, "sess-restart", base)
+	if !first.close(time.Now().Add(5 * time.Second)) {
+		t.Fatal("첫 파이프라인 종료 실패")
+	}
+	if got := sessionEndedAt(t, db, "sess-restart"); got != nil {
+		t.Fatalf("아직 유휴가 아닌데 마감됐다: %v", got)
+	}
+
+	// 재시작. 새 파이프라인의 조립기는 이 세션을 모른다.
+	now = base.Add(first.asm.IdleThreshold() + time.Hour)
+	second := newTestPipeline(t, db, &syncBuffer{}, func() time.Time { return now })
+	second.submit(cmdSessions)
+	waitFor(t, "유휴 스윕", func() bool { return sessionEndedAt(t, db, "sess-restart") != nil })
+
+	got := sessionEndedAt(t, db, "sess-restart")
+	if got == nil {
+		t.Fatal("재시작 뒤에도 running 으로 남았다 (PROJ-67)")
+	}
+	// 마감 시각은 컷오프가 아니라 마지막 활동이다.
+	if got != base.Unix() {
+		t.Fatalf("ended_at = %v, want %d", got, base.Unix())
+	}
+}
+
+// 조립기가 아직 진행 중이라 보는 세션을 스윕이 닫으면 다음 스냅샷이 도로 열어 왕복한다.
+func TestSweepDoesNotCloseSessionsAssemblerStillOwns(t *testing.T) {
+	db := openTestStore(t)
+	t.Cleanup(func() { _ = db.Close() })
+
+	base := time.Unix(fixtureUnix, 0).UTC()
+	now := base
+	p := newTestPipeline(t, db, &syncBuffer{}, func() time.Time { return now })
+	feedSession(t, p, "sess-live", base)
+
+	now = base.Add(p.asm.IdleThreshold() - time.Minute)
+	before := p.Stats().SessionsWritten
+	p.submit(cmdSessions)
+	waitFor(t, "세션 틱", func() bool { return p.Stats().SessionsWritten > before })
+
+	if got := sessionEndedAt(t, db, "sess-live"); got != nil {
+		t.Fatalf("조립기가 진행 중이라 보는 세션을 스윕이 마감했다: %v", got)
+	}
+}
+
+func feedSession(t *testing.T, p *pipeline, sessionID string, at time.Time) {
+	t.Helper()
+	if err := p.Consume(context.Background(), receiver.Batch{
+		Result: otlpdecode.Result{Events: []event.Event{{
+			Vendor: "claude_code", Name: "claude_code.api_request",
+			InstallationID: "install-1",
+			SessionID:      sessionID, Signal: event.SignalLog,
+			TS: event.NanoFromTime(at),
+		}}},
+	}); err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	p.submit(cmdSessions)
+	waitFor(t, "세션 저장 ("+sessionID+")", func() bool {
+		var n int
+		if err := p.db.SQL().QueryRow(
+			`SELECT COUNT(*) FROM sessions WHERE session_key = ?`, sessionID).Scan(&n); err != nil {
+			return false
+		}
+		return n == 1
+	})
+}
+
+func sessionEndedAt(t *testing.T, db *store.DB, sessionID string) any {
+	t.Helper()
+	var ended any
+	err := db.SQL().QueryRow(
+		`SELECT ended_at FROM sessions WHERE session_key = ?`, sessionID).Scan(&ended)
+	if err != nil {
+		t.Fatalf("ended_at 조회 (%s): %v", sessionID, err)
+	}
+	return ended
+}
+
+// 실측된 flip-flop 회귀다. 훅으로만 열린 세션(OTel 활동 0)을 스윕이 닫은 뒤, 다음
+// 세션 틱의 스냅샷이 그 마감을 NULL 로 되살려 매 틱 마감↔재개가 반복됐다.
+func TestHookOnlySessionStaysClosedAfterSweep(t *testing.T) {
+	db := openTestStore(t)
+	t.Cleanup(func() { _ = db.Close() })
+
+	base := time.Unix(fixtureUnix, 0).UTC()
+	now := base
+	p := newTestPipeline(t, db, &syncBuffer{}, func() time.Time { return now })
+	ctx := context.Background()
+
+	e := localapi.LifecycleEvent{Vendor: "codex", SessionID: "hook-only", Source: "startup"}
+	if err := p.SubmitLifecycle(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+
+	// 유휴 임계값 너머로 민 뒤 세션 틱 — 스윕이 닫는다.
+	now = base.Add(p.asm.IdleThreshold() + time.Minute)
+	p.submit(cmdSessions)
+	waitFor(t, "스윕 마감", func() bool { return sessionEndedAt(t, db, "hook-only") != nil })
+	closedAt := sessionEndedAt(t, db, "hook-only")
+
+	closedN := p.Stats().SessionsClosed
+
+	// 세션 틱을 두 번 더 돌린다. SubmitLifecycle 은 동기라, 반환됐다는 것은 큐에 먼저
+	// 넣은 cmdSessions 가 모두 처리됐다는 뜻이다 (파이프라인 고루틴은 하나, 채널은 FIFO).
+	// flip-flop 은 틱 안에서 일어나 끝난 뒤의 ended_at 만 봐서는 안 보인다 — 스냅샷이
+	// 되살리고 스윕이 도로 닫아 값은 같아진다. 증상은 마감 카운터가 매 틱 자라는 것이다.
+	p.submit(cmdSessions)
+	p.submit(cmdSessions)
+	if err := p.SubmitLifecycle(ctx, localapi.LifecycleEvent{
+		Vendor: "codex", SessionID: "hook-other", Source: "startup"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := sessionEndedAt(t, db, "hook-only"); got != closedAt {
+		t.Fatalf("ended_at 이 흔들렸다: %v → %v", closedAt, got)
+	}
+	if got := p.Stats().SessionsClosed; got != closedN {
+		t.Fatalf("마감 카운터 = %d → %d — 스윕이 같은 세션을 매 틱 다시 닫는다 (flip-flop)", closedN, got)
 	}
 }

@@ -140,7 +140,7 @@ func TestWriteSessionSnapshotFillsIdentityColumns(t *testing.T) {
 	if title != nil {
 		t.Errorf("title = %v, want NULL", title)
 	}
-	if workspace != s.WorkspacePath || email != s.UserEmail || account != s.UserAccountID {
+	if workspace != nil || email != s.UserEmail || account != s.UserAccountID {
 		t.Errorf("식별 정보가 안 실렸다: %v / %v / %v", workspace, email, account)
 	}
 	if term != "iTerm.app" {
