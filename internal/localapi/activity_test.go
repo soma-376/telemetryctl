@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/your-org/pulsemetry/internal/dashboard"
+	"github.com/your-org/pulsemetry/internal/dashboard/activity"
 	"github.com/your-org/pulsemetry/internal/event"
 	"github.com/your-org/pulsemetry/internal/store"
 )
@@ -54,16 +55,16 @@ func TestActivityRoutesReadStoredSession(t *testing.T) {
 		}
 		return w.Code
 	}
-	var page dashboard.ActivityPage
+	var page activity.Page
 	q := url.Values{"q": {`{"vendors":["codex"],"since":1789139543,"until":1789139600,"limit":1}`}}
 	if code := query(ActivityPath+"?"+q.Encode(), &page); code != 200 || len(page.Rows) != 1 {
 		t.Fatalf("page=%+v status=%d", page, code)
 	}
 	row := page.Rows[0]
-	if row.InputTokens != 100 || row.OutputTokens != 20 || row.UsageCalls != 1 || row.ReportedCostCalls != 0 {
+	if row.InputTokens != 100 || row.OutputTokens != 20 || row.ReportedCostCalls != 0 {
 		t.Fatalf("row=%+v", row)
 	}
-	var detail ActivityDetail
+	var detail activity.Detail
 	if code := query(ActivityPath+"/"+strconv.FormatInt(row.ID, 10), &detail); code != 200 {
 		t.Fatal(code)
 	}

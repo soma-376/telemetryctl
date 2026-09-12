@@ -67,10 +67,14 @@ func (c *Classifier) Session(ctx context.Context, sessionID int64) (SessionClass
 // 화면의 목록이 흔들린다. 중복 id 는 각각 한 행씩 나온다 — 걸러 내면 호출자의 인덱스와
 // 결과의 인덱스가 어긋난다.
 func (c *Classifier) Sessions(ctx context.Context, sessionIDs []int64) ([]SessionClassification, error) {
+	db, _ := c.db()
+	return ClassifySessions(ctx, db, sessionIDs)
+}
+
+func ClassifySessions(ctx context.Context, db SQLQuerier, sessionIDs []int64) ([]SessionClassification, error) {
 	out := make([]SessionClassification, 0, len(sessionIDs))
 
-	db, ok := c.db()
-	if !ok {
+	if db == nil {
 		// DB 가 없는 것은 에러가 아니다 (dashboard.go 머리말). 전부 빈 분류다.
 		for _, id := range sessionIDs {
 			out = append(out, ClassifyTurns(id, nil))
@@ -89,7 +93,7 @@ func (c *Classifier) Sessions(ctx context.Context, sessionIDs []int64) ([]Sessio
 }
 
 // db 는 조회에 쓸 핸들이다. 분류기가 nil Reader 를 들고 있어도 터지지 않는다.
-func (c *Classifier) db() (sqlQuerier, bool) {
+func (c *Classifier) db() (SQLQuerier, bool) {
 	if c == nil || c.reader == nil {
 		return nil, false
 	}
@@ -102,7 +106,7 @@ func (c *Classifier) db() (sqlQuerier, bool) {
 
 // loadTurnSignals 는 세션들의 턴 신호를 읽는다. 맵을 돌려주지만 호출자는 키로 찾기만
 // 하므로 순회 순서에 의존하지 않는다.
-func loadTurnSignals(ctx context.Context, db sqlQuerier, sessionIDs []int64) (map[int64][]TurnSignals, error) {
+func loadTurnSignals(ctx context.Context, db SQLQuerier, sessionIDs []int64) (map[int64][]TurnSignals, error) {
 	bySession := map[int64][]TurnSignals{}
 	// turnRefs 는 turn_id → 그 턴의 신호다. 뒤따르는 질의들이 여기에 값을 붙인다.
 	turnRefs := map[int64]*TurnSignals{}
@@ -152,17 +156,17 @@ const classifyTurnsSQL = `SELECT t.session_id, t.id, t.turn_index,
 FROM turns t
 WHERE t.turn_index IS NOT NULL AND t.session_id IN (`
 
-func loadTurnRows(ctx context.Context, db sqlQuerier, ids []int64,
+func loadTurnRows(ctx context.Context, db SQLQuerier, ids []int64,
 	bySession map[int64][]TurnSignals, turnRefs map[int64]*TurnSignals) (err error) {
 	const op = "턴 분류 입력 조회"
 
-	query := classifyTurnsSQL + placeholders(len(ids)) +
+	query := classifyTurnsSQL + Placeholders(len(ids)) +
 		`) ORDER BY t.session_id ASC, t.turn_index ASC, t.id ASC`
 	rows, err := db.QueryContext(ctx, query, idArgs(ids)...)
 	if err != nil {
-		return queryErr(op, err)
+		return QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	for rows.Next() {
 		var (
@@ -171,14 +175,14 @@ func loadTurnRows(ctx context.Context, db sqlQuerier, ids []int64,
 		)
 		if serr := rows.Scan(&sessionID, &t.TurnID, &t.TurnIndex,
 			&t.StartedAt, &t.EndedAt, &t.LastSeenAt); serr != nil {
-			return queryErr(op, serr)
+			return QueryErr(op, serr)
 		}
 		// 슬라이스에 담은 뒤 그 원소의 주소를 잡는다. append 가 재할당하면 앞서 잡은
 		// 주소가 죽으므로, 포인터는 슬라이스를 다 채운 뒤에 다시 잡는다 (아래 rebind).
 		bySession[sessionID] = append(bySession[sessionID], t)
 	}
 	if rows.Err() != nil {
-		return nil // closeRows 가 보고한다
+		return nil // CloseRows 가 보고한다
 	}
 	rebindTurnRefs(bySession, turnRefs)
 	return nil
@@ -200,19 +204,19 @@ const classifyToolsSQL = `SELECT c.turn_id, c.id,
 FROM tool_calls c JOIN turns t ON t.id = c.turn_id
 WHERE t.turn_index IS NOT NULL AND t.session_id IN (`
 
-func loadToolRows(ctx context.Context, db sqlQuerier, ids []int64,
+func loadToolRows(ctx context.Context, db SQLQuerier, ids []int64,
 	turnRefs map[int64]*TurnSignals, toolRefs map[int64]*ToolSignal) (err error) {
 	const op = "도구 호출 분류 입력 조회"
 
 	// called_at 은 초 단위라 같은 초에 여러 행이 흔하다. id 를 2순위로 두어야 저장 순서
 	// (= 도착 순서)가 근거 순서에 그대로 남는다 (sessions.go 의 타임라인과 같은 규칙).
-	query := classifyToolsSQL + placeholders(len(ids)) +
+	query := classifyToolsSQL + Placeholders(len(ids)) +
 		`) ORDER BY c.turn_id ASC, COALESCE(c.called_at,0) ASC, c.id ASC`
 	rows, err := db.QueryContext(ctx, query, idArgs(ids)...)
 	if err != nil {
-		return queryErr(op, err)
+		return QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	// 턴별로 도구를 다 모은 뒤에 포인터를 잡는다. 이유는 rebindTurnRefs 와 같다.
 	order := []int64{}
@@ -229,7 +233,7 @@ func loadToolRows(ctx context.Context, db sqlQuerier, ids []int64,
 		)
 		if serr := rows.Scan(&turnID, &callID, &tool.ToolName, &tool.Target,
 			&success, &tool.ErrorType, &tool.Decision, &tool.MCPServer); serr != nil {
-			return queryErr(op, serr)
+			return QueryErr(op, serr)
 		}
 		tool.Success = nullBool(success)
 		if _, seen := collected[turnID]; !seen {
@@ -240,7 +244,7 @@ func loadToolRows(ctx context.Context, db sqlQuerier, ids []int64,
 		collected[turnID] = append(collected[turnID], tool)
 	}
 	if rows.Err() != nil {
-		return nil // closeRows 가 보고한다
+		return nil // CloseRows 가 보고한다
 	}
 
 	for _, turnID := range order {
@@ -267,16 +271,16 @@ JOIN tool_calls c ON c.id = f.tool_call_id
 JOIN turns t ON t.id = c.turn_id
 WHERE t.turn_index IS NOT NULL AND t.session_id IN (`
 
-func loadFileRows(ctx context.Context, db sqlQuerier, ids []int64, toolRefs map[int64]*ToolSignal) (err error) {
+func loadFileRows(ctx context.Context, db SQLQuerier, ids []int64, toolRefs map[int64]*ToolSignal) (err error) {
 	const op = "파일 변경 분류 입력 조회"
 
-	query := classifyFilesSQL + placeholders(len(ids)) +
+	query := classifyFilesSQL + Placeholders(len(ids)) +
 		`) ORDER BY f.tool_call_id ASC, f.id ASC`
 	rows, err := db.QueryContext(ctx, query, idArgs(ids)...)
 	if err != nil {
-		return queryErr(op, err)
+		return QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	for rows.Next() {
 		var (
@@ -285,7 +289,7 @@ func loadFileRows(ctx context.Context, db sqlQuerier, ids []int64, toolRefs map[
 		)
 		if serr := rows.Scan(&callID, &f.Operation, &f.FilePath,
 			&f.Additions, &f.Deletions); serr != nil {
-			return queryErr(op, serr)
+			return QueryErr(op, serr)
 		}
 		if ref, ok := toolRefs[callID]; ok {
 			ref.Files = append(ref.Files, f)
@@ -301,16 +305,16 @@ const classifyEventsSQL = `SELECT e.turn_id, e.event_name
 FROM events e JOIN turns t ON t.id = e.turn_id
 WHERE t.turn_index IS NOT NULL AND t.session_id IN (`
 
-func loadEventRows(ctx context.Context, db sqlQuerier, ids []int64, turnRefs map[int64]*TurnSignals) (err error) {
+func loadEventRows(ctx context.Context, db SQLQuerier, ids []int64, turnRefs map[int64]*TurnSignals) (err error) {
 	const op = "이벤트 분류 입력 조회"
 
-	query := classifyEventsSQL + placeholders(len(ids)) +
+	query := classifyEventsSQL + Placeholders(len(ids)) +
 		`) GROUP BY e.turn_id, e.event_name ORDER BY e.turn_id ASC, e.event_name ASC`
 	rows, err := db.QueryContext(ctx, query, idArgs(ids)...)
 	if err != nil {
-		return queryErr(op, err)
+		return QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	for rows.Next() {
 		var (
@@ -318,7 +322,7 @@ func loadEventRows(ctx context.Context, db sqlQuerier, ids []int64, turnRefs map
 			name   string
 		)
 		if serr := rows.Scan(&turnID, &name); serr != nil {
-			return queryErr(op, serr)
+			return QueryErr(op, serr)
 		}
 		if ref, found := turnRefs[turnID]; found {
 			ref.EventNames = append(ref.EventNames, name)

@@ -9,28 +9,23 @@ import (
 	"strconv"
 
 	"github.com/your-org/pulsemetry/internal/dashboard"
+	"github.com/your-org/pulsemetry/internal/dashboard/activity"
 )
 
 const ActivityPath = "/v1/activity"
 
-// ActivityDetail은 같은 세션 ID로 조회한 상세·지표·분류를 묶는다.
-type ActivityDetail struct {
-	Detail         dashboard.SessionDetail         `json:"detail"`
-	Metrics        dashboard.SessionMetrics        `json:"metrics"`
-	Classification dashboard.SessionClassification `json:"classification"`
-}
-
 // WithActivity는 기존 트레이·훅 핸들러에 읽기 전용 Activity 경로를 더한다.
 func WithActivity(next http.Handler, source *dashboard.Service) http.Handler {
+	builder := activity.NewBuilder(source)
 	mux := http.NewServeMux()
 	mux.Handle("/", next)
 	mux.HandleFunc("GET "+ActivityPath, func(w http.ResponseWriter, r *http.Request) {
-		var q dashboard.ActivityQuery
+		var q activity.Query
 		if err := json.Unmarshal([]byte(r.URL.Query().Get("q")), &q); err != nil || q.Since < 0 || q.Until < 0 || (q.Until > 0 && q.Since >= q.Until) {
 			http.Error(w, "invalid activity query", http.StatusBadRequest)
 			return
 		}
-		page, err := source.Activity(r.Context(), q)
+		page, err := builder.List(r.Context(), q)
 		if err != nil {
 			http.Error(w, "activity unavailable", http.StatusServiceUnavailable)
 			return
@@ -43,14 +38,7 @@ func WithActivity(next http.Handler, source *dashboard.Service) http.Handler {
 			http.Error(w, "invalid session id", http.StatusBadRequest)
 			return
 		}
-		var out ActivityDetail
-		out.Detail, err = source.Session(r.Context(), id)
-		if err == nil && out.Detail.Found {
-			out.Metrics, err = source.SessionMetrics(r.Context(), dashboard.SessionMetricsQuery{SessionID: id})
-			if err == nil {
-				out.Classification, err = dashboard.NewClassifier(source.Reader()).Session(r.Context(), id)
-			}
-		}
+		out, err := builder.Session(r.Context(), id)
 		if err != nil {
 			http.Error(w, "session unavailable", http.StatusServiceUnavailable)
 			return
@@ -60,18 +48,18 @@ func WithActivity(next http.Handler, source *dashboard.Service) http.Handler {
 	return mux
 }
 
-func (c *Client) Activity(ctx context.Context, q dashboard.ActivityQuery) (dashboard.ActivityPage, error) {
+func (c *Client) Activity(ctx context.Context, q activity.Query) (activity.Page, error) {
 	data, err := json.Marshal(q)
 	if err != nil {
-		return dashboard.ActivityPage{}, err
+		return activity.Page{}, err
 	}
-	var out dashboard.ActivityPage
+	var out activity.Page
 	err = c.readActivity(ctx, ActivityPath+"?"+url.Values{"q": {string(data)}}.Encode(), &out)
 	return out, err
 }
 
-func (c *Client) ActivitySession(ctx context.Context, id int64) (ActivityDetail, error) {
-	var out ActivityDetail
+func (c *Client) ActivitySession(ctx context.Context, id int64) (activity.Detail, error) {
+	var out activity.Detail
 	err := c.readActivity(ctx, ActivityPath+"/"+strconv.FormatInt(id, 10), &out)
 	return out, err
 }

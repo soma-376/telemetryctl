@@ -6,10 +6,6 @@ export {
 } from "./models.js";
 
 export type {
-    ActivityCursor,
-    ActivityPage,
-    ActivityQuery,
-    ActivityRow,
     CostSummary,
     CostTotals,
     Evidence,

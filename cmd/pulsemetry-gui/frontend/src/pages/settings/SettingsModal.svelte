@@ -187,7 +187,7 @@
                 >
                   <span
                     class="truncate"
-                    style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;color:#a8a29a;min-width:0;direction:rtl;text-align:left"
+                    style="font-family:var(--font-mono);font-size:10.5px;color:#a8a29a;min-width:0;direction:rtl;text-align:left"
                     ><bdi>{p.dbPath}</bdi></span
                   >
                   <span class="flex-none" style="font-size:10.5px;color:#a8a29a"
@@ -349,7 +349,7 @@
               </span>
               <span
                 class="block truncate"
-                style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;color:#a8a29a"
+                style="font-family:var(--font-mono);font-size:10.5px;color:#a8a29a"
               >
                 {c.key}
               </span>
@@ -388,7 +388,7 @@
             </div>
             <div
               class="text-text"
-              style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;margin-bottom:9px;overflow-wrap:anywhere"
+              style="font-family:var(--font-mono);font-size:11.5px;margin-bottom:9px;overflow-wrap:anywhere"
             >
               {TRANSPORT.target}
             </div>

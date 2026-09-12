@@ -15,19 +15,16 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as dashboard$0 from "../../internal/dashboard/models.js";
+import * as activity$0 from "../../internal/dashboard/activity/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as tray$0 from "../../internal/dashboard/tray/models.js";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
-import * as localapi$0 from "../../internal/localapi/models.js";
 
-export function Activity(q: dashboard$0.ActivityQuery): $CancellablePromise<dashboard$0.ActivityPage> {
+export function Activity(q: activity$0.Query): $CancellablePromise<activity$0.Page> {
     return $Call.ByID(3148998841, q);
 }
 
-export function ActivitySession(id: number): $CancellablePromise<localapi$0.ActivityDetail> {
+export function ActivitySession(id: number): $CancellablePromise<activity$0.Detail> {
     return $Call.ByID(3638835675, id);
 }
 

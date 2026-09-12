@@ -12,21 +12,24 @@
   const style = $derived(AGENT_STYLE[vendor.id]);
   const head = $derived(headOf(vendor.windows));
   const rest = $derived(vendor.windows.filter((window) => window !== head));
+  const expandable = $derived(rest.length > 0);
+  const expanded = $derived(expandable && open);
   const tone = $derived(limitTone(head.pct, style.fg));
 </script>
 
 <button
   type="button"
+  disabled={!expandable}
   onclick={() => (open = !open)}
-  aria-expanded={open}
-  class="bg-surface hover:border-border-strong block w-full cursor-pointer border text-left"
-  style="border-radius:11px;padding:9px 12px;margin-bottom:7px;border-color:{open
+  aria-expanded={expandable ? expanded : undefined}
+  class="bg-surface block w-full border text-left {expandable ? 'cursor-pointer hover:border-border-strong' : 'cursor-default'}"
+  style="border-radius:11px;padding:9px 12px;margin-bottom:7px;border-color:{expanded
     ? 'var(--color-border-strong)'
     : 'var(--color-border)'}"
 >
   <div
     class="grid items-center"
-    style="grid-template-columns:24px minmax(0,1fr) auto auto auto;gap:8px;margin-bottom:6px"
+    style="grid-template-columns:24px minmax(0,1fr) auto auto {expandable ? 'auto' : ''};gap:8px;margin-bottom:6px"
   >
     <AgentBadge
       agent={vendor.id}
@@ -54,22 +57,24 @@
       style="font-size:13px;font-variant-numeric:tabular-nums;color:{tone.value};min-width:34px"
       >{head.remain}</span
     >
-    <span class="flex items-center justify-end" style="gap:4px">
-      <span class="whitespace-nowrap" style="font-size:9.5px;color:#b3aba0">
-        {rest.length && !open ? `+${rest.length}` : ""}
+    {#if expandable}
+      <span class="flex items-center justify-end" style="gap:4px">
+        <span class="whitespace-nowrap" style="font-size:9.5px;color:#b3aba0">
+          {!expanded ? `+${rest.length}` : ""}
+        </span>
+        <ChevronDownIcon
+          size={12}
+          strokeWidth={2.4}
+          class="flex-none"
+          style="color:#b3aba0"
+          rotated={expanded}
+        />
       </span>
-      <ChevronDownIcon
-        size={12}
-        strokeWidth={2.4}
-        class="flex-none"
-        style="color:#b3aba0"
-        rotated={open}
-      />
-    </span>
+    {/if}
   </div>
   <ProgressBar pct={head.pct} color={tone.bar} animate />
 
-  {#if open}
+  {#if expanded}
     <div style="margin-top:10px;padding-top:9px;border-top:1px solid #f1ece4">
       {#each rest as window (window.label)}
         <LimitWindowRow {window} accent={style.fg} />

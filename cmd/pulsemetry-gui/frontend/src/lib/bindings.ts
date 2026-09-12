@@ -26,8 +26,8 @@ import type {
 // 바인딩 전체의 복사본이 되고, 그러면 무엇이 실제로 쓰이는지 알 수 없게 된다.
 
 export { App, Dashboard, TrayState, LimitState };
-export type { ActivityQuery, ActivityPage, ActivityRow, SessionRow, SessionMetrics, TurnMetrics } from "../../bindings/github.com/your-org/pulsemetry/internal/dashboard";
-export type { ActivityDetail } from "../../bindings/github.com/your-org/pulsemetry/internal/localapi";
+export type { SessionRow, SessionMetrics, TurnMetrics } from "../../bindings/github.com/your-org/pulsemetry/internal/dashboard";
+export type { Query as ActivityQuery, Page as ActivityPage, Row as ActivityRow, Detail as ActivityDetail } from "../../bindings/github.com/your-org/pulsemetry/internal/dashboard/activity";
 export type {
   AppInfo,
   LimitWindow,

@@ -6,168 +6,6 @@
 import * as pricing$0 from "../pricing/models.js";
 
 /**
- * ActivityCursor 는 keyset 페이지네이션의 위치다 — 마지막으로 받은 줄의 (시작 시각, id).
- * 
- * OFFSET 을 쓰지 않는 이유는 데몬이 계속 쓰고 있기 때문이다. 페이지 사이에 세션 하나가
- * 새로 들어오면 뒤 페이지가 통째로 한 칸 밀려 어떤 줄은 두 번 나오고 어떤 줄은 건너뛴다.
- * 정렬 키를 그대로 커서로 쓰면 그 사이 무엇이 들어오든 위치가 흔들리지 않는다.
- * 
- * ID 가 0 이면 "첫 페이지" 다. sessions.id 는 1부터라 유효한 커서와 겹치지 않는다.
- */
-export interface ActivityCursor {
-    "started_at": number;
-    "id": number;
-}
-
-/**
- * ActivityPage 는 목록 한 페이지와 다음 페이지 정보다.
- */
-export interface ActivityPage {
-    "rows": ActivityRow[] | null;
-
-    /**
-     * HasMore 가 "더 불러오기" 버튼의 유일한 근거다. Rows 가 Limit 만큼 찼다는 사실로는
-     * 마지막 페이지를 구분할 수 없다 — 딱 맞아떨어진 경우와 더 있는 경우가 같아 보인다.
-     * 그래서 Limit+1 개를 받아 한 개가 남는지로 판정한다 (별도 COUNT 질의를 돌지 않는다).
-     */
-    "has_more": boolean;
-
-    /**
-     * NextCursor 는 **항상** 마지막 줄의 위치다. HasMore 가 false 여도 0 으로 비우지 않는다 —
-     * 비워 두면 HasMore 를 안 보는 호출자가 그것을 "첫 페이지" 로 읽어 처음부터 무한히 다시
-     * 받는다. 마지막 줄을 그대로 두면 한 번 더 불러도 빈 페이지가 와서 그 자리에서 멈춘다.
-     * Rows 가 비어 있으면 커서도 비어 있다.
-     */
-    "next_cursor": ActivityCursor;
-}
-
-/**
- * ActivityQuery 는 Activity 목록 한 페이지의 조회 조건이다 (PROJ-90).
- * 
- * 필터는 서로 AND 이고, 같은 필터 안의 여러 값은 OR 이다 — 화면의 다중 선택이 그 모양이다.
- * 빈 목록·빈 문자열은 "거르지 않음" 이고 에러가 아니다.
- */
-export interface ActivityQuery {
-    /**
-     * Since·Until 은 started_at 범위(UTC unix 초)다. Since 포함, Until 배타. 0 이면 무제한.
-     */
-    "since": number;
-    "until": number;
-
-    /**
-     * Vendors 는 vendor_id 다중 선택이다.
-     */
-    "vendors": string[] | null;
-
-    /**
-     * Projects 는 workspace_path **원경로** 다중 선택이다 (ADR 0010). basename 이 아니다 —
-     * 서로 다른 폴더의 같은 이름 프로젝트가 한 필터로 뭉개지면 안 된다.
-     */
-    "projects": string[] | null;
-
-    /**
-     * Status 는 running|completed|abandoned|handoff 다중 선택이다. 뒤의 둘은 v3 에서
-     * 산출되지 않아 항상 빈 결과를 준다 (ADR 0009).
-     */
-    "status": string[] | null;
-
-    /**
-     * Text 는 통합 검색어다. 사용자가 입력한 그대로 넣는다 — 와일드카드 escape 는 여기가 한다.
-     */
-    "text": string;
-    "limit": number;
-
-    /**
-     * Cursor 는 이전 페이지의 NextCursor 다. 첫 페이지는 비워 둔다.
-     */
-    "cursor": ActivityCursor;
-}
-
-/**
- * ActivityRow 는 Activity 목록 한 줄이다.
- * 
- * 시작·경로·소요·토큰·비용·상태는 SessionRow 가 이미 갖고 있어 그대로 묻어 온다. JSON 에서
- * 임베드는 평평하게 펼쳐지므로 화면은 한 겹 구조로 읽는다.
- */
-export interface ActivityRow {
-    /**
-     * ID 는 sessions.id 다. **세션을 가리키는 유일한 키**이고 Session() 의 인자다 —
-     * v3 에서 session_key 는 벤더 안에서만 고유하다.
-     */
-    "id": number;
-
-    /**
-     * SessionKey 는 벤더가 준 세션 식별자다 (v1 의 session_id). 표시·디버깅용이다.
-     */
-    "session_key": string;
-    "vendor": string;
-    "started_at": number;
-
-    /**
-     * LastEventAt 은 마지막으로 알려진 활동 시각이다 (lastActivityExpr).
-     */
-    "last_event_at": number;
-
-    /**
-     * EndedAt 은 null 이면 진행 중이다.
-     */
-    "ended_at": number | null;
-    "status": string;
-
-    /**
-     * Title 은 벤더가 준 세션 제목이다. 없으면 빈 문자열이고, 무엇을 대신 그릴지는
-     * 표시 계층이 정한다 (PROJ-124).
-     */
-    "title": string;
-
-    /**
-     * WorkspacePath 는 작업 폴더 원경로, ProjectName 은 그 basename 이다 (ADR 0010).
-     */
-    "workspace_path": string;
-    "project_name": string;
-    "duration_ms": number;
-    "active_seconds": number;
-    "input_tokens": number;
-    "output_tokens": number;
-    "cache_read_tokens": number;
-    "cache_creation_tokens": number;
-    "cost_usd": number;
-    "tool_calls": number;
-    "tool_errors": number;
-    "tool_rejects": number;
-    "api_requests": number;
-    "usage_calls": number;
-    "reported_cost_calls": number;
-
-    /**
-     * APIErrors·Retries·Responses 는 v3 에 출처가 없어 항상 0 이다 (위 주석).
-     */
-    "api_errors": number;
-    "retries": number;
-    "prompts": number;
-    "responses": number;
-    "lines_added": number;
-    "lines_removed": number;
-
-    /**
-     * WorkType 은 목록의 "작업" 열이다 — 이 세션이 무엇을 한 세션인지(구현·디버깅·리뷰 …).
-     * 
-     * TODO(PROJ-92): 턴 분류가 이 값의 **유일한** 출처다. 그 작업이 붙기 전까지 항상 빈
-     * 문자열이고, 여기서 휴리스틱으로 추측해 채우지 않는다 — 근거 없는 값이 목록에 뜨면
-     * 사용자는 그것을 분류 결과로 읽는다. 화면은 빈 문자열을 "미분류" 로 그리면 된다.
-     * v3 turns 에는 work_type 컬럼이 없으므로(v2 에 있었고 v3 가 지웠다) PROJ-92 는
-     * 저장할 자리부터 만들어야 한다. 이 필드가 그 결과를 받을 자리다.
-     */
-    "work_type": string;
-
-    /**
-     * MatchedSources 는 검색어가 걸린 출처다 (title|workspace|file|content). 검색어가
-     * 없으면 빈 슬라이스다. 화면이 "파일명에서 발견" 같은 배지를 붙일 수 있어야 한다.
-     */
-    "matched_sources": string[] | null;
-}
-
-/**
  * CostSummary 는 구간(또는 세션) 하나의 예상 비용이다.
  * 
  * 금액 필드가 Total 하나뿐인 것은 pricing.Cost 와 같은 이유다 — 보고값과 추정값을 서로
@@ -273,8 +111,12 @@ export interface FileRow {
      * FilePath 는 원경로다. 「작업 폴더 열기」 가 이 값을 쓴다.
      */
     "file_path": string;
-    "lines_added": number;
-    "lines_removed": number;
+
+    /**
+     * 파일별 합계는 관측된 값만 더하며, 한 번도 관측하지 못했으면 null이다.
+     */
+    "lines_added": number | null;
+    "lines_removed": number | null;
     "edits": number;
     "last_ts": number;
 }
@@ -470,7 +312,7 @@ export interface SessionMetrics {
 
     /**
      * Status 는 running 또는 completed 다. v3 에는 status 컬럼이 없어 조회 시점에
-     * 계산한다 (ADR 0009, statusExpr).
+     * 계산한다 (ADR 0009, StatusExpr).
      */
     "status": string;
 
@@ -587,7 +429,6 @@ export interface SessionRow {
     "tool_errors": number;
     "tool_rejects": number;
     "api_requests": number;
-    "usage_calls": number;
     "reported_cost_calls": number;
 
     /**
@@ -618,7 +459,6 @@ export interface SessionTotals {
      * PromptTurns 는 실제 턴 수다(turn_index IS NOT NULL). 사용자 프롬프트 수와 같다.
      */
     "prompt_turns": number;
-    "usage_calls": number;
 
     /**
      * LLMCalls·ToolCalls 는 티켓이 요구하는 「턴별 LLM 호출과 툴 호출 합계」다.
@@ -772,7 +612,6 @@ export interface TurnMetrics {
      * TTFTMS 는 Codex 의 time-to-first-token 이다. 관측되지 않으면 null 이다.
      */
     "ttft_ms": number | null;
-    "usage_calls": number;
 
     /**
      * LLMCalls·ToolCalls 는 티켓이 요구하는 「턴별 LLM 호출과 툴 호출 합계」다.

@@ -135,7 +135,7 @@ func (r *Reader) Status(ctx context.Context) (Status, error) {
 		&c.FileChanges, &c.Vendors,
 		&st.RunningSessions, &st.OldestEventAt, &st.NewestEventAt,
 	); err != nil {
-		return Status{}, queryErr("로컬 상태 조회", err)
+		return Status{}, QueryErr("로컬 상태 조회", err)
 	}
 
 	version, err := r.schemaVersion(ctx)
@@ -170,7 +170,7 @@ func (r *Reader) schemaVersion(ctx context.Context) (int, error) {
 	}
 	v, err := ro.SchemaVersion(ctx)
 	if err != nil {
-		return 0, queryErr("스키마 버전 조회", err)
+		return 0, QueryErr("스키마 버전 조회", err)
 	}
 	return v, nil
 }
@@ -189,7 +189,7 @@ func (r *Reader) metaInt(ctx context.Context, key string) (int, error) {
 	case errors.Is(err, sql.ErrNoRows):
 		return 0, nil
 	case err != nil:
-		return 0, queryErr("설정값 조회", err)
+		return 0, QueryErr("설정값 조회", err)
 	case !ok:
 		return 0, nil
 	}

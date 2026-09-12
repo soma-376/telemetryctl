@@ -67,13 +67,13 @@ const retryEventsSQL = `SELECT e.turn_id, json(e.payload)
 FROM events e
 WHERE e.turn_id IN (` + metricsTurnScope + `) AND e.payload IS NOT NULL`
 
-func collectRetries(ctx context.Context, db sqlQuerier, id int64, _ pricing.Table, index *turnIndex) (err error) {
+func collectRetries(ctx context.Context, db SQLQuerier, id int64, _ pricing.Table, index *turnIndex) (err error) {
 	const op = "재시도 집계 조회"
 	rows, err := db.QueryContext(ctx, retryEventsSQL, id)
 	if err != nil {
-		return queryErr(op, err)
+		return QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	for rows.Next() {
 		var (
@@ -81,7 +81,7 @@ func collectRetries(ctx context.Context, db sqlQuerier, id int64, _ pricing.Tabl
 			payload []byte
 		)
 		if serr := rows.Scan(&turnID, &payload); serr != nil {
-			return queryErr(op, serr)
+			return QueryErr(op, serr)
 		}
 		if n := retriesInPayload(payload); n > 0 {
 			index.at(turnID).Retries += n

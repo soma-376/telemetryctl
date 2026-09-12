@@ -101,7 +101,7 @@ func (r *Reader) Today(ctx context.Context, tz string) (TodaySummary, error) {
 
 // totalsIn 은 구간 전체의 합계다. Breakdown(dim=total) 과 같은 집계기를 쓰므로
 // GUI 의 Today 카드와 CLI 의 `stats` 합계가 같은 숫자를 낸다.
-func (r *Reader) totalsIn(ctx context.Context, db sqlQuerier, tr timeRange) (Totals, error) {
+func (r *Reader) totalsIn(ctx context.Context, db SQLQuerier, tr timeRange) (Totals, error) {
 	return sumAggregate(ctx, db, DimTotal, "", tr)
 }
 
@@ -115,13 +115,13 @@ func (r *Reader) totalsIn(ctx context.Context, db sqlQuerier, tr timeRange) (Tot
 const activeAgentsSQL = `SELECT vendor_id, COUNT(*)
 FROM sessions WHERE ended_at IS NULL GROUP BY vendor_id ORDER BY vendor_id`
 
-func activeAgents(ctx context.Context, db sqlQuerier) (vendors []string, sessions int64, err error) {
+func activeAgents(ctx context.Context, db SQLQuerier) (vendors []string, sessions int64, err error) {
 	const op = "실행 중 세션 조회"
 	rows, err := db.QueryContext(ctx, activeAgentsSQL)
 	if err != nil {
-		return nil, 0, queryErr(op, err)
+		return nil, 0, QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	vendors = []string{}
 	for rows.Next() {
@@ -130,7 +130,7 @@ func activeAgents(ctx context.Context, db sqlQuerier) (vendors []string, session
 			n      int64
 		)
 		if err := rows.Scan(&vendor, &n); err != nil {
-			return nil, 0, queryErr(op, err)
+			return nil, 0, QueryErr(op, err)
 		}
 		vendors = append(vendors, vendor)
 		sessions += n

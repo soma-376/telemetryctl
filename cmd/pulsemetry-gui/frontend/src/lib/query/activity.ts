@@ -4,7 +4,7 @@ import { Dashboard, type ActivityQuery } from "$lib/bindings";
 export function activityQuery(query: () => ActivityQuery, visible: () => boolean) {
   return createInfiniteQuery(() => ({
     queryKey: ["activity", query()],
-    initialPageParam: { started_at: 0, id: 0 },
+    initialPageParam: { running: false, sort_at: 0, id: 0 },
     queryFn: ({ pageParam }) => Dashboard.Activity({ ...query(), cursor: pageParam }),
     getNextPageParam: (page) => page.has_more ? page.next_cursor : undefined,
     placeholderData: undefined,

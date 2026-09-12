@@ -301,8 +301,8 @@ func TestLikePatternEscapes(t *testing.T) {
 		{`c:\tmp`, `%c:\\tmp%`},
 	}
 	for _, tc := range tests {
-		if got := likePattern(tc.in); got != tc.want {
-			t.Errorf("likePattern(%q) = %q, want %q", tc.in, got, tc.want)
+		if got := LikePattern(tc.in); got != tc.want {
+			t.Errorf("LikePattern(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }
@@ -364,14 +364,14 @@ func TestSnippetOf(t *testing.T) {
 }
 
 func TestCapRunes(t *testing.T) {
-	if got := capRunes("가나다라", 2); got != "가나" {
-		t.Errorf("capRunes = %q, want 가나", got)
+	if got := CapRunes("가나다라", 2); got != "가나" {
+		t.Errorf("CapRunes = %q, want 가나", got)
 	}
-	if got := capRunes("abc", 10); got != "abc" {
-		t.Errorf("capRunes = %q, want abc", got)
+	if got := CapRunes("abc", 10); got != "abc" {
+		t.Errorf("CapRunes = %q, want abc", got)
 	}
-	if got := capRunes(strings.Repeat("가", 500), maxSearchRunes); len([]rune(got)) != maxSearchRunes {
-		t.Errorf("capRunes 길이 = %d, want %d", len([]rune(got)), maxSearchRunes)
+	if got := CapRunes(strings.Repeat("가", 500), MaxSearchRunes); len([]rune(got)) != MaxSearchRunes {
+		t.Errorf("CapRunes 길이 = %d, want %d", len([]rune(got)), MaxSearchRunes)
 	}
 }
 

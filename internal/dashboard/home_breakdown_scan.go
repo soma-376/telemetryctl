@@ -109,7 +109,7 @@ func (v *vendorAcc) model(name string) *modelAcc {
 //
 // dim 이 vendor 인 것 말고는 Home 의 homeFigures 와 같은 호출이다. 같은 행을 다른 키로
 // 묶을 뿐이므로 여기서 나온 합계는 Home 의 dim=total 합계와 정확히 같다.
-func (a *usageAcc) collectAggregate(ctx context.Context, db sqlQuerier) error {
+func (a *usageAcc) collectAggregate(ctx context.Context, db SQLQuerier) error {
 	rows, err := aggregate(ctx, db, DimVendor, "", a.day)
 	if err != nil {
 		return err
@@ -132,18 +132,18 @@ func (a *usageAcc) collectAggregate(ctx context.Context, db sqlQuerier) error {
 // collectCalls 는 llm_calls 를 한 행씩 흘리며 비용·모델을 누적한다.
 //
 // 행을 슬라이스에 모으지 않는 이유는 home_scan.go 와 같다 — 하루치 호출 수에 상한이 없다.
-func (a *usageAcc) collectCalls(ctx context.Context, db sqlQuerier) (err error) {
+func (a *usageAcc) collectCalls(ctx context.Context, db SQLQuerier) (err error) {
 	const op = "벤더별 LLM 호출 비용 조회"
 	rows, err := db.QueryContext(ctx, vendorLLMCallsInRangeSQL, a.day.StartSec(), a.day.EndSec())
 	if err != nil {
-		return queryErr(op, err)
+		return QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	for rows.Next() {
 		vendor, c, serr := scanVendorLLMCall(rows.Scan)
 		if serr != nil {
-			return queryErr(op, serr)
+			return QueryErr(op, serr)
 		}
 		a.addCall(vendor, c)
 	}

@@ -38,6 +38,28 @@ const TURN_STYLE: Record<TurnKind, TurnStyle> = {
 const TURN_KINDS = Object.keys(TURN_STYLE) as TurnKind[];
 
 // ml: 세션 행 표시 데이터 계산
+// dayHeadings 는 각 행 위에 놓을 날짜 머리말이다. 머리말이 없는 자리는 null 이다.
+//
+// 상태별 헤더는 두지 않는다. 여러 날짜가 있으면 연속된 시작 날짜가 바뀌는 곳만 표시한다.
+export function dayHeadings(sessions: ActivitySession[]): (string | null)[] {
+  const days = new Set(sessions.map(s => s.day).filter(Boolean));
+  if (days.size < 2) return sessions.map(() => null);
+  let previous = "";
+  return sessions.map((s) => {
+    const day = s.day ?? "";
+    if (!day || day === previous) return null;
+    previous = day;
+    return dayLabel(day);
+  });
+}
+
+function dayLabel(day: string): string {
+  // 시간대 표기 없는 날짜-시각은 로컬로 해석된다. `day` 만 넘기면 UTC 자정이라 하루 밀린다.
+  return new Date(`${day}T00:00:00`).toLocaleDateString([], {
+    year: "numeric", month: "long", day: "numeric", weekday: "short",
+  });
+}
+
 export function rowDisplay(e: ActivitySession, selected: boolean) {
   const n = STATE_STYLE[e.state];
   const running = e.state === "running";

@@ -297,7 +297,7 @@ func emptyFigures(tr timeRange, loc *time.Location) homeDay {
 //
 // 질의는 둘이다 — 승격 테이블 집계(aggregate.go)와 llm_calls 행 스캔(home_scan.go).
 // 둘을 JOIN 으로 묶지 않는 이유는 행이 곱해져 모든 SUM 이 부풀기 때문이다 (aggregate.go 머리말).
-func homeFigures(ctx context.Context, db sqlQuerier, tr timeRange, loc *time.Location) (homeDay, error) {
+func homeFigures(ctx context.Context, db SQLQuerier, tr timeRange, loc *time.Location) (homeDay, error) {
 	out := homeDay{twoHour: TwoHourAverage{Windows: twoHourWindows(tr, loc)}}
 
 	rows, err := aggregate(ctx, db, DimTotal, "", tr)
@@ -491,7 +491,7 @@ func (r *Reader) RecentActivity(ctx context.Context, q RecentQuery) (RecentActiv
 // 각자 정한다.
 var recentSessionsHead = `SELECT s.id, s.session_key, s.vendor_id, COALESCE(s.title,''),
   COALESCE(s.workspace_path,''), COALESCE(s.started_at,0), ` + lastActivityExpr + `,
-  s.ended_at, ` + statusExpr + `, COALESCE(s.active_time_sec,0)
+  s.ended_at, ` + StatusExpr + `, COALESCE(s.active_time_sec,0)
 FROM sessions s
 WHERE s.started_at IS NOT NULL`
 
@@ -522,7 +522,7 @@ ORDER BY (s.ended_at IS NULL) DESC, s.started_at DESC, s.id DESC LIMIT ?`
 // 비용·토큰은 목록을 확정한 뒤 그 세션들의 llm_calls 를 한 번 더 읽어 채운다. 목록 질의에
 // 상관 서브쿼리로 붙이지 않는 이유는 가격표 산정이 SQL 로 표현되지 않기 때문이다 —
 // 보고값이 없는 호출의 단가는 Go 쪽 표에만 있다 (internal/pricing).
-func recentSessions(ctx context.Context, db sqlQuerier, tr timeRange, limit int, anyDate bool) ([]RecentSession, bool, error) {
+func recentSessions(ctx context.Context, db SQLQuerier, tr timeRange, limit int, anyDate bool) ([]RecentSession, bool, error) {
 	out, truncated, err := scanRecentSessions(ctx, db, tr, limit, anyDate)
 	if err != nil {
 		return nil, false, err
@@ -535,11 +535,11 @@ func recentSessions(ctx context.Context, db sqlQuerier, tr timeRange, limit int,
 	return out, truncated, nil
 }
 
-func scanRecentSessions(ctx context.Context, db sqlQuerier, tr timeRange, limit int, anyDate bool) (out []RecentSession, truncated bool, err error) {
+func scanRecentSessions(ctx context.Context, db SQLQuerier, tr timeRange, limit int, anyDate bool) (out []RecentSession, truncated bool, err error) {
 	const op = "최근 세션 조회"
 	out = []RecentSession{}
 
-	want := clampLimit(limit, defaultRecentSessions, maxRecentSessions)
+	want := ClampLimit(limit, defaultRecentSessions, maxRecentSessions)
 	// 상한 +1 을 받아 "더 있다" 를 별도 질의 없이 판정한다 (sessions.go 의 타임라인과 같은 수법).
 	query, args := recentSessionsSQL, []any{tr.StartSec(), tr.EndSec(), want + 1}
 	if anyDate {
@@ -547,9 +547,9 @@ func scanRecentSessions(ctx context.Context, db sqlQuerier, tr timeRange, limit 
 	}
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, false, queryErr(op, err)
+		return nil, false, QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	for rows.Next() {
 		if len(out) == want {
@@ -558,7 +558,7 @@ func scanRecentSessions(ctx context.Context, db sqlQuerier, tr timeRange, limit 
 		}
 		s, serr := scanRecentSession(rows.Scan)
 		if serr != nil {
-			return nil, false, queryErr(op, serr)
+			return nil, false, QueryErr(op, serr)
 		}
 		out = append(out, s)
 	}
@@ -589,7 +589,7 @@ func scanRecentSession(scan func(...any) error) (RecentSession, error) {
 
 // fillRecentUsage 는 목록의 토큰과 예상 비용을 채운다. 질의는 한 번이다 — 세션마다 한 번씩
 // 물으면 목록 길이만큼 왕복한다.
-func fillRecentUsage(ctx context.Context, db sqlQuerier, rows []RecentSession) error {
+func fillRecentUsage(ctx context.Context, db SQLQuerier, rows []RecentSession) error {
 	if len(rows) == 0 {
 		return nil
 	}

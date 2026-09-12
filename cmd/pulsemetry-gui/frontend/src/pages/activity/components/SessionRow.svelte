@@ -20,16 +20,16 @@
 
 <button
   type="button"
-  class="row grid w-full cursor-pointer items-center border-b text-left"
+  class="row grid w-full cursor-pointer items-center border-b text-center"
   style="--row-bg:{d.bg};grid-template-columns:14px 58px minmax(0,1.35fr) minmax(0,1fr) 62px 62px 62px 76px;gap:12px;padding:12px 18px;border-color:#f1ece4;box-shadow:{d.rail}"
   onclick={() => onOpen?.()}
 >
-  <Dot size={9} color={d.dot} pulse={d.running} />
+  <span class="flex justify-center"><Dot size={9} color={d.dot} pulse={d.running} /></span>
   <span
     class="text-text-secondary"
     style="font-size:13px;font-variant-numeric:tabular-nums">{d.time}</span
   >
-  <span class="flex min-w-0 items-center" style="gap:10px">
+  <span class="flex min-w-0 items-center justify-center" style="gap:10px">
     <AgentBadge agent={d.agentId} size={28} />
     <span style="min-width:0">
       <span
@@ -47,32 +47,32 @@
     </span>
   </span>
   <span
-    class="flex min-w-0 items-baseline"
-    style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px"
+    class="flex min-w-0 items-baseline justify-center"
+    style="font-family:var(--font-mono);font-size:12px"
   >
     <span class="text-text flex-none">{d.repo}</span>
     <span class="text-text-muted flex-none">&nbsp;/&nbsp;</span>
     <span
-      class="text-text-muted min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
-      style="direction:rtl;text-align:left"><bdi>{d.path}</bdi></span
+      class="text-text-muted min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
+      style="direction:rtl"><bdi>{d.path}</bdi></span
     >
   </span>
   <span
-    style="font-size:12.5px;text-align:right;font-variant-numeric:tabular-nums;color:{d.durColor};font-weight:{d.durWeight}"
+    style="font-size:12.5px;font-variant-numeric:tabular-nums;color:{d.durColor};font-weight:{d.durWeight}"
     >{d.dur}</span
   >
   <span
     class="text-text"
-    style="font-size:12.5px;text-align:right;font-variant-numeric:tabular-nums"
+    style="font-size:12.5px;font-variant-numeric:tabular-nums"
     >{d.tokens}</span
   >
   <span
     class="text-text"
-    style="font-size:12.5px;text-align:right;font-variant-numeric:tabular-nums"
+    style="font-size:12.5px;font-variant-numeric:tabular-nums"
     >{d.cost}</span
   >
   <Pill
-    class="justify-self-start"
+    class="justify-self-center"
     label={d.badge.label}
     fg={d.badge.fg}
     bg={d.badge.bg}

@@ -86,10 +86,6 @@ func serviceReads(svc *Service) []struct {
 			return err
 		}},
 		{"Today", func(ctx context.Context) error { _, err := svc.Today(ctx, seoul); return err }},
-		{"Activity", func(ctx context.Context) error {
-			_, err := svc.Activity(ctx, ActivityQuery{Limit: 20, Text: "인증"})
-			return err
-		}},
 		{"Sessions", func(ctx context.Context) error {
 			_, err := svc.Sessions(ctx, SessionQuery{Limit: 20})
 			return err

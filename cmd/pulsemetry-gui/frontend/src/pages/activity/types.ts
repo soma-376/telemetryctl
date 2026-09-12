@@ -40,6 +40,8 @@ export interface ActivitySession {
   /// 목록 재조정용 안정 키. 실데이터에서는 store 의 세션 id 가 들어온다.
   id: string;
   time: string;
+  /// 날짜 구분용 로컬 날짜 키(YYYY-MM-DD). 시작 시각이 없으면 빈 문자열이다.
+  day?: string;
   agentId: AgentId;
   state: SessionState;
   title: string;

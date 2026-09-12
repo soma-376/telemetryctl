@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/your-org/pulsemetry/internal/dashboard"
+	"github.com/your-org/pulsemetry/internal/dashboard/activity"
 	"github.com/your-org/pulsemetry/internal/dashboard/tray"
 	"github.com/your-org/pulsemetry/internal/store"
 	"github.com/your-org/pulsemetry/internal/vendorlimit"
@@ -198,7 +199,7 @@ func TestScreenContract_Activity_ListsTheStoredSession(t *testing.T) {
 	f := newScreenFixture(t)
 	ctx := context.Background()
 
-	page, err := f.svc.Activity(ctx, dashboard.ActivityQuery{})
+	page, err := activity.NewBuilder(f.svc).List(ctx, activity.Query{})
 	if err != nil {
 		t.Fatalf("Activity: %v", err)
 	}
@@ -233,7 +234,7 @@ func TestScreenContract_Activity_ListsTheStoredSession(t *testing.T) {
 	}
 
 	// 검색 필터도 같은 행을 찾아야 한다. 파일 경로는 file_changes.file_path 원경로다.
-	hit, err := f.svc.Activity(ctx, dashboard.ActivityQuery{Text: filepath.Base(fixtureFilePath)})
+	hit, err := activity.NewBuilder(f.svc).List(ctx, activity.Query{Text: filepath.Base(fixtureFilePath)})
 	if err != nil {
 		t.Fatalf("Activity(검색): %v", err)
 	}
@@ -519,7 +520,7 @@ func TestScreenContract_SurfacesAgreeOnTheSameSession(t *testing.T) {
 	f := newScreenFixture(t)
 	ctx := context.Background()
 
-	page, err := f.svc.Activity(ctx, dashboard.ActivityQuery{})
+	page, err := activity.NewBuilder(f.svc).List(ctx, activity.Query{})
 	if err != nil {
 		t.Fatalf("Activity: %v", err)
 	}

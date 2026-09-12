@@ -1,8 +1,10 @@
-package dashboard
+package dashboard_test
 
 import (
 	"context"
 	"fmt"
+	. "github.com/your-org/pulsemetry/internal/dashboard"
+	"github.com/your-org/pulsemetry/internal/dashboard/activity"
 	"reflect"
 	"strings"
 	"testing"
@@ -16,7 +18,7 @@ import (
 
 // activityKeys 는 결과 줄을 session_key 로 옮긴다. id 는 저장 시점에 정해져 테스트가
 // 미리 알 수 없으므로 단언은 키로 한다.
-func activityKeys(rows []ActivityRow) []string {
+func activityKeys(rows []activity.Row) []string {
 	out := make([]string, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, r.SessionKey)
@@ -28,11 +30,11 @@ func activityKeys(rows []ActivityRow) []string {
 // 것과 같은 경로다 — 페이지 경계의 중복·누락은 여기서만 드러난다.
 //
 // pages 는 실제로 돈 페이지 수다. 무한 반복은 t.Fatal 로 잡는다.
-func drainActivity(t *testing.T, r *Reader, q ActivityQuery) (rows []ActivityRow, pages int) {
+func drainActivity(t *testing.T, r *Reader, q activity.Query) (rows []activity.Row, pages int) {
 	t.Helper()
 	ctx := context.Background()
 	for {
-		page, err := r.Activity(ctx, q)
+		page, err := readActivity(r.Path(), ctx, q)
 		if err != nil {
 			t.Fatalf("Activity(%+v): %v", q, err)
 		}
@@ -52,101 +54,101 @@ func drainActivity(t *testing.T, r *Reader, q ActivityQuery) (rows []ActivityRow
 
 // seedActivity 는 벤더·프로젝트·상태·시작 시각이 서로 다른 세션 셋을 놓는다.
 // 필터 하나가 잘못 배선되면 반드시 어느 조합에서 틀린 목록이 나온다.
-func seedActivity(f *fixture) {
-	at := testNow.Add(-3 * time.Hour)
-	f.write(store.Batch{
+func seedActivity(f *TestFixture) {
+	at := TestNow.Add(-3 * time.Hour)
+	f.TestWrite(store.Batch{
 		Sessions: []session.Session{
-			newSession("a-1", at, title("인증 프록시 구현"), func(s *session.Session) {
-				s.WorkspacePath = workspaceA
+			TestNewSession("a-1", at, TestTitle("인증 프록시 구현"), func(s *session.Session) {
+				s.WorkspacePath = TestWorkspaceA
 			}),
-			newSession("a-2", testNow.Add(-2*time.Hour), title("리팩터링"), func(s *session.Session) {
-				codex(s)
-				s.WorkspacePath = workspaceB
+			TestNewSession("a-2", TestNow.Add(-2*time.Hour), TestTitle("리팩터링"), func(s *session.Session) {
+				TestCodex(s)
+				s.WorkspacePath = TestWorkspaceB
 			}),
-			newSession("a-3", testNow.Add(-time.Hour), title("디버깅"), func(s *session.Session) {
-				running(s)
-				s.WorkspacePath = workspaceB
+			TestNewSession("a-3", TestNow.Add(-time.Hour), TestTitle("디버깅"), func(s *session.Session) {
+				TestRunning(s)
+				s.WorkspacePath = TestWorkspaceB
 			}),
 		},
 		Events: []store.EventRecord{
-			promptRecord("a-1", "t-a1", at, 1, "토큰 검증 흐름을 프록시로 옮겨줘"),
-			toolRecord("a-1", "t-a1", "call-a1", at.Add(time.Second), 2, toolSpec{
+			TestPromptRecord("a-1", "t-a1", at, 1, "토큰 검증 흐름을 프록시로 옮겨줘"),
+			TestToolRecord("a-1", "t-a1", "call-a1", at.Add(time.Second), 2, TestToolSpec{
 				ToolName: "Edit",
-				Target:   workspaceA + "/proxy_handler.go",
-				File:     fileChange(workspaceA+"/proxy_handler.go", 4, 1),
+				Target:   TestWorkspaceA + "/proxy_handler.go",
+				File:     TestFileChange(TestWorkspaceA+"/proxy_handler.go", 4, 1),
 			}),
 		},
 	})
 }
 
 func TestActivityFilterCombinations(t *testing.T) {
-	f := newFixture(t)
+	f := TestNewFixture(t)
 	seedActivity(f)
 
 	tests := []struct {
 		name string
-		q    ActivityQuery
+		q    activity.Query
 		want []string
 	}{
-		{name: "필터 없음은 최근 순 전체", q: ActivityQuery{}, want: []string{"a-3", "a-2", "a-1"}},
-		{name: "벤더", q: ActivityQuery{Vendors: []string{vendorCodex}}, want: []string{"a-2"}},
+		{name: "필터 없음은 최근 순 전체", q: activity.Query{}, want: []string{"a-3", "a-2", "a-1"}},
+		{name: "벤더", q: activity.Query{Vendors: []string{TestVendorCodex}}, want: []string{"a-2"}},
 		{
 			name: "벤더 다중 선택은 OR",
-			q:    ActivityQuery{Vendors: []string{vendorCodex, vendorClaude}},
+			q:    activity.Query{Vendors: []string{TestVendorCodex, TestVendorClaude}},
 			want: []string{"a-3", "a-2", "a-1"},
 		},
-		{name: "프로젝트", q: ActivityQuery{Projects: []string{workspaceB}}, want: []string{"a-3", "a-2"}},
-		{name: "진행 상태", q: ActivityQuery{Status: []string{StatusRunning}}, want: []string{"a-3"}},
+		{name: "프로젝트", q: activity.Query{Projects: []string{TestWorkspaceB}}, want: []string{"a-3", "a-2"}},
+		{name: "진행 상태", q: activity.Query{Status: []string{StatusRunning}}, want: []string{"a-3"}},
 		{
 			name: "완료 상태",
-			q:    ActivityQuery{Status: []string{StatusCompleted}},
+			q:    activity.Query{Status: []string{StatusCompleted}},
 			want: []string{"a-2", "a-1"},
 		},
 		{
 			name: "날짜 Since 는 포함",
-			q:    ActivityQuery{Since: testNow.Add(-2 * time.Hour).Unix()},
+			q:    activity.Query{Since: TestNow.Add(-2 * time.Hour).Unix()},
 			want: []string{"a-3", "a-2"},
 		},
 		{
 			name: "날짜 Until 은 배타",
-			q:    ActivityQuery{Until: testNow.Add(-2 * time.Hour).Unix()},
+			q:    activity.Query{Until: TestNow.Add(-2 * time.Hour).Unix()},
 			want: []string{"a-1"},
 		},
 		{
 			name: "날짜·벤더·프로젝트·상태 네 조건 조합",
-			q: ActivityQuery{
-				Since:    testNow.Add(-90 * time.Minute).Unix(),
-				Vendors:  []string{vendorClaude},
-				Projects: []string{workspaceB},
+			q: activity.Query{
+				Since:    TestNow.Add(-90 * time.Minute).Unix(),
+				Vendors:  []string{TestVendorClaude},
+				Projects: []string{TestWorkspaceB},
 				Status:   []string{StatusRunning},
 			},
 			want: []string{"a-3"},
 		},
 		{
 			name: "조합이 서로 배타면 빈 목록",
-			q:    ActivityQuery{Vendors: []string{vendorCodex}, Status: []string{StatusRunning}},
+			q:    activity.Query{Vendors: []string{TestVendorCodex}, Status: []string{StatusRunning}},
 			want: []string{},
 		},
 		{
 			name: "빈 문자열 값은 거르지 않는다",
-			q:    ActivityQuery{Vendors: []string{""}, Projects: []string{""}},
+			q:    activity.Query{Vendors: []string{""}, Projects: []string{""}},
 			want: []string{"a-3", "a-2", "a-1"},
 		},
 		{
 			// ADR 0009: 어휘에는 남지만 어떤 행에도 부여되지 않는다.
 			name: "v3 가 산출하지 않는 상태는 빈 목록",
-			q:    ActivityQuery{Status: []string{"abandoned", "handoff"}},
+			q:    activity.Query{Status: []string{"abandoned", "handoff"}},
 			want: []string{},
 		},
 		{
 			name: "검색어와 필터를 함께",
-			q:    ActivityQuery{Text: "프록시", Vendors: []string{vendorClaude}},
+			q:    activity.Query{Text: "프록시", Vendors: []string{TestVendorClaude}},
 			want: []string{"a-1"},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			page, err := f.reader.Activity(context.Background(), tc.q)
+			page, err := readActivity(f.TestPath(), context.Background(), tc.q)
 			if err != nil {
 				t.Fatalf("Activity: %v", err)
 			}
@@ -162,16 +164,16 @@ func TestActivityFilterCombinations(t *testing.T) {
 
 // 목록 한 줄이 화면이 요구하는 값을 실제로 담고 있는지 — 시작·경로·소요·토큰·비용·상태.
 func TestActivityRowCarriesScreenColumns(t *testing.T) {
-	f := newFixture(t)
-	at := testNow.Add(-time.Hour)
-	f.write(store.Batch{
-		Sessions: []session.Session{newSession("a-cols", at)},
+	f := TestNewFixture(t)
+	at := TestNow.Add(-time.Hour)
+	f.TestWrite(store.Batch{
+		Sessions: []session.Session{TestNewSession("a-cols", at)},
 		Events: []store.EventRecord{
-			llmRecord("a-cols", "t-cols", at, 1, llmSpec{Cost: 1.5, Input: 100, Output: 20}),
+			TestLlmRecord("a-cols", "t-cols", at, 1, TestLlmSpec{Cost: 1.5, Input: 100, Output: 20}),
 		},
 	})
 
-	page, err := f.reader.Activity(context.Background(), ActivityQuery{})
+	page, err := readActivity(f.TestPath(), context.Background(), activity.Query{})
 	if err != nil {
 		t.Fatalf("Activity: %v", err)
 	}
@@ -182,7 +184,7 @@ func TestActivityRowCarriesScreenColumns(t *testing.T) {
 	switch {
 	case row.StartedAt != at.Unix():
 		t.Errorf("StartedAt = %d, want %d", row.StartedAt, at.Unix())
-	case row.WorkspacePath != workspaceA:
+	case row.WorkspacePath != TestWorkspaceA:
 		t.Errorf("WorkspacePath = %q", row.WorkspacePath)
 	case row.ProjectName != "telemetryctl":
 		t.Errorf("ProjectName = %q", row.ProjectName)
@@ -221,18 +223,18 @@ func TestActivityPaginationCoversEveryRowExactlyOnce(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newFixture(t)
+			f := TestNewFixture(t)
 			sessions := make([]session.Session, 0, total)
 			for i := range total {
-				at := testNow.Add(-time.Hour)
+				at := TestNow.Add(-time.Hour)
 				if !tc.same {
-					at = testNow.Add(-time.Duration(i+1) * time.Hour)
+					at = TestNow.Add(-time.Duration(i+1) * time.Hour)
 				}
-				sessions = append(sessions, newSession(fmt.Sprintf("p-%d", i), at))
+				sessions = append(sessions, TestNewSession(fmt.Sprintf("p-%d", i), at))
 			}
-			f.write(store.Batch{Sessions: sessions})
+			f.TestWrite(store.Batch{Sessions: sessions})
 
-			rows, pages := drainActivity(t, f.reader, ActivityQuery{Limit: tc.limit})
+			rows, pages := drainActivity(t, f.TestReader(), activity.Query{Limit: tc.limit})
 			if pages != tc.pages {
 				t.Errorf("페이지 = %d, want %d", pages, tc.pages)
 			}
@@ -268,12 +270,12 @@ func TestActivityPaginationCoversEveryRowExactlyOnce(t *testing.T) {
 // 줄 수가 Limit 에 딱 맞아떨어질 때가 함정이다. "받은 게 Limit 개면 더 있다" 로 판정하면
 // 마지막 페이지에서 한 번 더 부르게 되고, 그 빈 응답이 화면에 깜빡임으로 남는다.
 func TestActivityLastPageIsDistinguishable(t *testing.T) {
-	f := newFixture(t)
+	f := TestNewFixture(t)
 	sessions := make([]session.Session, 0, 4)
 	for i := range 4 {
-		sessions = append(sessions, newSession(fmt.Sprintf("m-%d", i), testNow.Add(-time.Hour)))
+		sessions = append(sessions, TestNewSession(fmt.Sprintf("m-%d", i), TestNow.Add(-time.Hour)))
 	}
-	f.write(store.Batch{Sessions: sessions})
+	f.TestWrite(store.Batch{Sessions: sessions})
 	ctx := context.Background()
 
 	tests := []struct {
@@ -288,7 +290,7 @@ func TestActivityLastPageIsDistinguishable(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			page, err := f.reader.Activity(ctx, ActivityQuery{Limit: tc.limit})
+			page, err := readActivity(f.TestPath(), ctx, activity.Query{Limit: tc.limit})
 			if err != nil {
 				t.Fatalf("Activity: %v", err)
 			}
@@ -301,7 +303,11 @@ func TestActivityLastPageIsDistinguishable(t *testing.T) {
 			// 마지막 페이지여도 커서는 마지막 줄을 가리킨다. 0 으로 비우면 HasMore 를
 			// 보지 않는 호출자가 그것을 "첫 페이지" 로 읽어 처음부터 다시 받는다.
 			last := page.Rows[len(page.Rows)-1]
-			if page.NextCursor != (ActivityCursor{StartedAt: last.StartedAt, ID: last.ID}) {
+			wantCursor := activity.Cursor{Running: last.Status == StatusRunning, SortAt: last.StartedAt, ID: last.ID}
+			if wantCursor.Running {
+				wantCursor.SortAt = last.LastEventAt
+			}
+			if page.NextCursor != wantCursor {
 				t.Errorf("NextCursor = %+v, want 마지막 줄 (%d,%d)",
 					page.NextCursor, last.StartedAt, last.ID)
 			}
@@ -310,11 +316,11 @@ func TestActivityLastPageIsDistinguishable(t *testing.T) {
 
 	// 마지막 커서를 한 번 더 따라가도 빈 페이지일 뿐 처음으로 되돌아가지 않는다.
 	t.Run("마지막 커서 다음은 빈 페이지", func(t *testing.T) {
-		page, err := f.reader.Activity(ctx, ActivityQuery{Limit: 10})
+		page, err := readActivity(f.TestPath(), ctx, activity.Query{Limit: 10})
 		if err != nil {
 			t.Fatalf("Activity: %v", err)
 		}
-		next, err := f.reader.Activity(ctx, ActivityQuery{Limit: 10, Cursor: page.NextCursor})
+		next, err := readActivity(f.TestPath(), ctx, activity.Query{Limit: 10, Cursor: page.NextCursor})
 		if err != nil {
 			t.Fatalf("Activity(cursor): %v", err)
 		}
@@ -327,24 +333,24 @@ func TestActivityLastPageIsDistinguishable(t *testing.T) {
 // 커서는 필터와 함께 살아 있어야 한다. 페이지를 넘길 때 필터가 풀리면 두 번째 페이지에
 // 첫 페이지에서 걸러졌던 세션이 섞여 들어온다.
 func TestActivityPaginationKeepsFilters(t *testing.T) {
-	f := newFixture(t)
+	f := TestNewFixture(t)
 	sessions := make([]session.Session, 0, 6)
 	for i := range 6 {
 		key := fmt.Sprintf("k-%d", i)
-		sessions = append(sessions, newSession(key, testNow.Add(-time.Hour), func(s *session.Session) {
+		sessions = append(sessions, TestNewSession(key, TestNow.Add(-time.Hour), func(s *session.Session) {
 			if i%2 == 0 {
-				codex(s)
+				TestCodex(s)
 			}
 		}))
 	}
-	f.write(store.Batch{Sessions: sessions})
+	f.TestWrite(store.Batch{Sessions: sessions})
 
-	rows, _ := drainActivity(t, f.reader, ActivityQuery{Vendors: []string{vendorCodex}, Limit: 1})
+	rows, _ := drainActivity(t, f.TestReader(), activity.Query{Vendors: []string{TestVendorCodex}, Limit: 1})
 	if len(rows) != 3 {
-		t.Fatalf("codex 세션 = %d건, want 3", len(rows))
+		t.Fatalf("TestCodex 세션 = %d건, want 3", len(rows))
 	}
 	for _, r := range rows {
-		if r.Vendor != vendorCodex {
+		if r.Vendor != TestVendorCodex {
 			t.Errorf("%s 의 벤더가 %q — 페이지를 넘기며 필터가 풀렸다", r.SessionKey, r.Vendor)
 		}
 	}
@@ -353,30 +359,30 @@ func TestActivityPaginationKeepsFilters(t *testing.T) {
 // ── 검색 ────────────────────────────────────────────────────────────────────
 
 func TestActivitySearchCoversFourSources(t *testing.T) {
-	f := newFixture(t)
-	at := testNow.Add(-time.Hour)
-	f.write(store.Batch{
+	f := TestNewFixture(t)
+	at := TestNow.Add(-time.Hour)
+	f.TestWrite(store.Batch{
 		Sessions: []session.Session{
-			newSession("s-title", testNow.Add(-4*time.Hour), title("Collector 전달 구현"), func(s *session.Session) {
-				s.WorkspacePath = workspaceA
+			TestNewSession("s-TestTitle", TestNow.Add(-4*time.Hour), TestTitle("Collector 전달 구현"), func(s *session.Session) {
+				s.WorkspacePath = TestWorkspaceA
 			}),
-			newSession("s-ws", testNow.Add(-3*time.Hour), title("무관한 제목 갑"), func(s *session.Session) {
-				s.WorkspacePath = workspaceB
+			TestNewSession("s-ws", TestNow.Add(-3*time.Hour), TestTitle("무관한 제목 갑"), func(s *session.Session) {
+				s.WorkspacePath = TestWorkspaceB
 			}),
-			newSession("s-file", testNow.Add(-2*time.Hour), title("무관한 제목 을"), func(s *session.Session) {
-				s.WorkspacePath = workspaceA
+			TestNewSession("s-file", TestNow.Add(-2*time.Hour), TestTitle("무관한 제목 을"), func(s *session.Session) {
+				s.WorkspacePath = TestWorkspaceA
 			}),
-			newSession("s-content", at, title("무관한 제목 병"), func(s *session.Session) {
-				s.WorkspacePath = workspaceA
+			TestNewSession("s-content", at, TestTitle("무관한 제목 병"), func(s *session.Session) {
+				s.WorkspacePath = TestWorkspaceA
 			}),
 		},
 		Events: []store.EventRecord{
-			toolRecord("s-file", "t-file", "call-file", testNow.Add(-2*time.Hour), 1, toolSpec{
+			TestToolRecord("s-file", "t-file", "call-file", TestNow.Add(-2*time.Hour), 1, TestToolSpec{
 				ToolName: "Edit",
-				Target:   workspaceA + "/proxy_handler.go",
-				File:     fileChange(workspaceA+"/proxy_handler.go", 3, 1),
+				Target:   TestWorkspaceA + "/proxy_handler.go",
+				File:     TestFileChange(TestWorkspaceA+"/proxy_handler.go", 3, 1),
 			}),
-			promptRecord("s-content", "t-content", at, 2, "인증 토큰 검증을 붙여줘"),
+			TestPromptRecord("s-content", "t-content", at, 2, "인증 토큰 검증을 붙여줘"),
 		},
 	})
 
@@ -386,28 +392,28 @@ func TestActivitySearchCoversFourSources(t *testing.T) {
 		wantKey    string
 		wantSource string
 	}{
-		{name: "제목", text: "Collector", wantKey: "s-title", wantSource: SourceTitle},
+		{name: "제목", text: "Collector", wantKey: "s-TestTitle", wantSource: SourceTitle},
 		{name: "작업 폴더 경로", text: "pulsemetry-backend", wantKey: "s-ws", wantSource: SourceWorkspace},
 		{name: "파일 경로", text: "proxy_handler", wantKey: "s-file", wantSource: SourceFile},
 		{name: "원문 (한글)", text: "인증", wantKey: "s-content", wantSource: SourceContent},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			page, err := f.reader.Activity(context.Background(), ActivityQuery{Text: tc.text})
+			page, err := readActivity(f.TestPath(), context.Background(), activity.Query{Text: tc.text})
 			if err != nil {
 				t.Fatalf("Activity(%q): %v", tc.text, err)
 			}
 			if got := activityKeys(page.Rows); !reflect.DeepEqual(got, []string{tc.wantKey}) {
 				t.Fatalf("목록 = %v, want [%s]", got, tc.wantKey)
 			}
-			if !containsString(page.Rows[0].MatchedSources, tc.wantSource) {
+			if !TestContainsString(page.Rows[0].MatchedSources, tc.wantSource) {
 				t.Errorf("MatchedSources = %v, want %q 포함", page.Rows[0].MatchedSources, tc.wantSource)
 			}
 		})
 	}
 
 	t.Run("검색어가 없으면 출처도 없다", func(t *testing.T) {
-		page, err := f.reader.Activity(context.Background(), ActivityQuery{})
+		page, err := readActivity(f.TestPath(), context.Background(), activity.Query{})
 		if err != nil {
 			t.Fatalf("Activity: %v", err)
 		}
@@ -428,14 +434,14 @@ func TestActivitySearchCoversFourSources(t *testing.T) {
 // 사용자가 친 낱말이 "아무 글자" 로 읽혀 엉뚱한 세션이 걸린다 — 그리고 `%` 한 글자만 친
 // 사용자는 **전부** 를 보게 된다.
 func TestActivitySearchEscapesLikeWildcards(t *testing.T) {
-	f := newFixture(t)
-	f.write(store.Batch{Sessions: []session.Session{
-		newSession("w-pct", testNow.Add(-6*time.Hour), title("완료율 100% 달성")),
-		newSession("w-plain", testNow.Add(-5*time.Hour), title("완료율 100X 달성")),
-		newSession("w-us", testNow.Add(-4*time.Hour), title("a_b 처리")),
-		newSession("w-x", testNow.Add(-3*time.Hour), title("axb 처리")),
-		newSession("w-bs", testNow.Add(-2*time.Hour), title(`경로 c:\tmp\build`)),
-		newSession("w-nobs", testNow.Add(-time.Hour), title("경로 c:tmp build")),
+	f := TestNewFixture(t)
+	f.TestWrite(store.Batch{Sessions: []session.Session{
+		TestNewSession("w-pct", TestNow.Add(-6*time.Hour), TestTitle("완료율 100% 달성")),
+		TestNewSession("w-plain", TestNow.Add(-5*time.Hour), TestTitle("완료율 100X 달성")),
+		TestNewSession("w-us", TestNow.Add(-4*time.Hour), TestTitle("a_b 처리")),
+		TestNewSession("w-x", TestNow.Add(-3*time.Hour), TestTitle("axb 처리")),
+		TestNewSession("w-bs", TestNow.Add(-2*time.Hour), TestTitle(`경로 c:\tmp\build`)),
+		TestNewSession("w-nobs", TestNow.Add(-time.Hour), TestTitle("경로 c:tmp build")),
 	}})
 
 	tests := []struct {
@@ -454,7 +460,7 @@ func TestActivitySearchEscapesLikeWildcards(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			page, err := f.reader.Activity(context.Background(), ActivityQuery{Text: tc.text})
+			page, err := readActivity(f.TestPath(), context.Background(), activity.Query{Text: tc.text})
 			if err != nil {
 				t.Fatalf("Activity(%q): %v", tc.text, err)
 			}
@@ -468,28 +474,28 @@ func TestActivitySearchEscapesLikeWildcards(t *testing.T) {
 // 파일 경로 검색도 같은 escape 를 거친다. 경로에는 `_` 가 흔해서 여기서 새면 무관한
 // 세션이 대량으로 딸려 온다.
 func TestActivitySearchEscapesWildcardsInFilePath(t *testing.T) {
-	f := newFixture(t)
-	at := testNow.Add(-time.Hour)
-	f.write(store.Batch{
+	f := TestNewFixture(t)
+	at := TestNow.Add(-time.Hour)
+	f.TestWrite(store.Batch{
 		Sessions: []session.Session{
-			newSession("fp-us", at, title("파일 세션 갑")),
-			newSession("fp-x", at.Add(time.Second), title("파일 세션 을")),
+			TestNewSession("fp-us", at, TestTitle("파일 세션 갑")),
+			TestNewSession("fp-x", at.Add(time.Second), TestTitle("파일 세션 을")),
 		},
 		Events: []store.EventRecord{
-			toolRecord("fp-us", "t-us", "call-us", at, 1, toolSpec{
+			TestToolRecord("fp-us", "t-us", "call-us", at, 1, TestToolSpec{
 				ToolName: "Edit",
-				Target:   workspaceA + "/under_score.go",
-				File:     fileChange(workspaceA+"/under_score.go", 1, 0),
+				Target:   TestWorkspaceA + "/under_score.go",
+				File:     TestFileChange(TestWorkspaceA+"/under_score.go", 1, 0),
 			}),
-			toolRecord("fp-x", "t-x", "call-x", at, 2, toolSpec{
+			TestToolRecord("fp-x", "t-x", "call-x", at, 2, TestToolSpec{
 				ToolName: "Edit",
-				Target:   workspaceA + "/underXscore.go",
-				File:     fileChange(workspaceA+"/underXscore.go", 1, 0),
+				Target:   TestWorkspaceA + "/underXscore.go",
+				File:     TestFileChange(TestWorkspaceA+"/underXscore.go", 1, 0),
 			}),
 		},
 	})
 
-	page, err := f.reader.Activity(context.Background(), ActivityQuery{Text: "under_score"})
+	page, err := readActivity(f.TestPath(), context.Background(), activity.Query{Text: "under_score"})
 	if err != nil {
 		t.Fatalf("Activity: %v", err)
 	}
@@ -503,20 +509,20 @@ func TestActivitySearchEscapesWildcardsInFilePath(t *testing.T) {
 // --no-store-content 는 turns.prompt_text 를 통째로 버린다. 원문 출처 하나가 없다고 검색
 // 자체가 죽으면 프라이버시 모드를 켠 사용자는 Activity 를 쓸 수 없다.
 func TestActivitySearchWithoutContentStorage(t *testing.T) {
-	f := newFixture(t, store.WithContentStorage(false))
-	at := testNow.Add(-time.Hour)
-	f.write(store.Batch{
+	f := TestNewFixture(t, store.WithContentStorage(false))
+	at := TestNow.Add(-time.Hour)
+	f.TestWrite(store.Batch{
 		Sessions: []session.Session{
-			newSession("nc-1", at, title("인증 프록시 구현"), func(s *session.Session) {
-				s.WorkspacePath = workspaceA
+			TestNewSession("nc-1", at, TestTitle("인증 프록시 구현"), func(s *session.Session) {
+				s.WorkspacePath = TestWorkspaceA
 			}),
 		},
 		Events: []store.EventRecord{
-			promptRecord("nc-1", "t-nc", at, 1, "고유단어프롬프트를 남긴다"),
-			toolRecord("nc-1", "t-nc", "call-nc", at.Add(time.Second), 2, toolSpec{
+			TestPromptRecord("nc-1", "t-nc", at, 1, "고유단어프롬프트를 남긴다"),
+			TestToolRecord("nc-1", "t-nc", "call-nc", at.Add(time.Second), 2, TestToolSpec{
 				ToolName: "Edit",
-				Target:   workspaceA + "/proxy_handler.go",
-				File:     fileChange(workspaceA+"/proxy_handler.go", 2, 0),
+				Target:   TestWorkspaceA + "/proxy_handler.go",
+				File:     TestFileChange(TestWorkspaceA+"/proxy_handler.go", 2, 0),
 			}),
 		},
 	})
@@ -534,7 +540,7 @@ func TestActivitySearchWithoutContentStorage(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			page, err := f.reader.Activity(context.Background(), ActivityQuery{Text: tc.text})
+			page, err := readActivity(f.TestPath(), context.Background(), activity.Query{Text: tc.text})
 			if err != nil {
 				t.Fatalf("Activity(%q): %v", tc.text, err)
 			}
@@ -544,10 +550,10 @@ func TestActivitySearchWithoutContentStorage(t *testing.T) {
 			if tc.wantSource == "" {
 				return
 			}
-			if !containsString(page.Rows[0].MatchedSources, tc.wantSource) {
+			if !TestContainsString(page.Rows[0].MatchedSources, tc.wantSource) {
 				t.Errorf("MatchedSources = %v, want %q 포함", page.Rows[0].MatchedSources, tc.wantSource)
 			}
-			if containsString(page.Rows[0].MatchedSources, SourceContent) {
+			if TestContainsString(page.Rows[0].MatchedSources, SourceContent) {
 				t.Errorf("MatchedSources 에 %q 가 있다 — 저장하지 않은 원문이 걸렸다", SourceContent)
 			}
 		})
@@ -557,7 +563,7 @@ func TestActivitySearchWithoutContentStorage(t *testing.T) {
 // 검색 입력은 값으로 바인딩되고 와일드카드만 escape 된다. 어떤 입력도 질의를 깨거나
 // 데이터를 건드리지 못한다.
 func TestActivitySurvivesHostileInput(t *testing.T) {
-	f := newFixture(t)
+	f := TestNewFixture(t)
 	seedActivity(f)
 	ctx := context.Background()
 
@@ -568,14 +574,14 @@ func TestActivitySurvivesHostileInput(t *testing.T) {
 		strings.Repeat("a b ", 200),
 	}
 	for _, in := range inputs {
-		t.Run(shortName(in), func(t *testing.T) {
-			if _, err := f.reader.Activity(ctx, ActivityQuery{Text: in}); err != nil {
+		t.Run(TestShortName(in), func(t *testing.T) {
+			if _, err := readActivity(f.TestPath(), ctx, activity.Query{Text: in}); err != nil {
 				t.Fatalf("Activity(%q) 가 실패했다: %v", in, err)
 			}
 		})
 	}
 
-	page, err := f.reader.Activity(ctx, ActivityQuery{})
+	page, err := readActivity(f.TestPath(), ctx, activity.Query{})
 	if err != nil {
 		t.Fatalf("Activity: %v", err)
 	}
@@ -592,22 +598,22 @@ func TestActivitySurvivesHostileInput(t *testing.T) {
 // 같은 세션을 Session() 으로도 읽어 두 경로의 수치가 같은지 본다 — 화면 두 곳이 다른
 // 비용을 보여 주면 어느 쪽을 믿어야 하는지 아무도 모른다.
 func TestActivityDoesNotInflateAggregates(t *testing.T) {
-	f := newFixture(t)
-	at := testNow.Add(-time.Hour)
-	f.write(store.Batch{
-		Sessions: []session.Session{newSession("agg", at)},
+	f := TestNewFixture(t)
+	at := TestNow.Add(-time.Hour)
+	f.TestWrite(store.Batch{
+		Sessions: []session.Session{TestNewSession("agg", at)},
 		Events: []store.EventRecord{
-			llmRecord("agg", "t-agg", at, 1, llmSpec{Cost: 1, Input: 10, Output: 2}),
-			llmRecord("agg", "t-agg", at.Add(time.Second), 2, llmSpec{Cost: 1, Input: 10, Output: 2}),
-			toolRecord("agg", "t-agg", "c-1", at.Add(2*time.Second), 3, toolSpec{
+			TestLlmRecord("agg", "t-agg", at, 1, TestLlmSpec{Cost: 1, Input: 10, Output: 2}),
+			TestLlmRecord("agg", "t-agg", at.Add(time.Second), 2, TestLlmSpec{Cost: 1, Input: 10, Output: 2}),
+			TestToolRecord("agg", "t-agg", "c-1", at.Add(2*time.Second), 3, TestToolSpec{
 				ToolName: "Edit",
-				Target:   workspaceA + "/proxy_handler.go",
-				File:     fileChange(workspaceA+"/proxy_handler.go", 5, 1),
+				Target:   TestWorkspaceA + "/proxy_handler.go",
+				File:     TestFileChange(TestWorkspaceA+"/proxy_handler.go", 5, 1),
 			}),
-			toolRecord("agg", "t-agg", "c-2", at.Add(3*time.Second), 4, toolSpec{
+			TestToolRecord("agg", "t-agg", "c-2", at.Add(3*time.Second), 4, TestToolSpec{
 				ToolName: "Edit",
-				Target:   workspaceA + "/proxy_client.go",
-				File:     fileChange(workspaceA+"/proxy_client.go", 5, 1),
+				Target:   TestWorkspaceA + "/proxy_client.go",
+				File:     TestFileChange(TestWorkspaceA+"/proxy_client.go", 5, 1),
 			}),
 		},
 	})
@@ -621,7 +627,7 @@ func TestActivityDoesNotInflateAggregates(t *testing.T) {
 			name = "검색어 있음"
 		}
 		t.Run(name, func(t *testing.T) {
-			page, err := f.reader.Activity(ctx, ActivityQuery{Text: text})
+			page, err := readActivity(f.TestPath(), ctx, activity.Query{Text: text})
 			if err != nil {
 				t.Fatalf("Activity: %v", err)
 			}
@@ -642,7 +648,7 @@ func TestActivityDoesNotInflateAggregates(t *testing.T) {
 				t.Errorf("변경량 = +%d/-%d, want +10/-2", row.LinesAdded, row.LinesRemoved)
 			}
 
-			detail, err := f.reader.Session(ctx, row.ID)
+			detail, err := f.TestReader().Session(ctx, row.ID)
 			if err != nil {
 				t.Fatalf("Session: %v", err)
 			}
@@ -660,10 +666,10 @@ func TestActivityDoesNotInflateAggregates(t *testing.T) {
 // 한다 — 그럴듯한 기본값을 채워 두면 화면은 그것을 분류 결과로 표시하고, 사용자는 없는
 // 근거를 믿게 된다.
 func TestActivityWorkTypeAwaitsTurnClassification(t *testing.T) {
-	f := newFixture(t)
+	f := TestNewFixture(t)
 	seedActivity(f)
 
-	page, err := f.reader.Activity(context.Background(), ActivityQuery{})
+	page, err := readActivity(f.TestPath(), context.Background(), activity.Query{})
 	if err != nil {
 		t.Fatalf("Activity: %v", err)
 	}
@@ -680,34 +686,39 @@ func TestActivityWorkTypeAwaitsTurnClassification(t *testing.T) {
 // ── 계약 ────────────────────────────────────────────────────────────────────
 
 func TestActivityTypesUseSnakeCaseTags(t *testing.T) {
-	for _, v := range []any{ActivityQuery{}, ActivityRow{}, ActivityPage{}, ActivityCursor{}} {
-		assertSnakeCaseTags(t, v)
+	for _, v := range []any{activity.Query{}, activity.Row{}, activity.Page{}, activity.Cursor{}} {
+		TestAssertSnakeCaseTags(t, v)
 	}
 }
 
-// Wails 서비스와 CLI 가 같은 결과를 봐야 한다 (ADR 0004).
-func TestActivityServiceMatchesReader(t *testing.T) {
-	f := newFixture(t)
+// 명시적 Start와 조회 시 지연 연결이 같은 결과를 반환한다.
+func TestActivityLazyOpenMatchesStartedService(t *testing.T) {
+	f := TestNewFixture(t)
 	seedActivity(f)
 
-	svc := NewService(f.path)
+	svc := NewService(f.TestPath())
 	if err := svc.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	t.Cleanup(func() { svc.Stop() }) //nolint:errcheck // 테스트 정리
-	svc.Reader().now = func() time.Time { return testNow }
 
 	ctx := context.Background()
-	q := ActivityQuery{Text: "프록시", Limit: 2}
-	want, err := f.reader.Activity(ctx, q)
+	q := activity.Query{Text: "프록시", Limit: 2}
+	want, err := readActivity(f.TestPath(), ctx, q)
 	if err != nil {
-		t.Fatalf("Reader.Activity: %v", err)
+		t.Fatalf("lazy Activity: %v", err)
 	}
-	got, err := svc.Activity(ctx, q)
+	got, err := activity.NewBuilder(svc).List(ctx, q)
 	if err != nil {
-		t.Fatalf("Service.Activity: %v", err)
+		t.Fatalf("started Activity: %v", err)
 	}
 	if !reflect.DeepEqual(want, got) {
 		t.Errorf("결과가 다르다:\nReader  = %+v\nService = %+v", want, got)
 	}
+}
+
+func readActivity(path string, ctx context.Context, q activity.Query) (activity.Page, error) {
+	svc := NewService(path)
+	defer svc.Stop() //nolint:errcheck
+	return activity.NewBuilder(svc).List(ctx, q)
 }

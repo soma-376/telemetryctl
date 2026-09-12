@@ -186,7 +186,7 @@ func (r *Reader) FileChanges(ctx context.Context, sessionID int64) (SessionFileC
 	case errors.Is(err, sql.ErrNoRows):
 		return out, nil
 	case err != nil:
-		return SessionFileChanges{}, queryErr(op, err)
+		return SessionFileChanges{}, QueryErr(op, err)
 	}
 	out.Found = true
 
@@ -199,14 +199,14 @@ func (r *Reader) FileChanges(ctx context.Context, sessionID int64) (SessionFileC
 }
 
 // fileChangeEntries 는 세션의 file_changes 를 시간순 원본 그대로 읽는다.
-func fileChangeEntries(ctx context.Context, db sqlQuerier, sessionID int64) (entries []FileChangeEntry, err error) {
+func fileChangeEntries(ctx context.Context, db SQLQuerier, sessionID int64) (entries []FileChangeEntry, err error) {
 	const op = "파일 변경 조회"
 
 	rows, err := db.QueryContext(ctx, sessionFileChangesSQL, sessionID)
 	if err != nil {
-		return nil, queryErr(op, err)
+		return nil, QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	entries = []FileChangeEntry{}
 	for rows.Next() {
@@ -219,7 +219,7 @@ func fileChangeEntries(ctx context.Context, db sqlQuerier, sessionID int64) (ent
 			&e.FilePath, &e.Operation, &e.RenamedFrom,
 			&additions, &deletions, &e.OldHash, &e.NewHash,
 			&e.TS, &e.ToolName); serr != nil {
-			return nil, queryErr(op, serr)
+			return nil, QueryErr(op, serr)
 		}
 		// NULL 은 여기서 0 이 되지 않는다. 이 한 줄이 이 티켓의 경계다.
 		e.Additions = scanLines(additions)

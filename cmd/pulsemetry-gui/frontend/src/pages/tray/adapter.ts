@@ -185,7 +185,7 @@ function toVendor(r: VendorLimit, now: Date): TrayVendor | null {
 
 const STATUS_TEXT: Record<string, string> = {
   running: "진행 중",
-  completed: "완료",
+  completed: "종료",
 };
 
 // startedText 는 세션이 시작한 시각이다. 날짜를 붙이지 않는 이유는 최근 세션 목록이

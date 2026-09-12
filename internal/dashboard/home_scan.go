@@ -53,23 +53,23 @@ const llmCallsInRangeSQL = `SELECT ` + llmCallColumns + llmCallFrom +
 // 않는 것이 의도다 — 최근 세션 목록의 값은 그 세션의 전체 합계다 (home.go 의 합계 정의).
 func llmCallsOfSessionsSQL(n int) string {
 	return `SELECT ` + llmCallColumns + llmCallFrom +
-		` WHERE s.id IN (` + placeholders(n) + `)`
+		` WHERE s.id IN (` + Placeholders(n) + `)`
 }
 
 // eachLLMCall 은 질의 결과를 한 행씩 흘린다. fn 은 에러를 내지 않는다 — 누적만 하는
 // 자리라 실패할 일이 없고, 실패할 수 있게 두면 중간에 끊긴 합계가 정상값처럼 보인다.
-func eachLLMCall(ctx context.Context, db sqlQuerier, query string, args []any, fn func(llmCall)) (err error) {
+func eachLLMCall(ctx context.Context, db SQLQuerier, query string, args []any, fn func(llmCall)) (err error) {
 	const op = "LLM 호출 비용 조회"
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return queryErr(op, err)
+		return QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	for rows.Next() {
 		c, serr := scanLLMCall(rows.Scan)
 		if serr != nil {
-			return queryErr(op, serr)
+			return QueryErr(op, serr)
 		}
 		fn(c)
 	}

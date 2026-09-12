@@ -46,16 +46,15 @@ func main() {
 		win.Hide()
 	})
 
-	// 트레이 퀵뷰 — 프레임 없는 팝업. 트레이 클릭으로 토글되고 포커스를 잃으면 닫힌다.
 	win.RegisterHook(events.Common.WindowShow, func(*application.WindowEvent) { win.EmitEvent("main:shown") })
 	win.RegisterHook(events.Common.WindowHide, func(*application.WindowEvent) { win.EmitEvent("main:hidden") })
 
+	// 트레이 퀵뷰는 포커스를 잃어도 유지하고, 일반 창 순서를 따른다.
 	quick := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:         "Pulsemetry Quick View",
 		Width:         392,
 		Height:        600,
 		Frameless:     true,
-		AlwaysOnTop:   true,
 		Hidden:        true,
 		DisableResize: true,
 		URL:           "/?view=tray",
@@ -78,7 +77,7 @@ func main() {
 	tray := app.SystemTray.New()
 	tray.SetIcon(trayIcon)
 	tray.SetTooltip("Pulsemetry")
-	tray.AttachWindow(quick) // 클릭 → 퀵뷰 토글 (포커스 잃으면 자동 숨김)
+	tray.AttachWindow(quick) // 클릭 → 퀵뷰 토글
 	tray.WindowOffset(8)
 	tray.WindowDebounce(200 * time.Millisecond)
 	tray.OnDoubleClick(func() { svc.OpenMainWindow() })

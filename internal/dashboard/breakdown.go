@@ -128,7 +128,7 @@ func (r *Reader) Breakdown(ctx context.Context, q BreakdownQuery) ([]Row, error)
 	}
 
 	if q.Bucket == BucketKey {
-		return byKey(dim, rows, clampLimit(q.Limit, defaultBreakdownLimit, maxBreakdownLimit)), nil
+		return byKey(dim, rows, ClampLimit(q.Limit, defaultBreakdownLimit, maxBreakdownLimit)), nil
 	}
 	return byTime(rows, tr, loc, q.Bucket), nil
 }

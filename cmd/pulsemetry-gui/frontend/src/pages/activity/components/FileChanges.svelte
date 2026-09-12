@@ -22,7 +22,7 @@
 >
   <div
     class="text-text-secondary font-semibold"
-    style="font-size:12.5px;margin-bottom:10px"
+    style="font-size:12.5px;padding-bottom:8px;margin-bottom:6px"
   >
     파일 변경
   </div>
@@ -33,7 +33,7 @@
     >
       <span
         class="flex min-w-0 items-baseline"
-        style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px"
+        style="font-family:var(--font-mono);font-size:11.5px"
       >
         <span
           class="text-text-muted min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
@@ -43,14 +43,20 @@
         <span class="text-text flex-none">{file.name}</span>
       </span>
       <span
-        style="font-size:12px;color:var(--color-success);font-variant-numeric:tabular-nums"
+        style:color={file.add === "-" ? "var(--color-text-muted)" : "var(--color-success)"}
+        style="font-size:12px;font-variant-numeric:tabular-nums"
         >{file.add}</span
       >
       <span
-        style="font-size:12px;color:var(--color-danger);font-variant-numeric:tabular-nums;text-align:right"
+        style:color={file.del === "-" ? "var(--color-text-muted)" : "var(--color-danger)"}
+        style="font-size:12px;font-variant-numeric:tabular-nums;text-align:right"
         >{file.del}</span
       >
     </div>
+  {:else}
+    <p class="text-text-muted text-center" style="font-size:12px;padding:6px 0;margin:0">
+      변경된 파일이 없습니다
+    </p>
   {/each}
   {#if files.length > FILE_CAP}
     <button

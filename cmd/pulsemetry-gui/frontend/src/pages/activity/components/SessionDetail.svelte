@@ -129,7 +129,7 @@
             </div>
             <div
               class="flex items-baseline"
-              style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;margin-bottom:8px"
+              style="font-family:var(--font-mono);font-size:12.5px;margin-bottom:8px"
             >
               <span class="text-text flex-none">{d.repo}</span>
               <span class="text-text-muted flex-none" style="padding:0 5px"
@@ -286,18 +286,18 @@
         >
           <span
             class="border-border border"
-            style="font-family:ui-monospace,Menlo,monospace;border-radius:5px;padding:3px 6px"
+            style="font-family:var(--font-mono);border-radius:5px;padding:3px 6px"
             >J</span
           >
           <span
             class="border-border border"
-            style="font-family:ui-monospace,Menlo,monospace;border-radius:5px;padding:3px 6px"
+            style="font-family:var(--font-mono);border-radius:5px;padding:3px 6px"
             >K</span
           >
           이동
           <span
             class="border-border border"
-            style="font-family:ui-monospace,Menlo,monospace;border-radius:5px;padding:3px 6px;margin-left:6px"
+            style="font-family:var(--font-mono);border-radius:5px;padding:3px 6px;margin-left:6px"
             >Esc</span
           > 닫기</span
         >

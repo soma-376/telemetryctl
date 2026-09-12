@@ -26,11 +26,19 @@
     since: Math.floor(toDate(period.value.start).getTime() / 1000),
     until: Math.floor(addDays(toDate(period.value.end), 1).getTime() / 1000),
     vendors: vendor ? [vendor] : [], projects: projectPath ? [projectPath] : [],
-    status: status ? [status] : [], text, limit: 50, cursor: { id: 0, started_at: 0 },
+    status: status ? [status] : [], text, limit: 50, cursor: { id: 0, running: false, sort_at: 0 },
   });
   const list = activityQuery(() => request, () => visible);
   const detail = activityDetailQuery(() => selectedId, () => visible);
-  const sessions = $derived((list.data?.pages ?? []).flatMap(page => page.rows ?? []).map(sessionRow));
+  const sessions = $derived.by(() => {
+    // 페이지 사이에 세션이 마감돼 다시 나타나도 같은 행을 두 번 렌더링하지 않는다.
+    const seen = new Set<number>();
+    return (list.data?.pages ?? []).flatMap(page => page.rows ?? []).filter(row => {
+      if (seen.has(row.id)) return false;
+      seen.add(row.id);
+      return true;
+    }).map(sessionRow);
+  });
   const selectedIndex = $derived(sessions.findIndex(s => Number(s.id) === selectedId));
   const selected = $derived(selectedIndex >= 0 ? sessions[selectedIndex] ?? null : null);
   const shown = $derived(detail.data?.detail.found && detail.data.detail.session.id === selectedId ? sessionDetail(detail.data) : selected);
@@ -74,7 +82,7 @@
   {#if list.isError}
     <p role="alert">데몬에서 활동을 불러오지 못했습니다. {list.data ? "마지막 조회 결과를 표시합니다." : "데몬 실행 상태를 확인해주세요."}</p>
   {/if}
-  {#if list.dataUpdatedAt}<p class="text-text-muted text-xs mb-2">{new Date(list.dataUpdatedAt).toLocaleTimeString()} 조회 · 목록 비용은 벤더 보고값입니다.</p>{/if}
+  {#if list.dataUpdatedAt}<p class="text-text-muted text-xs mb-2">{new Date(list.dataUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })} 조회 · 목록 비용은 벤더 보고값입니다.</p>{/if}
   {#if list.isPending}<p role="status">활동을 불러오는 중입니다.</p>
   {:else if list.data}
     <SessionTable {sessions} selectedIndex={selectedIndex} onOpen={i => { const row = sessions[i]; if (row) selectedId = Number(row.id); }} hasMore={list.hasNextPage} loadingMore={list.isFetchingNextPage} onLoadMore={() => { void list.fetchNextPage(); }} />

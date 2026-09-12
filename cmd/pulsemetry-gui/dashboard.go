@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"github.com/your-org/pulsemetry/internal/dashboard"
 
+	"github.com/your-org/pulsemetry/internal/dashboard/activity"
 	"github.com/your-org/pulsemetry/internal/dashboard/tray"
 	"github.com/your-org/pulsemetry/internal/hostenv"
 	"github.com/your-org/pulsemetry/internal/localapi"
@@ -37,11 +37,11 @@ func NewDashboard() *Dashboard {
 // ServiceName 은 Wails 가 로그에 쓰는 이름이다. 없으면 타입 이름으로 짓는다.
 func (d *Dashboard) ServiceName() string { return "Dashboard" }
 
-func (d *Dashboard) Activity(ctx context.Context, q dashboard.ActivityQuery) (dashboard.ActivityPage, error) {
+func (d *Dashboard) Activity(ctx context.Context, q activity.Query) (activity.Page, error) {
 	return d.daemon.Activity(ctx, q)
 }
 
-func (d *Dashboard) ActivitySession(ctx context.Context, id int64) (localapi.ActivityDetail, error) {
+func (d *Dashboard) ActivitySession(ctx context.Context, id int64) (activity.Detail, error) {
 	return d.daemon.ActivitySession(ctx, id)
 }
 

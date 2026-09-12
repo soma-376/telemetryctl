@@ -159,7 +159,7 @@
             >
             <span
               class="text-text min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
-              style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px"
+              style="font-family:var(--font-mono);font-size:11px"
               >{call.arg}</span
             >
             <span

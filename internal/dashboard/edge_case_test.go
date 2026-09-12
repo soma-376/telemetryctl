@@ -1,4 +1,4 @@
-package dashboard
+package dashboard_test
 
 // 화면 계약의 경계 조건 (PROJ-97).
 //
@@ -15,6 +15,8 @@ package dashboard
 import (
 	"context"
 	"fmt"
+	. "github.com/your-org/pulsemetry/internal/dashboard"
+	"github.com/your-org/pulsemetry/internal/dashboard/activity"
 	"reflect"
 	"testing"
 	"time"
@@ -37,25 +39,25 @@ func TestEdgeCase_DSTDayKeepsSurfacesAligned(t *testing.T) {
 		tzNY   = "America/New_York"
 		dstDay = "2026-03-08"
 	)
-	f := newFixture(t)
+	f := TestNewFixture(t)
 	ctx := context.Background()
 
 	// 전환 전(00:30)·전환 후(04:30)·늦은 밤(23:30) 세 시각에 하나씩.
 	for i, hhmm := range []string{"00:30", "04:30", "23:30"} {
-		at := mustTime(t, "2006-01-02 15:04", dstDay+" "+hhmm, tzNY)
+		at := TestMustTime(t, "2006-01-02 15:04", dstDay+" "+hhmm, tzNY)
 		key := fmt.Sprintf("dst-%d", i)
-		f.write(store.Batch{
-			Sessions: []session.Session{newSession(key, at)},
+		f.TestWrite(store.Batch{
+			Sessions: []session.Session{TestNewSession(key, at)},
 			Events: []store.EventRecord{
-				promptRecord(key, key+"-t1", at, 1, "DST 경계 확인 "+key),
-				llmRecord(key, key+"-t1", at, 2, llmSpec{
+				TestPromptRecord(key, key+"-t1", at, 1, "DST 경계 확인 "+key),
+				TestLlmRecord(key, key+"-t1", at, 2, TestLlmSpec{
 					Model: "claude-sonnet-4-5", Cost: 0.1, Input: 100, Output: 50,
 				}),
 			},
 		})
 	}
 
-	home, err := f.reader.Home(ctx, HomeQuery{TZ: tzNY, Date: dstDay})
+	home, err := f.TestReader().Home(ctx, HomeQuery{TZ: tzNY, Date: dstDay})
 	if err != nil {
 		t.Fatalf("Home: %v", err)
 	}
@@ -64,8 +66,8 @@ func TestEdgeCase_DSTDayKeepsSurfacesAligned(t *testing.T) {
 		t.Errorf("하루 길이 = %d초, want %d초 (봄철 DST 전환일)", span, 23*3600)
 	}
 
-	page, err := f.reader.Activity(ctx, ActivityQuery{
-		Since: home.StartAt, Until: home.EndAt, Limit: maxActivityLimit,
+	page, err := readActivity(f.TestPath(), ctx, activity.Query{
+		Since: home.StartAt, Until: home.EndAt, Limit: 200,
 	})
 	if err != nil {
 		t.Fatalf("Activity: %v", err)
@@ -97,7 +99,7 @@ func TestEdgeCase_DSTDayKeepsSurfacesAligned(t *testing.T) {
 	}
 
 	// 날짜 축 집계도 같은 구간을 본다.
-	rows, err := f.reader.Breakdown(ctx, BreakdownQuery{
+	rows, err := f.TestReader().Breakdown(ctx, BreakdownQuery{
 		TZ: tzNY, Bucket: BucketDay, From: home.StartAt, To: home.EndAt,
 	})
 	if err != nil {
@@ -114,16 +116,16 @@ func TestEdgeCase_DSTDayKeepsSurfacesAligned(t *testing.T) {
 // TestEdgeCase_TimezoneBoundaryMovesSessionsBetweenDays 는 같은 사실이 시간대에 따라
 // 다른 날로 귀속되는지 본다. 저장값은 그대로이고 자르는 위치만 달라져야 한다.
 func TestEdgeCase_TimezoneBoundaryMovesSessionsBetweenDays(t *testing.T) {
-	f := newFixture(t)
+	f := TestNewFixture(t)
 	ctx := context.Background()
 
 	// 2026-08-09 20:00 UTC = 2026-08-10 05:00 서울. UTC 로는 9일, 서울로는 10일이다.
 	at := time.Date(2026, 8, 9, 20, 0, 0, 0, time.UTC)
-	f.write(store.Batch{
-		Sessions: []session.Session{newSession("tz-edge", at)},
+	f.TestWrite(store.Batch{
+		Sessions: []session.Session{TestNewSession("tz-edge", at)},
 		Events: []store.EventRecord{
-			promptRecord("tz-edge", "tz-edge-t1", at, 1, "시간대 경계"),
-			llmRecord("tz-edge", "tz-edge-t1", at, 2, llmSpec{
+			TestPromptRecord("tz-edge", "tz-edge-t1", at, 1, "시간대 경계"),
+			TestLlmRecord("tz-edge", "tz-edge-t1", at, 2, TestLlmSpec{
 				Model: "claude-sonnet-4-5", Cost: 0.4, Input: 200, Output: 80,
 			}),
 		},
@@ -134,21 +136,21 @@ func TestEdgeCase_TimezoneBoundaryMovesSessionsBetweenDays(t *testing.T) {
 		date     string
 		wantRows int
 	}{
-		{tz: utc, date: "2026-08-09", wantRows: 1},
-		{tz: utc, date: "2026-08-10", wantRows: 0},
-		{tz: seoul, date: "2026-08-09", wantRows: 0},
-		{tz: seoul, date: "2026-08-10", wantRows: 1},
+		{tz: TestUtc, date: "2026-08-09", wantRows: 1},
+		{tz: TestUtc, date: "2026-08-10", wantRows: 0},
+		{tz: TestSeoul, date: "2026-08-09", wantRows: 0},
+		{tz: TestSeoul, date: "2026-08-10", wantRows: 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.tz+"/"+tc.date, func(t *testing.T) {
-			home, err := f.reader.Home(ctx, HomeQuery{TZ: tc.tz, Date: tc.date})
+			home, err := f.TestReader().Home(ctx, HomeQuery{TZ: tc.tz, Date: tc.date})
 			if err != nil {
 				t.Fatalf("Home: %v", err)
 			}
 			if len(home.Recent) != tc.wantRows {
 				t.Errorf("최근 세션 = %d건, want %d", len(home.Recent), tc.wantRows)
 			}
-			page, err := f.reader.Activity(ctx, ActivityQuery{Since: home.StartAt, Until: home.EndAt})
+			page, err := readActivity(f.TestPath(), ctx, activity.Query{Since: home.StartAt, Until: home.EndAt})
 			if err != nil {
 				t.Fatalf("Activity: %v", err)
 			}
@@ -178,61 +180,61 @@ func TestEdgeCase_OutOfOrderArrivalGivesTheSameScreens(t *testing.T) {
 	build := func(key string) []store.EventRecord {
 		turn := key + "-t1"
 		return []store.EventRecord{
-			promptRecord(key, turn, at, 1, "순서 역전 확인"),
-			llmRecord(key, turn, at.Add(1*time.Minute), 2, llmSpec{
+			TestPromptRecord(key, turn, at, 1, "순서 역전 확인"),
+			TestLlmRecord(key, turn, at.Add(1*time.Minute), 2, TestLlmSpec{
 				Model: "claude-sonnet-4-5", Cost: 0.2, Input: 100, Output: 40,
 			}),
-			toolRecord(key, turn, key+"-c1", at.Add(2*time.Minute), 3, toolSpec{
-				ToolName: "Read", Success: event.Some(true), Target: workspaceA + "/a.go",
+			TestToolRecord(key, turn, key+"-c1", at.Add(2*time.Minute), 3, TestToolSpec{
+				ToolName: "Read", Success: event.Some(true), Target: TestWorkspaceA + "/a.go",
 			}),
-			toolRecord(key, turn, key+"-c2", at.Add(3*time.Minute), 4, toolSpec{
+			TestToolRecord(key, turn, key+"-c2", at.Add(3*time.Minute), 4, TestToolSpec{
 				ToolName: "Edit", Success: event.Some(true),
-				Target: workspaceA + "/a.go", File: fileChange(workspaceA+"/a.go", 5, 1),
+				Target: TestWorkspaceA + "/a.go", File: TestFileChange(TestWorkspaceA+"/a.go", 5, 1),
 			}),
-			llmRecord(key, turn, at.Add(4*time.Minute), 5, llmSpec{
+			TestLlmRecord(key, turn, at.Add(4*time.Minute), 5, TestLlmSpec{
 				Model: "claude-sonnet-4-5", Cost: 0.3, Input: 150, Output: 60,
 			}),
 		}
 	}
 
 	// 순서대로 넣은 쪽.
-	forward := newFixture(t)
-	forward.write(store.Batch{Sessions: []session.Session{newSession("ooo", at)}})
+	forward := TestNewFixture(t)
+	forward.TestWrite(store.Batch{Sessions: []session.Session{TestNewSession("ooo", at)}})
 	for _, rec := range build("ooo") {
-		forward.write(store.Batch{Events: []store.EventRecord{rec}})
+		forward.TestWrite(store.Batch{Events: []store.EventRecord{rec}})
 	}
 
 	// 거꾸로 넣은 쪽. 세션 스냅샷도 이벤트 뒤에 온다.
-	reverse := newFixture(t)
+	reverse := TestNewFixture(t)
 	recs := build("ooo")
 	for i := len(recs) - 1; i >= 0; i-- {
-		reverse.write(store.Batch{Events: []store.EventRecord{recs[i]}})
+		reverse.TestWrite(store.Batch{Events: []store.EventRecord{recs[i]}})
 	}
-	reverse.write(store.Batch{Sessions: []session.Session{newSession("ooo", at)}})
+	reverse.TestWrite(store.Batch{Sessions: []session.Session{TestNewSession("ooo", at)}})
 
 	ctx := context.Background()
 	surfaces := []struct {
 		name string
-		call func(*fixture) (any, error)
+		call func(*TestFixture) (any, error)
 	}{
 		{
 			name: "Home",
-			call: func(f *fixture) (any, error) {
-				h, err := f.reader.Home(ctx, HomeQuery{TZ: utc, Date: "2026-08-09"})
+			call: func(f *TestFixture) (any, error) {
+				h, err := f.TestReader().Home(ctx, HomeQuery{TZ: TestUtc, Date: "2026-08-09"})
 				return h.Totals, err
 			},
 		},
 		{
 			name: "Activity",
-			call: func(f *fixture) (any, error) {
-				p, err := f.reader.Activity(ctx, ActivityQuery{})
+			call: func(f *TestFixture) (any, error) {
+				p, err := readActivity(f.TestPath(), ctx, activity.Query{})
 				return p.Rows, err
 			},
 		},
 		{
 			name: "SessionDetail",
-			call: func(f *fixture) (any, error) {
-				d, err := f.reader.Session(ctx, f.sessionID(vendorClaude, "ooo"))
+			call: func(f *TestFixture) (any, error) {
+				d, err := f.TestReader().Session(ctx, f.TestSessionID(TestVendorClaude, "ooo"))
 				// DB마다 달라지는 대리 키는 제외하고 관측 내용을 비교한다.
 				for i := range d.Tools {
 					d.Tools[i].ID = 0
@@ -243,9 +245,9 @@ func TestEdgeCase_OutOfOrderArrivalGivesTheSameScreens(t *testing.T) {
 		},
 		{
 			name: "SessionMetrics",
-			call: func(f *fixture) (any, error) {
-				m, err := f.reader.SessionMetrics(ctx,
-					SessionMetricsQuery{SessionID: f.sessionID(vendorClaude, "ooo")})
+			call: func(f *TestFixture) (any, error) {
+				m, err := f.TestReader().SessionMetrics(ctx,
+					SessionMetricsQuery{SessionID: f.TestSessionID(TestVendorClaude, "ooo")})
 				// 턴 목록의 turn_id 는 저장 순서에서 나오는 대리 키라 두 DB 에서 다르다.
 				// 화면이 그리는 것은 합계이므로 그쪽만 비교한다.
 				return m.Totals, err
@@ -253,8 +255,8 @@ func TestEdgeCase_OutOfOrderArrivalGivesTheSameScreens(t *testing.T) {
 		},
 		{
 			name: "FileChanges",
-			call: func(f *fixture) (any, error) {
-				c, err := f.reader.FileChanges(ctx, f.sessionID(vendorClaude, "ooo"))
+			call: func(f *TestFixture) (any, error) {
+				c, err := f.TestReader().FileChanges(ctx, f.TestSessionID(TestVendorClaude, "ooo"))
 				return c.Totals, err
 			},
 		},
@@ -276,7 +278,7 @@ func TestEdgeCase_OutOfOrderArrivalGivesTheSameScreens(t *testing.T) {
 	}
 
 	// 툴 타임라인은 시각 오름차순이어야 한다 — 도착 순서를 그대로 그리면 안 된다.
-	detail, err := reverse.reader.Session(ctx, reverse.sessionID(vendorClaude, "ooo"))
+	detail, err := reverse.TestReader().Session(ctx, reverse.TestSessionID(TestVendorClaude, "ooo"))
 	if err != nil {
 		t.Fatalf("Session: %v", err)
 	}
@@ -293,32 +295,32 @@ func TestEdgeCase_OutOfOrderArrivalGivesTheSameScreens(t *testing.T) {
 // TestEdgeCase_DuplicateEventsDoNotDoubleCount 는 같은 페이로드를 두 번 넣어도 화면의
 // 수치가 두 배가 되지 않는지 본다. 벤더 exporter 의 재전송은 정상 동작이다.
 func TestEdgeCase_DuplicateEventsDoNotDoubleCount(t *testing.T) {
-	f := newFixture(t)
+	f := TestNewFixture(t)
 	ctx := context.Background()
 	at := time.Date(2026, 8, 9, 9, 0, 0, 0, time.UTC)
 
 	batch := func() store.Batch {
 		return store.Batch{
-			Sessions: []session.Session{newSession("dup", at)},
+			Sessions: []session.Session{TestNewSession("dup", at)},
 			Events: []store.EventRecord{
-				promptRecord("dup", "dup-t1", at, 1, "중복 전송 확인"),
-				llmRecord("dup", "dup-t1", at.Add(time.Minute), 2, llmSpec{
+				TestPromptRecord("dup", "dup-t1", at, 1, "중복 전송 확인"),
+				TestLlmRecord("dup", "dup-t1", at.Add(time.Minute), 2, TestLlmSpec{
 					Model: "claude-sonnet-4-5", Cost: 0.25, Input: 100, Output: 40,
 				}),
-				toolRecord("dup", "dup-t1", "dup-c1", at.Add(2*time.Minute), 3, toolSpec{
+				TestToolRecord("dup", "dup-t1", "dup-c1", at.Add(2*time.Minute), 3, TestToolSpec{
 					ToolName: "Edit", Success: event.Some(true),
-					Target: workspaceA + "/a.go", File: fileChange(workspaceA+"/a.go", 7, 2),
+					Target: TestWorkspaceA + "/a.go", File: TestFileChange(TestWorkspaceA+"/a.go", 7, 2),
 				}),
 			},
 		}
 	}
 
-	f.write(batch())
+	f.TestWrite(batch())
 	first := snapshotSurfaces(t, f, "dup")
 
 	// 같은 배치를 그대로 다시 넣는다. record_hash 가 UNIQUE 라 events 는 접히고,
 	// call_key 가 UNIQUE 라 tool_calls 도 접힌다.
-	res, err := f.db.Write(ctx, batch())
+	res, err := f.TestDB().Write(ctx, batch())
 	if err != nil {
 		t.Fatalf("두 번째 Write: %v", err)
 	}
@@ -349,24 +351,24 @@ type surfaceSnapshot struct {
 	Turns       int64
 }
 
-func snapshotSurfaces(t *testing.T, f *fixture, key string) surfaceSnapshot {
+func snapshotSurfaces(t *testing.T, f *TestFixture, key string) surfaceSnapshot {
 	t.Helper()
 	ctx := context.Background()
-	id := f.sessionID(vendorClaude, key)
+	id := f.TestSessionID(TestVendorClaude, key)
 
-	home, err := f.reader.Home(ctx, HomeQuery{TZ: utc, Date: "2026-08-09"})
+	home, err := f.TestReader().Home(ctx, HomeQuery{TZ: TestUtc, Date: "2026-08-09"})
 	if err != nil {
 		t.Fatalf("Home: %v", err)
 	}
-	page, err := f.reader.Activity(ctx, ActivityQuery{})
+	page, err := readActivity(f.TestPath(), ctx, activity.Query{})
 	if err != nil {
 		t.Fatalf("Activity: %v", err)
 	}
-	metrics, err := f.reader.SessionMetrics(ctx, SessionMetricsQuery{SessionID: id})
+	metrics, err := f.TestReader().SessionMetrics(ctx, SessionMetricsQuery{SessionID: id})
 	if err != nil {
 		t.Fatalf("SessionMetrics: %v", err)
 	}
-	changes, err := f.reader.FileChanges(ctx, id)
+	changes, err := f.TestReader().FileChanges(ctx, id)
 	if err != nil {
 		t.Fatalf("FileChanges: %v", err)
 	}
@@ -387,14 +389,14 @@ func snapshotSurfaces(t *testing.T, f *fixture, key string) surfaceSnapshot {
 // 본다. absent_test.go 가 보는 것은 파일 자체가 없는 상태라 두 상황이 다르다 — 데몬이
 // 한 번 돌아 스키마만 만든 직후가 여기다.
 func TestEdgeCase_EmptyDatabaseKeepsEveryScreenShape(t *testing.T) {
-	f := newFixture(t) // 아무것도 쓰지 않는다.
+	f := TestNewFixture(t) // 아무것도 쓰지 않는다.
 	ctx := context.Background()
 
-	if !f.reader.Available() {
+	if !f.TestReader().Available() {
 		t.Fatal("Available = false — 파일은 있다")
 	}
 
-	home, err := f.reader.Home(ctx, HomeQuery{TZ: seoul})
+	home, err := f.TestReader().Home(ctx, HomeQuery{TZ: TestSeoul})
 	if err != nil {
 		t.Fatalf("Home: %v", err)
 	}
@@ -405,7 +407,7 @@ func TestEdgeCase_EmptyDatabaseKeepsEveryScreenShape(t *testing.T) {
 		t.Error("슬라이스가 nil — JSON 에서 null 이 되어 프런트엔드가 터진다")
 	}
 
-	bd, err := f.reader.HomeBreakdown(ctx, HomeBreakdownQuery{TZ: seoul})
+	bd, err := f.TestReader().HomeBreakdown(ctx, HomeBreakdownQuery{TZ: TestSeoul})
 	if err != nil {
 		t.Fatalf("HomeBreakdown: %v", err)
 	}
@@ -416,7 +418,7 @@ func TestEdgeCase_EmptyDatabaseKeepsEveryScreenShape(t *testing.T) {
 		t.Errorf("빈 날에도 두 화면이 어긋난다: %+v vs %+v", bd.Totals, home.Totals)
 	}
 
-	page, err := f.reader.Activity(ctx, ActivityQuery{})
+	page, err := readActivity(f.TestPath(), ctx, activity.Query{})
 	if err != nil {
 		t.Fatalf("Activity: %v", err)
 	}
@@ -429,12 +431,12 @@ func TestEdgeCase_EmptyDatabaseKeepsEveryScreenShape(t *testing.T) {
 		name string
 		call func() (bool, error)
 	}{
-		{"Session", func() (bool, error) { d, err := f.reader.Session(ctx, 1); return d.Found, err }},
+		{"Session", func() (bool, error) { d, err := f.TestReader().Session(ctx, 1); return d.Found, err }},
 		{"SessionMetrics", func() (bool, error) {
-			m, err := f.reader.SessionMetrics(ctx, SessionMetricsQuery{SessionID: 1})
+			m, err := f.TestReader().SessionMetrics(ctx, SessionMetricsQuery{SessionID: 1})
 			return m.Found, err
 		}},
-		{"FileChanges", func() (bool, error) { c, err := f.reader.FileChanges(ctx, 1); return c.Found, err }},
+		{"FileChanges", func() (bool, error) { c, err := f.TestReader().FileChanges(ctx, 1); return c.Found, err }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			found, err := tc.call()
@@ -448,7 +450,7 @@ func TestEdgeCase_EmptyDatabaseKeepsEveryScreenShape(t *testing.T) {
 	}
 
 	// 분류도 빈 결과다.
-	cls, err := NewClassifier(f.reader).Session(ctx, 1)
+	cls, err := NewClassifier(f.TestReader()).Session(ctx, 1)
 	if err != nil {
 		t.Fatalf("Classifier: %v", err)
 	}
@@ -462,57 +464,57 @@ func TestEdgeCase_EmptyDatabaseKeepsEveryScreenShape(t *testing.T) {
 // TestEdgeCase_LargeSessionTruncatesListsButNotTotals 는 상한을 넘는 세션에서
 // **목록만 잘리고 합계는 온전한지** 본다.
 //
-// 세 화면이 각자 다른 상한을 갖는다 (maxToolEvents · defaultSessionTurns ·
-// maxFileTimeline). 어느 하나라도 합계까지 잘라 버리면 사용자는 "이 세션은 200줄만
+// 세 화면이 각자 다른 상한을 갖는다 (TestMaxToolEvents · TestDefaultSessionTurns ·
+// TestMaxFileTimeline). 어느 하나라도 합계까지 잘라 버리면 사용자는 "이 세션은 200줄만
 // 고쳤다" 같은 잘못된 사실을 읽는다.
 func TestEdgeCase_LargeSessionTruncatesListsButNotTotals(t *testing.T) {
-	f := newFixture(t)
+	f := TestNewFixture(t)
 	ctx := context.Background()
 	at := time.Date(2026, 8, 9, 1, 0, 0, 0, time.UTC)
 
 	const (
-		turns       = defaultSessionTurns + 5 // 205
-		tools       = maxToolEvents + 3       // 1003
-		fileChanges = maxFileTimeline + 7     // 207
-		hotFile     = workspaceA + "/hot.go"  //  잘리는 타임라인의 대상
+		turns       = TestDefaultSessionTurns + 5 // 205
+		tools       = TestMaxToolEvents + 3       // 1003
+		fileChanges = TestMaxFileTimeline + 7     // 207
+		hotFile     = TestWorkspaceA + "/hot.go"  //  잘리는 타임라인의 대상
 	)
 
 	// 턴 205개. 각 턴에 프롬프트 하나씩.
 	events := make([]store.EventRecord, 0, turns+tools)
 	for i := range turns {
 		turn := fmt.Sprintf("big-t%03d", i)
-		events = append(events, promptRecord("big", turn, at.Add(time.Duration(i)*time.Second),
+		events = append(events, TestPromptRecord("big", turn, at.Add(time.Duration(i)*time.Second),
 			i+1, fmt.Sprintf("대용량 세션 턴 %d", i)))
 	}
 	// 툴 호출 1003개. 앞의 207건은 같은 파일을 고쳐 타임라인 상한을 넘긴다.
 	for i := range tools {
 		turn := fmt.Sprintf("big-t%03d", i%turns)
-		spec := toolSpec{ToolName: "Bash", Success: event.Some(true)}
+		spec := TestToolSpec{ToolName: "Bash", Success: event.Some(true)}
 		if i < fileChanges {
-			spec = toolSpec{
+			spec = TestToolSpec{
 				ToolName: "Edit", Success: event.Some(true),
-				Target: hotFile, File: fileChange(hotFile, 1, 1),
+				Target: hotFile, File: TestFileChange(hotFile, 1, 1),
 			}
 		}
-		events = append(events, toolRecord("big", turn, fmt.Sprintf("big-c%05d", i),
+		events = append(events, TestToolRecord("big", turn, fmt.Sprintf("big-c%05d", i),
 			at.Add(time.Duration(turns+i)*time.Second), turns+i+1, spec))
 	}
-	f.write(store.Batch{
-		Sessions: []session.Session{newSession("big", at)},
+	f.TestWrite(store.Batch{
+		Sessions: []session.Session{TestNewSession("big", at)},
 		Events:   events,
 	})
-	id := f.sessionID(vendorClaude, "big")
+	id := f.TestSessionID(TestVendorClaude, "big")
 
 	t.Run("SessionDetail", func(t *testing.T) {
-		detail, err := f.reader.Session(ctx, id)
+		detail, err := f.TestReader().Session(ctx, id)
 		if err != nil {
 			t.Fatalf("Session: %v", err)
 		}
 		if !detail.ToolsTruncated {
 			t.Errorf("ToolsTruncated = false — 툴 %d건인데 잘렸다고 하지 않는다", tools)
 		}
-		if len(detail.Tools) != maxToolEvents {
-			t.Errorf("타임라인 = %d건, want %d", len(detail.Tools), maxToolEvents)
+		if len(detail.Tools) != TestMaxToolEvents {
+			t.Errorf("타임라인 = %d건, want %d", len(detail.Tools), TestMaxToolEvents)
 		}
 		// 세션 줄의 수치는 잘리지 않는다. 이것이 이 테스트의 핵심이다.
 		if detail.Session.ToolCalls != tools {
@@ -522,15 +524,15 @@ func TestEdgeCase_LargeSessionTruncatesListsButNotTotals(t *testing.T) {
 	})
 
 	t.Run("SessionMetrics", func(t *testing.T) {
-		m, err := f.reader.SessionMetrics(ctx, SessionMetricsQuery{SessionID: id})
+		m, err := f.TestReader().SessionMetrics(ctx, SessionMetricsQuery{SessionID: id})
 		if err != nil {
 			t.Fatalf("SessionMetrics: %v", err)
 		}
 		if !m.TurnsTruncated {
 			t.Errorf("TurnsTruncated = false — 턴 %d개인데 잘렸다고 하지 않는다", turns)
 		}
-		if len(m.Turns) != defaultSessionTurns || m.TurnLimit != defaultSessionTurns {
-			t.Errorf("턴 목록 = %d건 (상한 %d), want %d", len(m.Turns), m.TurnLimit, defaultSessionTurns)
+		if len(m.Turns) != TestDefaultSessionTurns || m.TurnLimit != TestDefaultSessionTurns {
+			t.Errorf("턴 목록 = %d건 (상한 %d), want %d", len(m.Turns), m.TurnLimit, TestDefaultSessionTurns)
 		}
 		if m.Totals.TurnCount != turns {
 			t.Errorf("TurnCount = %d, want %d (목록이 잘려도 합계는 세션 전체다)",
@@ -550,7 +552,7 @@ func TestEdgeCase_LargeSessionTruncatesListsButNotTotals(t *testing.T) {
 	})
 
 	t.Run("FileChanges", func(t *testing.T) {
-		c, err := f.reader.FileChanges(ctx, id)
+		c, err := f.TestReader().FileChanges(ctx, id)
 		if err != nil {
 			t.Fatalf("FileChanges: %v", err)
 		}
@@ -561,8 +563,8 @@ func TestEdgeCase_LargeSessionTruncatesListsButNotTotals(t *testing.T) {
 		if !file.TimelineTruncated {
 			t.Errorf("TimelineTruncated = false — 변경 %d건인데 잘렸다고 하지 않는다", fileChanges)
 		}
-		if len(file.Timeline) != maxFileTimeline {
-			t.Errorf("타임라인 = %d건, want %d", len(file.Timeline), maxFileTimeline)
+		if len(file.Timeline) != TestMaxFileTimeline {
+			t.Errorf("타임라인 = %d건, want %d", len(file.Timeline), TestMaxFileTimeline)
 		}
 		if file.Changes != fileChanges || c.Totals.Changes != fileChanges {
 			t.Errorf("변경 건수 = %d / 합계 %d, want %d (타임라인이 잘려도 합계는 온전하다)",
@@ -576,7 +578,7 @@ func TestEdgeCase_LargeSessionTruncatesListsButNotTotals(t *testing.T) {
 
 	t.Run("Activity", func(t *testing.T) {
 		// 목록 화면의 한 줄도 세션 전체를 센다.
-		page, err := f.reader.Activity(ctx, ActivityQuery{})
+		page, err := readActivity(f.TestPath(), ctx, activity.Query{})
 		if err != nil {
 			t.Fatalf("Activity: %v", err)
 		}

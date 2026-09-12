@@ -342,3 +342,49 @@ func isSnakeCase(s string) bool {
 	}
 	return s != "" && s[0] != '_'
 }
+
+const crossDay = "2026-08-09"
+
+func seedCleanDay(t *testing.T, f *fixture) {
+	t.Helper()
+	base := mustTime(t, "2006-01-02 15:04", crossDay+" 09:00", seoul)
+
+	specs := []struct {
+		key    string
+		at     time.Time
+		vendor func(*session.Session)
+		llm    llmSpec
+	}{
+		{key: "cs-a", at: base, llm: llmSpec{Model: "claude-sonnet-4-5", Cost: 0.5, Input: 100, Output: 40, CacheRead: 7}},
+		{key: "cs-b", at: base.Add(2 * time.Hour), llm: llmSpec{Model: "claude-opus-4-1", Cost: 1.25, Input: 300, Output: 90}},
+		{key: "cs-c", at: base.Add(5 * time.Hour), vendor: codex,
+			llm: llmSpec{Vendor: vendorCodex, Model: "gpt-5-codex", Cost: 0.2, Input: 50, Output: 25}},
+	}
+	for i, s := range specs {
+		mods := []func(*session.Session){}
+		if s.vendor != nil {
+			mods = append(mods, s.vendor)
+		}
+		sess := newSession(s.key, s.at, mods...)
+		vendor := vendorClaude
+		if s.llm.Vendor != "" {
+			vendor = s.llm.Vendor
+		}
+		turn := s.key + "-t1"
+		f.write(store.Batch{
+			Sessions: []session.Session{sess},
+			Events: []store.EventRecord{
+				promptRecord(s.key, turn, s.at, 1, "인증 토큰 검증 프록시 "+s.key),
+				llmRecord(s.key, turn, s.at.Add(time.Minute), 2, s.llm),
+				toolRecord(s.key, turn, s.key+"-call-1", s.at.Add(2*time.Minute), 3, toolSpec{
+					Vendor: vendor, ToolName: "Edit", Success: event.Some(true),
+					Target: workspaceA + "/apply.go",
+					File:   fileChange(workspaceA+"/apply.go", int64(10+i), int64(2+i)),
+				}),
+				toolRecord(s.key, turn, s.key+"-call-2", s.at.Add(3*time.Minute), 4, toolSpec{
+					Vendor: vendor, ToolName: "Bash", Success: event.Some(false), ErrorType: "exit_1",
+				}),
+			},
+		})
+	}
+}

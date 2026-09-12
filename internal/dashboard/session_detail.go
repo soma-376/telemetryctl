@@ -151,7 +151,6 @@ func (s *SavingsTotals) finalize() {
 // finalize 만 고치면 상단 값과 턴별 합계가 자동으로 함께 움직인다 — 두 곳에서 따로
 // 세면 언젠가 갈린다.
 type TurnTotals struct {
-	UsageCalls int64 `json:"usage_calls"`
 	// LLMCalls·ToolCalls 는 티켓이 요구하는 「턴별 LLM 호출과 툴 호출 합계」다.
 	LLMCalls  int64 `json:"llm_calls"`
 	ToolCalls int64 `json:"tool_calls"`
@@ -174,7 +173,6 @@ type TurnTotals struct {
 }
 
 func (t *TurnTotals) add(o TurnTotals) {
-	t.UsageCalls += o.UsageCalls
 	t.LLMCalls += o.LLMCalls
 	t.ToolCalls += o.ToolCalls
 	t.ToolErrors += o.ToolErrors
@@ -247,7 +245,7 @@ type SessionMetrics struct {
 	WorkspacePath string `json:"workspace_path"`
 	ProjectName   string `json:"project_name"`
 	// Status 는 running 또는 completed 다. v3 에는 status 컬럼이 없어 조회 시점에
-	// 계산한다 (ADR 0009, statusExpr).
+	// 계산한다 (ADR 0009, StatusExpr).
 	Status string `json:"status"`
 
 	// StartedAt·EndedAt 은 관측되지 않았으면 null 이다. EndedAt 이 null 이면 진행 중이다.
@@ -285,16 +283,23 @@ type SessionMetrics struct {
 //
 // 없는 id 는 에러가 아니라 Found=false 다. DB 가 없어도(미설치) 마찬가지다 (ADR 0004).
 func (r *Reader) SessionMetrics(ctx context.Context, q SessionMetricsQuery) (SessionMetrics, error) {
+	db, ok := r.db()
+	if !ok {
+		return ReadSessionMetrics(ctx, nil, q)
+	}
+	return ReadSessionMetrics(ctx, db, q)
+}
+
+func ReadSessionMetrics(ctx context.Context, db SQLQuerier, q SessionMetricsQuery) (SessionMetrics, error) {
 	table := pricing.Default()
 	out := SessionMetrics{
 		Turns:                []TurnMetrics{},
-		TurnLimit:            clampLimit(q.TurnLimit, defaultSessionTurns, maxSessionTurns),
+		TurnLimit:            ClampLimit(q.TurnLimit, defaultSessionTurns, maxSessionTurns),
 		PricingTableVersion:  table.Version,
 		PricingEffectiveDate: table.EffectiveDate,
 	}
 
-	db, ok := r.db()
-	if !ok || q.SessionID <= 0 {
+	if db == nil || q.SessionID <= 0 {
 		return out, nil
 	}
 
@@ -312,7 +317,7 @@ func (r *Reader) SessionMetrics(ctx context.Context, q SessionMetricsQuery) (Ses
 		return SessionMetrics{}, err
 	}
 	// 출처마다 따로 묻고 turn_id 로 합친다. JOIN 하나로 묶으면 행이 곱해진다 (머리말).
-	for _, collect := range []func(context.Context, sqlQuerier, int64, pricing.Table, *turnIndex) error{
+	for _, collect := range []func(context.Context, SQLQuerier, int64, pricing.Table, *turnIndex) error{
 		collectLLMCalls, collectToolCalls, collectRetries,
 	} {
 		if err := collect(ctx, db, q.SessionID, table, index); err != nil {
@@ -361,7 +366,7 @@ func capTurns(turns []*TurnMetrics, limit int) ([]TurnMetrics, bool) {
 // 목록·상세와 같은 것을 쓴다 (sessions.go) — 두 화면이 다른 식을 쓰면 같은 세션이
 // 화면마다 다른 상태로 보인다.
 var sessionHeadSQL = `SELECT s.session_key, s.vendor_id, COALESCE(s.title,''),
-  COALESCE(s.workspace_path,''), ` + statusExpr + `,
+  COALESCE(s.workspace_path,''), ` + StatusExpr + `,
   s.started_at, s.ended_at, ` + lastActivityExpr + `, s.active_time_sec
 FROM sessions s WHERE s.id = ?`
 
@@ -380,7 +385,7 @@ type sessionHead struct {
 	activeSec    sql.NullInt64
 }
 
-func sessionMetricsHead(ctx context.Context, db sqlQuerier, id int64) (sessionHead, bool, error) {
+func sessionMetricsHead(ctx context.Context, db SQLQuerier, id int64) (sessionHead, bool, error) {
 	const op = "세션 지표 조회"
 	h := sessionHead{id: id}
 	err := db.QueryRowContext(ctx, sessionHeadSQL, id).Scan(
@@ -391,7 +396,7 @@ func sessionMetricsHead(ctx context.Context, db sqlQuerier, id int64) (sessionHe
 		// 없거나 보존이 지운 세션이다. 에러가 아니다.
 		return sessionHead{}, false, nil
 	case err != nil:
-		return sessionHead{}, false, queryErr(op, err)
+		return sessionHead{}, false, QueryErr(op, err)
 	}
 	return h, true, nil
 }
@@ -462,13 +467,13 @@ COALESCE(substr(t.prompt_text,1,4000),''), COALESCE(length(t.prompt_text)>4000,0
 FROM turns t WHERE t.session_id = ?
 ORDER BY (t.turn_index IS NULL) ASC, t.turn_index ASC, t.id ASC`
 
-func sessionTurnMetrics(ctx context.Context, db sqlQuerier, id int64) (index *turnIndex, err error) {
+func sessionTurnMetrics(ctx context.Context, db SQLQuerier, id int64) (index *turnIndex, err error) {
 	const op = "턴 목록 조회"
 	rows, err := db.QueryContext(ctx, sessionTurnsSQL, id)
 	if err != nil {
-		return nil, queryErr(op, err)
+		return nil, QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	index = &turnIndex{byID: map[int64]*TurnMetrics{}, turns: []*TurnMetrics{}}
 	for rows.Next() {
@@ -477,7 +482,7 @@ func sessionTurnMetrics(ctx context.Context, db sqlQuerier, id int64) (index *tu
 			idx, started, ended, ttft sql.NullInt64
 		)
 		if serr := rows.Scan(&t.TurnID, &t.TurnKey, &idx, &started, &ended, &ttft, &t.PromptText, &t.PromptTruncated, &t.FilesChanged); serr != nil {
-			return nil, queryErr(op, serr)
+			return nil, QueryErr(op, serr)
 		}
 		t.TurnIndex = nullInt64(idx)
 		t.Virtual = !idx.Valid
@@ -516,13 +521,13 @@ const llmCallsSQL = `SELECT c.turn_id, COALESCE(c.model,''),
   c.reasoning_tokens, c.cost_usd, c.duration_ms
 FROM llm_calls c WHERE c.turn_id IN (` + metricsTurnScope + `)`
 
-func collectLLMCalls(ctx context.Context, db sqlQuerier, id int64, table pricing.Table, index *turnIndex) (err error) {
+func collectLLMCalls(ctx context.Context, db SQLQuerier, id int64, table pricing.Table, index *turnIndex) (err error) {
 	const op = "LLM 호출 지표 조회"
 	rows, err := db.QueryContext(ctx, llmCallsSQL, id)
 	if err != nil {
-		return queryErr(op, err)
+		return QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	for rows.Next() {
 		var (
@@ -534,14 +539,11 @@ func collectLLMCalls(ctx context.Context, db sqlQuerier, id int64, table pricing
 		)
 		if serr := rows.Scan(&turnID, &model, &in, &out, &cacheRead, &cacheWrite,
 			&reasoning, &cost, &duration); serr != nil {
-			return queryErr(op, serr)
+			return QueryErr(op, serr)
 		}
 
 		t := index.at(turnID)
 		t.LLMCalls++
-		if in.Valid && out.Valid {
-			t.UsageCalls++
-		}
 		addOptTokens(&t.Tokens, in, out, cacheRead, cacheWrite, reasoning)
 		if duration.Valid && duration.Int64 > 0 {
 			t.LLMDurationMS += duration.Int64
@@ -620,13 +622,13 @@ const toolCallsSQL = `SELECT c.turn_id, COUNT(*),
 FROM tool_calls c WHERE c.turn_id IN (` + metricsTurnScope + `)
 GROUP BY c.turn_id`
 
-func collectToolCalls(ctx context.Context, db sqlQuerier, id int64, _ pricing.Table, index *turnIndex) (err error) {
+func collectToolCalls(ctx context.Context, db SQLQuerier, id int64, _ pricing.Table, index *turnIndex) (err error) {
 	const op = "도구 호출 지표 조회"
 	rows, err := db.QueryContext(ctx, toolCallsSQL, id)
 	if err != nil {
-		return queryErr(op, err)
+		return QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	for rows.Next() {
 		var (
@@ -635,7 +637,7 @@ func collectToolCalls(ctx context.Context, db sqlQuerier, id int64, _ pricing.Ta
 			duration                 sql.NullInt64
 		)
 		if serr := rows.Scan(&turnID, &calls, &failures, &rejects, &duration); serr != nil {
-			return queryErr(op, serr)
+			return QueryErr(op, serr)
 		}
 		t := index.at(turnID)
 		t.ToolCalls += calls
