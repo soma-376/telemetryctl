@@ -31,7 +31,8 @@ func TestActivityRunningFirstOrderAndCursor(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	want := []string{"running-tie", "running-old", "running-new", "running-unknown", "completed-new", "completed-old", "completed-unknown"}
+	// 진행 중은 시작 시각 오름차순(미상은 0이라 맨 앞), 종료는 내림차순이다 (ADR 0027).
+	want := []string{"running-unknown", "running-old", "running-tie", "running-new", "completed-new", "completed-old", "completed-unknown"}
 	for _, limit := range []int{1, 2, 3, 20} {
 		rows, _ := drainActivity(t, f.TestReader(), activity.Query{Limit: limit})
 		if got := activityKeys(rows); !reflect.DeepEqual(got, want) {
@@ -53,19 +54,21 @@ func TestActivityRunningFirstOrderAndCursor(t *testing.T) {
 			t.Fatalf("query=%+v keys=%v want=%v", tc.query, got, tc.want)
 		}
 	}
-	// 마감·재개 후 첫 페이지 재조회는 새 상태와 활동 시각을 반영한다.
+	// 마감·재개 후 재조회는 새 상태를 반영한다. 순서는 시작 시각이 정하므로 마감된 줄이
+	// 진행 중 묶음에서 빠지고 재개된 줄이 그 묶음의 제자리로 들어가는지 본다.
 	if _, err := f.TestDB().SQL().ExecContext(ctx, `UPDATE sessions SET ended_at=950 WHERE session_key='running-tie'`); err != nil {
 		t.Fatal(err)
 	}
-	page, err := readActivity(f.TestPath(), ctx, activity.Query{Limit: 1})
-	if err != nil || len(page.Rows) != 1 || page.Rows[0].SessionKey != "running-old" {
-		t.Fatalf("after close: page=%+v err=%v", page, err)
+	rows, _ := drainActivity(t, f.TestReader(), activity.Query{Status: []string{StatusRunning}, Limit: 1})
+	if got := activityKeys(rows); !reflect.DeepEqual(got, []string{"running-unknown", "running-old", "running-new"}) {
+		t.Fatalf("after close: keys=%v", got)
 	}
 	if _, err := f.TestDB().SQL().ExecContext(ctx, `UPDATE sessions SET ended_at=NULL, last_activity_at=1000 WHERE session_key='completed-old'`); err != nil {
 		t.Fatal(err)
 	}
-	page, err = readActivity(f.TestPath(), ctx, activity.Query{Limit: 1})
-	if err != nil || len(page.Rows) != 1 || page.Rows[0].SessionKey != "completed-old" {
-		t.Fatalf("after resume: page=%+v err=%v", page, err)
+	// completed-old 는 started_at=50 이라 running-unknown(0) 과 running-old(100) 사이다.
+	rows, _ = drainActivity(t, f.TestReader(), activity.Query{Status: []string{StatusRunning}, Limit: 1})
+	if got := activityKeys(rows); !reflect.DeepEqual(got, []string{"running-unknown", "completed-old", "running-old", "running-new"}) {
+		t.Fatalf("after resume: keys=%v", got)
 	}
 }

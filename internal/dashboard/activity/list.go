@@ -17,8 +17,18 @@ const (
 // 정렬과 커서 비교는 같은 식을 쓴다. NULL 시각도 0으로 비교해 페이지에서 누락시키지 않는다.
 // 기간 필터는 상태별 정렬 시각과 별개로 기존 시작 시각을 사용한다 (ADR 0027).
 const activityStartKey = `COALESCE(s.started_at, 0)`
-const activityRunningKey = `CASE WHEN s.ended_at IS NULL THEN 1 ELSE 0 END`
-const activityOrderKey = `CASE WHEN s.ended_at IS NULL THEN ` + dashboard.LastActivityExpr + ` ELSE ` + activityStartKey + ` END`
+
+// activityGroupKey 는 진행 중이 0, 종료가 1이다. "진행 중 먼저" 를 굳이 오름차순으로
+// 표현하는 이유는 아래 activityOrderKey 와 같다 — 세 축의 방향이 같아야 keyset 비교가
+// 행 값 하나로 끝난다.
+const activityGroupKey = `CASE WHEN s.ended_at IS NULL THEN 0 ELSE 1 END`
+
+// 진행 중은 시작 시각 오름차순, 종료는 내림차순이다. 부호를 뒤집어 한 식으로 만든다.
+const activityOrderKey = `CASE WHEN s.ended_at IS NULL THEN ` + activityStartKey + ` ELSE -` + activityStartKey + ` END`
+
+// 동률 고정도 같은 규칙을 탄다. 정렬 방향이 상태마다 다르므로 id 도 함께 뒤집어야
+// "먼저 온 줄이 위" 가 양쪽에서 같은 뜻이 된다.
+const activityTieKey = `CASE WHEN s.ended_at IS NULL THEN s.id ELSE -s.id END`
 
 // ── 검색 출처 술어 ──────────────────────────────────────────────────────────
 //
@@ -44,8 +54,11 @@ const (
 //
 // # 정렬과 페이지네이션
 //
-// 진행 중을 먼저, 진행 중은 최근 활동 순, 종료는 시작 시각 순으로 보여준다.
-// 동률은 id 내림차순으로 고정하고 같은 세 값을 커서로 사용한다 (ADR 0027).
+// 진행 중을 먼저 놓고, 진행 중은 시작 시각 오름차순, 종료는 내림차순으로 보여준다.
+// 진행 중을 활동 시각이 아니라 시작 시각으로 세우는 이유는 순서가 흔들리지 않게 하기
+// 위해서다 — 활동이 들어올 때마다 다시 세우면 읽는 중에 줄이 튄다.
+// 동률은 진행 중이 id 오름차순, 종료가 내림차순이다 — 양쪽 모두 "먼저 온 줄이 위" 다.
+// 같은 세 값을 커서로 사용한다 (ADR 0027).
 //
 // # 왜 합계가 부풀지 않는가
 //
@@ -79,7 +92,7 @@ FROM sessions s`
 	if where != "" {
 		query += " WHERE " + where
 	}
-	query += " ORDER BY " + activityRunningKey + " DESC, " + activityOrderKey + " DESC, s.id DESC LIMIT ?"
+	query += " ORDER BY " + activityGroupKey + ", " + activityOrderKey + ", " + activityTieKey + " LIMIT ?"
 
 	sqlRows, qerr := db.QueryContext(ctx, query, args...)
 	if qerr != nil {
@@ -107,9 +120,6 @@ FROM sessions s`
 	if n := len(rows); n > 0 {
 		last := rows[n-1]
 		page.NextCursor = Cursor{Running: last.Status == dashboard.StatusRunning, SortAt: last.StartedAt, ID: last.ID}
-		if page.NextCursor.Running {
-			page.NextCursor.SortAt = last.LastEventAt
-		}
 	}
 	return page, nil
 }
@@ -170,12 +180,14 @@ func activityWhere(q Query, text string) (string, []any) {
 
 	// keyset 조건. 정렬식과 **같은** 식을 써야 한다 (activityOrderKey 주석).
 	if q.Cursor.ID > 0 {
-		priority := 0
+		// 커서는 시작 시각 원본을 담는다. 부호 뒤집기는 정렬식과 같은 규칙으로 여기서 한다 —
+		// 음수를 커서에 실으면 값만 보고는 무엇을 가리키는지 알 수 없다.
+		group, sortAt, id := 1, -q.Cursor.SortAt, -q.Cursor.ID
 		if q.Cursor.Running {
-			priority = 1
+			group, sortAt, id = 0, q.Cursor.SortAt, q.Cursor.ID
 		}
-		add("("+activityRunningKey+", "+activityOrderKey+", s.id) < (?, ?, ?)",
-			[]any{priority, q.Cursor.SortAt, q.Cursor.ID})
+		add("("+activityGroupKey+", "+activityOrderKey+", "+activityTieKey+") > (?, ?, ?)",
+			[]any{group, sortAt, id})
 	}
 
 	if text != "" {
