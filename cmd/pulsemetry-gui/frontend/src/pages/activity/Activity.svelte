@@ -5,6 +5,9 @@
   import { activityQuery, activityDetailQuery } from "$lib/query/activity";
   import type { ActivityQuery } from "$lib/bindings";
   import { sessionRow, sessionDetail } from "./adapter";
+  import RefreshIcon from "$lib/icons/RefreshIcon.svelte";
+  import Select from "$lib/components/ui/Select.svelte";
+  import Input from "$lib/components/ui/Input.svelte";
   import SessionTable from "./components/SessionTable.svelte";
   import SessionDetail from "./components/SessionDetail.svelte";
 
@@ -55,6 +58,29 @@
     else if (["j", "J", "ArrowDown"].includes(e.key)) { e.preventDefault(); step(1); }
     else if (["k", "K", "ArrowUp"].includes(e.key)) { e.preventDefault(); step(-1); }
   }
+  // 새로고침 회전은 **누른 것**에만 반응한다. 목록은 30초마다 스스로 다시 부르는데
+  // (lib/query/activity.ts) 거기에 물리면 가만히 있는 화면에서 아이콘이 혼자 돈다.
+  //
+  // 최소 표시 시간을 두는 이유는 로컬 조회가 수십 ms 라서다. 그냥 두면 눌러도 아무 일도
+  // 일어나지 않은 것처럼 보인다. 트레이 새로고침과 같은 규칙이다 (TrayHeader).
+  const MIN_SPIN_MS = 450;
+  let spinning = $state(false);
+
+  async function refresh() {
+    if (spinning) return;
+    spinning = true;
+    const startedAt = Date.now();
+    try {
+      const pending: Promise<unknown>[] = [list.refetch()];
+      if (selectedId !== null) pending.push(detail.refetch());
+      await Promise.all(pending);
+    } finally {
+      const wait = MIN_SPIN_MS - (Date.now() - startedAt);
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      spinning = false;
+    }
+  }
+
   onMount(() => {
     const shown = Events.On("main:shown", () => { visible = true; void list.refetch(); if (selectedId !== null) void detail.refetch(); });
     const hidden = Events.On("main:hidden", () => { visible = false; });
@@ -67,17 +93,35 @@
   <div class="flex items-baseline gap-3 mb-4">
     <h1 class="text-text m-0 font-bold" style="font-size:38px;letter-spacing:-0.035em">Activity</h1>
     <span class="text-text-muted text-sm">({periodRangeText(period.value)})</span>
-    <button class="ml-auto" disabled={list.isFetching} onclick={() => { void list.refetch(); if (selectedId !== null) void detail.refetch(); }}>새로고침</button>
+    <!-- 새로고침은 이 페이지 범위다 — 목록과 열려 있는 상세만 다시 부른다. 데몬이 이벤트로
+         밀어주므로 평소에는 필요 없고, "지금 확인" 이 필요할 때 쓰는 예외 경로다. -->
+    <button
+      type="button"
+      disabled={spinning}
+      title={spinning ? "조회 중" : "새로고침"}
+      aria-label="새로고침"
+      onclick={() => { void refresh(); }}
+      class="ml-auto flex flex-none items-center justify-center border bg-transparent transition-[opacity,border-color] duration-[180ms] ease-in-out {spinning
+        ? 'text-text-muted cursor-default'
+        : 'text-accent hover:border-border-strong hover:bg-surface-hover cursor-pointer'}"
+      style="width:30px;height:30px;border-radius:9px;border-color:var(--color-border);opacity:{spinning ? '0.6' : '1'}"
+    >
+      <RefreshIcon
+        size={15}
+        strokeWidth={2.2}
+        style="animation:{spinning ? 'spin 900ms linear infinite' : 'none'};transform-origin:50% 50%"
+      />
+    </button>
   </div>
   <div class="flex flex-wrap gap-2 mb-4">
-    <select aria-label="에이전트 필터" bind:value={vendor} class="bg-surface border-border rounded-lg border p-2">
+    <Select aria-label="에이전트 필터" bind:value={vendor}>
       <option value="">모든 에이전트</option><option value="claude_code">Claude Code</option><option value="codex">Codex</option>
-    </select>
-    <select aria-label="상태 필터" bind:value={status} class="bg-surface border-border rounded-lg border p-2">
+    </Select>
+    <Select aria-label="상태 필터" bind:value={status}>
       <option value="">모든 상태</option><option value="running">진행 중</option><option value="completed">종료</option>
-    </select>
-    <input aria-label="프로젝트 전체 경로" placeholder="프로젝트 전체 경로" bind:value={project} class="bg-surface border-border rounded-lg border p-2" />
-    <input type="search" aria-label="활동 검색" placeholder="제목·경로·파일·프롬프트 검색" bind:value={search} class="bg-surface border-border min-w-60 flex-1 rounded-lg border p-2" />
+    </Select>
+    <Input aria-label="프로젝트 전체 경로" placeholder="프로젝트 전체 경로" bind:value={project} />
+    <Input type="search" icon="search" aria-label="활동 검색" placeholder="제목·경로·파일·프롬프트 검색" bind:value={search} class="min-w-60 flex-1" />
   </div>
   {#if list.isError}
     <p role="alert">데몬에서 활동을 불러오지 못했습니다. {list.data ? "마지막 조회 결과를 표시합니다." : "데몬 실행 상태를 확인해주세요."}</p>
