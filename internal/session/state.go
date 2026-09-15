@@ -10,18 +10,20 @@ import (
 // state 는 조립 중인 세션 하나의 내부 상태다. 조회 시점에 이벤트를 스캔하지 않도록
 // 수치를 이벤트 도착마다 증분 갱신한다 (ADR 0005).
 type state struct {
-	id          string
-	vendor      string
-	started     event.UnixSec
-	last        event.UnixSec
-	ended       event.Opt[event.UnixSec]
+	id      string
+	vendor  string
+	started event.UnixSec
+	last    event.UnixSec
+	ended   event.Opt[event.UnixSec]
+	// hookEnded 는 명시적인 SessionEnd 훅으로 닫혔다는 뜻이다. 종료 전에 발생해 늦게
+	// 도착한 OTel 배치가 세션을 다시 여는 것을 막는다.
+	hookEnded   bool
 	status      Status
 	projectHash string
 	projectName string
 
 	// 로컬 저장 전용 식별 정보 (ADR 0010). 세션 안에서 한 번만 정한다 —
 	// 도중에 바뀌면 세션의 정체성이 흔들리고 화면 필터에서 세션이 사라진다.
-	workspacePath string
 	userEmail     string
 	userAccountID string
 	terminalType  string
@@ -104,13 +106,14 @@ func (s *state) observe(e event.Event) {
 	if ts > s.last {
 		s.last = ts
 	}
-	if s.ended.Valid() {
+	if s.ended.Valid() && (!s.hookEnded || ts > s.ended.Or(0)) {
 		// 같은 session.id 재등장 — 마감을 되돌리고 진행 중으로 되돌린다.
 		// 늦게 도착한 낙오 이벤트여서 여전히 유휴라면 다음 Advance 가 즉시 다시 마감한다.
 		// ended_at 은 last_event_at 이라 낙오 이벤트가 마감 시각을 흔들지도 않는다.
 		s.ended = event.Opt[event.UnixSec]{}
 		s.status = StatusRunning
 		s.statusReason = ""
+		s.hookEnded = false
 		s.reopens++
 	}
 	if s.vendor == "" {
@@ -127,7 +130,6 @@ func (s *state) observe(e event.Event) {
 		dst *string
 		src string
 	}{
-		{&s.workspacePath, e.Attr.WorkspacePath},
 		{&s.userEmail, e.Attr.UserEmail},
 		{&s.userAccountID, e.Attr.UserAccountID},
 		{&s.terminalType, e.Attr.TerminalType},
@@ -394,7 +396,6 @@ func (s *state) session() Session {
 		ProjectHash: s.projectHash,
 		ProjectName: s.projectName,
 
-		WorkspacePath: s.workspacePath,
 		UserEmail:     s.userEmail,
 		UserAccountID: s.userAccountID,
 		TerminalType:  s.terminalType,

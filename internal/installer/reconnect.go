@@ -84,7 +84,8 @@ func Reconnect(statePath, serverOverride string) (*Report, error) {
 		case "claude":
 			result, err = config.MergeClaude(target.Path, &state.Manifest, issued.TelemetryToken, false)
 		case "codex":
-			result, err = config.MergeCodex(target.Path, &state.Manifest, issued.TelemetryToken, false)
+			result, err = mergeCodexInstalled(target.Path, &state.Manifest, issued.TelemetryToken, false,
+				"", state.Local.DataDir)
 		default:
 			continue
 		}

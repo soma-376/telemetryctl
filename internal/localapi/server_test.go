@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/your-org/pulsemetry/internal/dashboard/tray"
@@ -25,6 +26,31 @@ func (f *fakeSource) Snapshot(_ context.Context, q tray.Query) (tray.Snapshot, e
 type fakeRefresher struct {
 	calls  int
 	manual int
+}
+
+type fakeHookSink struct{ got LifecycleEvent }
+
+func (f *fakeHookSink) SubmitLifecycle(_ context.Context, e LifecycleEvent) error {
+	f.got = e
+	return nil
+}
+
+func TestServerAcceptsLifecycleHook(t *testing.T) {
+	hooks := &fakeHookSink{}
+	srv := httptest.NewServer(NewServer(&fakeRefresher{}, &fakeSource{}, hooks))
+	defer srv.Close()
+	resp, err := http.Post(srv.URL+SessionEndPath+"?vendor=codex", "application/json",
+		strings.NewReader(`{"session_id":"thr-1","hook_event_name":"SessionEnd","cwd":"/tmp"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	if hooks.got.SessionID != "thr-1" || !hooks.got.End {
+		t.Fatalf("got=%+v", hooks.got)
+	}
 }
 
 func (f *fakeRefresher) RefreshManual(context.Context) error {
@@ -163,5 +189,26 @@ func TestServerRefreshIsAlwaysManual(t *testing.T) {
 				t.Errorf("calls = %d, manual = %d, want manual %d", ref.calls, ref.manual, tc.wantManual)
 			}
 		})
+	}
+}
+
+// 별칭이 와도 정식 ID 로 저장해야 한다. 원문을 그대로 두면 OTLP 가 정규화해 만든
+// 같은 세션과 vendor_id 가 달라져 두 행으로 갈린다.
+func TestDecodeHookNormalizesVendorAlias(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"claude_code", "claude_code"},
+		{"claude-code", "claude_code"},
+		{"claude", "claude_code"},
+		{"codex_exec", "codex"},
+	}
+	for _, tt := range tests {
+		got, err := DecodeHook(
+			strings.NewReader(`{"session_id":"s1","hook_event_name":"SessionEnd"}`), tt.in, true)
+		if err != nil {
+			t.Fatalf("DecodeHook(%q): %v", tt.in, err)
+		}
+		if got.Vendor != tt.want {
+			t.Errorf("vendor(%q) = %q, want %q", tt.in, got.Vendor, tt.want)
+		}
 	}
 }
