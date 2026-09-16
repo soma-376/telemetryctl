@@ -36,12 +36,14 @@ const kind = (value: string): TurnKind =>
 const tokens = (n: number) => {
   if (n < 1_000) return number(n);
   const millions = n >= 999_950;
+
   return `${Number((n / (millions ? 1_000_000 : 1_000)).toFixed(1))}${millions ? "M" : "k"}`;
 };
 
 export function sessionRow(row: SessionRow): ActivitySession {
   const tokenText = tokens(row.input_tokens + row.output_tokens);
   const cost = row.reported_cost_calls === 0 ? "-" : usd(row.cost_usd);
+
   return {
     id: String(row.id),
     time: clock(row.started_at),
@@ -83,8 +85,10 @@ export function sessionDetail(data: ActivityDetail): ActivitySession {
   const classes = new Map(
     (data.classification.turns ?? []).map((t) => [t.turn_id, t]),
   );
+
   result.workType = kind(data.classification.work_type);
   result.cost = cost;
+
   result.kpi = [
     result.dur,
     tokenText,
@@ -97,6 +101,7 @@ export function sessionDetail(data: ActivityDetail): ActivitySession {
       ? usd(total.cache_savings.total.usd)
       : "계산 불가",
   ];
+
   result.turns = (m.turns ?? [])
     .filter((t) => !t.virtual)
     .map((t) => ({
@@ -126,8 +131,10 @@ export function sessionDetail(data: ActivityDetail): ActivitySession {
           ok: c.success,
         })),
     }));
+
   result.files = (data.detail.files ?? []).map((f) => {
     const path = f.file_path.replaceAll("\\", "/");
+
     return {
       dir: path.slice(0, path.lastIndexOf("/") + 1),
       name: f.file_name,
@@ -135,6 +142,7 @@ export function sessionDetail(data: ActivityDetail): ActivitySession {
       del: f.lines_removed === null ? "-" : `−${f.lines_removed}`,
     };
   });
+
   result.notice = [
     m.turns_truncated ? "턴 목록은 일부만 표시됩니다." : "",
     data.detail.tools_truncated ? "도구 호출은 일부만 표시됩니다." : "",
@@ -146,5 +154,6 @@ export function sessionDetail(data: ActivityDetail): ActivitySession {
   ]
     .filter(Boolean)
     .join(" ");
+
   return result;
 }

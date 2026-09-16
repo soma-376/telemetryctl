@@ -21,7 +21,11 @@ type process struct {
 
 func startProcess(command []string) (*process, error) {
 	if len(command) == 0 {
-		command = []string{"codex", "app-server", "--stdio"}
+		path, err := resolveExecutable()
+		if err != nil {
+			return nil, errors.Join(ErrUnavailable, err)
+		}
+		command = []string{path, "app-server", "--stdio"}
 	}
 	cmd := exec.Command(command[0], command[1:]...) //nolint:gosec // 실행 대상은 Options로 제한된 로컬 도구다.
 	stdin, err := cmd.StdinPipe()

@@ -189,7 +189,7 @@ task build          # CLI + GUI → artifacts/build/{os}-{arch}
 task build:cli      # 현재 컴퓨터용 CLI만 빌드
 task build:cli TARGET_OS=linux TARGET_ARCH=arm64  # 지정한 대상용 CLI
 task build:cli:all  # Windows·macOS·Linux × amd64·arm64 CLI 6종
-task test           # 전체 검사 (빌드·vet·race 테스트·gofmt·go mod tidy·svelte-check)
+task test           # 전체 검사 (빌드·vet·race 테스트·gofmt·go mod tidy·tsc --noEmit)
 ```
 
 CLI의 `TARGET_OS`는 `windows`, `darwin`(macOS), `linux`, `TARGET_ARCH`는 `amd64`, `arm64`를

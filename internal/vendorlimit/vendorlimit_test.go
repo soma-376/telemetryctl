@@ -155,13 +155,13 @@ func TestCollect는실패한벤더만unavailable로만든다(t *testing.T) {
 			broken: VendorClaudeCode, healthy: VendorCodex, wantReason: ReasonCredentialMissing,
 		},
 		{
-			name: "Codex 쪽만 네트워크가 끊겼다",
+			name: "Codex 쪽만 조회 시간이 초과됐다",
 			setup: func(t *testing.T, home string) (string, string) {
 				writeClaudeCredential(t, home, claudeCredentialJSON(claudeCanary, testNow.Add(time.Hour), "max"))
 				writeCodexAuth(t, home, codexAuthJSON(codexCanary, accountCanary))
 				return jsonUpstream(t, claudeUsageBody(testNow.Format(time.RFC3339))).srv.URL, deadUpstream(t)
 			},
-			broken: VendorCodex, healthy: VendorClaudeCode, wantReason: ReasonNetwork,
+			broken: VendorCodex, healthy: VendorClaudeCode, wantReason: ReasonTimeout,
 		},
 		{
 			name: "Claude 토큰만 만료됐다",
@@ -274,7 +274,7 @@ func TestCollect는미설치장비에서도모양을유지한다(t *testing.T) {
 	for _, r := range snap.Results {
 		wantReason := ReasonCredentialMissing
 		if r.Vendor == VendorCodex {
-			wantReason = ReasonNetwork
+			wantReason = ReasonTimeout
 		}
 		if r.State != StateUnavailable || r.Reason != wantReason {
 			t.Errorf("%s: state = %q, reason = %q", r.Vendor, r.State, r.Reason)

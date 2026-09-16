@@ -27,17 +27,21 @@ const toIso = (d: Date) =>
   `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const parseIso = (s: string) => {
   const p = s.split("-");
+
   return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
 };
 const addDays = (s: string, n: number) => {
   const d = parseIso(s);
+
   d.setDate(d.getDate() + n);
+
   return toIso(d);
 };
 const dayCount = (a: string, b: string) =>
   Math.round((parseIso(b).getTime() - parseIso(a).getTime()) / 86_400_000) + 1;
 const mdLabel = (s: string) => {
   const d = parseIso(s);
+
   return `${d.getMonth() + 1}.${d.getDate()}`;
 };
 /** 월요일 시작 요일 인덱스 */
@@ -52,6 +56,7 @@ const NOW_HOUR = new Date().getHours();
 // ── 합성 사용량 (날짜 시드 해시 — 결정적) ───────────────────────────────────
 function hash(s: string): number {
   let x = 2166136261;
+
   for (let i = 0; i < s.length; i++) {
     x ^= s.charCodeAt(i);
     x = Math.imul(x, 16777619);
@@ -61,6 +66,7 @@ function hash(s: string): number {
   x ^= x >>> 13;
   x = Math.imul(x, 3266489909);
   x ^= x >>> 16;
+
   return (x >>> 0) / 4294967295;
 }
 
@@ -70,6 +76,7 @@ function splitUsage(seed: string, total: number): Parts {
   if (total <= 0) return [0, 0, 0];
   const c = Math.round(total * (0.42 + hash(seed + "c") * 0.22));
   const x = Math.round((total - c) * (0.5 + hash(seed + "x") * 0.3));
+
   return [c, x, Math.max(0, total - c - x)];
 }
 
@@ -77,6 +84,7 @@ function dayUsage(isoDate: string): Parts {
   if (isoDate > TODAY) return [0, 0, 0];
   const weekend = dowIndex(isoDate) >= 5;
   const base = weekend ? 6 : 22;
+
   return splitUsage(isoDate, Math.round(base * (0.5 + hash(isoDate) * 1.0)));
 }
 
@@ -85,17 +93,21 @@ function hourUsage(isoDate: string, hour: number): Parts {
     return [0, 0, 0];
   const peakish = hour >= 12 && hour <= 18 ? 1.6 : 0.55;
   const seed = `${isoDate}h${hour}`;
+
   return splitUsage(seed, Math.round(4 * peakish * (0.3 + hash(seed) * 1.3)));
 }
 
 function sumDays(from: string, span: number): Parts {
   const acc: Parts = [0, 0, 0];
+
   for (let j = 0; j < span; j++) {
     const u = dayUsage(addDays(from, j));
+
     acc[0] += u[0];
     acc[1] += u[1];
     acc[2] += u[2];
   }
+
   return acc;
 }
 
@@ -112,7 +124,8 @@ const LADDER: BucketRung[] = [
 
 function buildBuckets(start: string, end: string): BucketSet {
   const n = Math.min(dayCount(start, end), RETAIN_DAYS);
-  let rung = LADDER.find((r) => n <= r.maxDays) ?? at(LADDER, LADDER.length - 1);
+  let rung =
+    LADDER.find((r) => n <= r.maxDays) ?? at(LADDER, LADDER.length - 1);
 
   // 보존 강등 — 시간 단위 롤업 지평(HOURLY_DAYS)보다 오래된 구간은 시간 버킷
   // 데이터가 없으므로 일 단위로 내려간다.
@@ -124,16 +137,21 @@ function buildBuckets(start: string, end: string): BucketSet {
 
   if (rung.unit === "hour") {
     const step = rung.size;
+
     for (let i = 0; i < n; i++) {
       const d = addDays(start, i);
+
       for (let hh = 0; hh < 24; hh += step) {
         const acc: Parts = [0, 0, 0];
+
         for (let k = 0; k < step; k++) {
           const u = hourUsage(d, hh + k);
+
           acc[0] += u[0];
           acc[1] += u[1];
           acc[2] += u[2];
         }
+
         out.push({
           // 날짜 경계의 00시는 시각만 쓰면 여러 날에서 같은 라벨이 반복된다.
           // 자정에는 날짜를 표시하고, 그 외에는 시각을 표시해 경계를 드러낸다.
@@ -144,31 +162,39 @@ function buildBuckets(start: string, end: string): BucketSet {
         });
       }
     }
+
     return { unit: "hour", size: step, items: out };
   }
 
   if (rung.unit === "month") {
     let cur = parseIso(start);
+
     cur = new Date(cur.getFullYear(), cur.getMonth(), 1);
     const last = parseIso(addDays(start, n - 1));
+
     while (cur <= last) {
       const from = toIso(cur);
       const monthEnd = new Date(cur.getFullYear(), cur.getMonth() + 1, 0);
       const span = monthEnd.getDate() - cur.getDate() + 1;
+
       out.push({
         label: `${cur.getMonth() + 1}월`,
         key: from,
         parts: sumDays(from, span),
         elapsed: from <= TODAY,
       });
+
       cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
     }
+
     return { unit: "month", size: 1, items: out };
   }
 
   const step = rung.size;
+
   for (let i = 0; i < n; i += step) {
     const from = addDays(start, i);
+
     out.push({
       label: mdLabel(from),
       key: from,
@@ -176,6 +202,7 @@ function buildBuckets(start: string, end: string): BucketSet {
       elapsed: from <= TODAY,
     });
   }
+
   return { unit: rung.unit, size: step, items: out };
 }
 
@@ -190,6 +217,7 @@ function unitText(unit: BucketRung["unit"], size: number) {
     };
   if (unit === "week")
     return { caption: "주 단위 · 벤더 구성", avg: "주 평균" };
+
   return { caption: "월 단위 · 벤더 구성", avg: "월 평균" };
 }
 
@@ -210,26 +238,26 @@ const MIN_PER_K = 3.73;
  * 개수로 어림하면 긴 라벨("12월 31일")이 겹치거나 자리가 남는데도 지워진다.
  * 컬럼 폭은 렌더 시점에만 알 수 있어 컴포넌트가 재서 넘긴다.
  */
-function labelStep(
-  labels: string[],
-  colWidth: number,
-  fontSize = 11,
-): number {
+function labelStep(labels: string[], colWidth: number, fontSize = 11): number {
   if (colWidth <= 0) return 1;
   const widest = labels.reduce(
     (m, s) => Math.max(m, textWidth(s, fontSize)),
     0,
   );
+
   if (widest === 0) return 1;
+
   return Math.max(1, Math.ceil((widest + 6) / colWidth));
 }
 
 // 한글·CJK 는 글자당 약 1em, 그 외는 약 0.6em 으로 근사한다.
 function textWidth(s: string, fontSize: number): number {
   let w = 0;
+
   for (const ch of s) {
     w += /[　-鿿가-힯]/.test(ch) ? fontSize : fontSize * 0.6;
   }
+
   return w;
 }
 
@@ -308,6 +336,7 @@ export function heroData(start: string, end: string): HeroData {
                 ? "0 0 3px 3px"
                 : "0",
         }));
+
       return {
         // 라벨 솎아내기는 컬럼 폭을 아는 렌더 시점에 정한다(labelStep).
         label: shortLabel ? `${parseIso(b.key).getDate()}일` : b.label,
@@ -333,6 +362,7 @@ export function vendorRows(hero: HeroData): VendorRow[] {
     const share = hero.grandTotal
       ? Math.round((tok / hero.grandTotal) * 100)
       : 0;
+
     return {
       id: k,
       plan: VENDOR_META[k].plan,
@@ -367,6 +397,7 @@ function sessionsOn(isoDate: string): ActivityRow[] {
     ? Math.round(hash(isoDate + "n") * 1.4)
     : 1 + Math.round(hash(isoDate + "n") * 2.4);
   const out: ActivityRow[] = [];
+
   for (let i = 0; i < n; i++) {
     const seed = `${isoDate}s${i}`;
     const task = at(TASKS, Math.floor(hash(seed + "t") * TASKS.length));
@@ -378,6 +409,7 @@ function sessionsOn(isoDate: string): ActivityRow[] {
     const stage = running
       ? at(STAGES, Math.floor(hash(seed + "g") * STAGES.length))
       : "";
+
     out.push({
       id: seed,
       date: isoDate,
@@ -389,6 +421,7 @@ function sessionsOn(isoDate: string): ActivityRow[] {
       state: running ? "running" : "done",
     });
   }
+
   return out.sort((a, b) => (a.time < b.time ? 1 : -1));
 }
 
@@ -397,12 +430,15 @@ export function buildActivity(start: string, end: string): ActivityData {
   let total = 0;
   let running = 0;
   let d = end > TODAY ? TODAY : end;
+
   while (d >= start) {
     const day = sessionsOn(d);
+
     total += day.length;
     for (const s of day) if (s.state === "running") running++;
     if (rows.length < 7) rows.push(...day.slice(0, 7 - rows.length));
     d = addDays(d, -1);
   }
+
   return { rows, total, running };
 }

@@ -100,14 +100,15 @@
   --color-ramp-3: #c79a5b;
   --color-ramp-4: #6b5333;
 
-  --font-sans: "Pretendard Variable", "Helvetica Neue", Helvetica, "Apple SD Gothic Neo",
+  --font-sans:
+    "Pretendard Variable", "Helvetica Neue", Helvetica, "Apple SD Gothic Neo",
     "Malgun Gothic", Arial, sans-serif;
-  --font-mono: "JetBrains Mono", "Pretendard Variable", ui-monospace,
-    SFMono-Regular, Menlo, monospace;
+  --font-mono:
+    "JetBrains Mono", "Pretendard Variable", ui-monospace, SFMono-Regular,
+    Menlo, monospace;
 }
 
 @layer base {
-
   html,
   body {
     margin: 0;
@@ -248,8 +249,7 @@
    0 이 아니라 0.01ms 인 이유: 0 이면 animationend·transitionend 가 발화하지 않아
    그 이벤트를 기다리는 코드가 멈춘다. 사실상 즉시 끝나면서 이벤트는 살려 둔다.
 
-   Svelte 의 transition: 지시자는 JS 가 돌리므로 여기서 못 막는다.
-   그쪽은 svelte/motion 의 prefersReducedMotion 을 쓴다 (SessionDetail). */
+   상세 패널은 usePresence에서도 모션 감소 설정을 확인한다. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -258,5 +258,37 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+/* React 포털은 닫는 동안 마지막 세션을 유지한다. */
+.session-overlay > button {
+  transition: opacity 180ms ease-out;
+}
+.session-sheet {
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: session-enter 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.session-overlay[data-open="false"] {
+  pointer-events: none;
+}
+.session-overlay[data-open="false"] > button {
+  opacity: 0;
+}
+.session-overlay[data-open="false"] .session-sheet {
+  transform: translateX(100%);
+}
+@keyframes session-enter {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-sheet,
+  .session-overlay > button {
+    transition: none;
+    animation: none;
   }
 }

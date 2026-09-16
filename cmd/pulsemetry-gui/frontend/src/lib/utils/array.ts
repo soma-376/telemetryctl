@@ -17,8 +17,12 @@ export function isNonEmpty<T>(a: T[]): a is NonEmpty<T> {
 // 범위를 벗어났는지가 바로 남는다.
 export function at<T>(arr: ArrayLike<T>, i: number): T {
   const v = arr[i];
+
   if (v === undefined) {
-    throw new RangeError(`인덱스 ${i} 가 범위를 벗어났습니다 (길이 ${arr.length})`);
+    throw new RangeError(
+      `인덱스 ${i} 가 범위를 벗어났습니다 (길이 ${arr.length})`,
+    );
   }
+
   return v;
 }

@@ -1,4 +1,5 @@
 import type { AgentId } from "$lib/domain/agent.types";
+
 export type SeriesKey = "claude" | "codex" | "gemini";
 export type UsageParts = [number, number, number];
 export type BucketUnit = "hour" | "day" | "week" | "month";

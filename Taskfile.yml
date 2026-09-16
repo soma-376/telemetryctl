@@ -161,6 +161,7 @@ tasks:
       - task: check:cli:nocgo
       - task: check:format
       - task: check:frontend
+      - task: test:frontend
 
   # ── 검증 ────────────────────────────────────────────────────────────────
 
@@ -218,7 +219,7 @@ tasks:
       - go mod tidy -diff
 
   check:frontend:
-    desc: Svelte 컴포넌트와 Go 바인딩의 타입이 맞는지 검사한다.
+    desc: React 프런트엔드의 타입·ESLint·Prettier 규칙을 검사한다.
     # vite build 는 타입을 검사하지 않는다 — esbuild 가 타입 표기만 벗겨내고 지나간다.
     # 그래서 타입이 깨져도 번들은 멀쩡히 만들어지고, 화면에서 런타임에 터진다.
     # 이것을 돌리는 곳이 없으면 Go 구조체가 바뀌어 바인딩이 어긋나도 아무도 모른다.
@@ -230,13 +231,22 @@ tasks:
     dir: cmd/pulsemetry-gui/frontend
     cmds:
       - npm run check
+      - npm run lint
+      - npm run format:check
+
+  test:frontend:
+    desc: 화면 상호작용과 조회 캐시의 회귀 테스트를 실행한다.
+    deps: [install:frontend]
+    dir: cmd/pulsemetry-gui/frontend
+    cmds:
+      - npm test
 
   check:bindings:
     desc: 커밋된 Go 바인딩이 현재 Go 코드와 일치하는지 검사한다.
     # frontend/bindings 는 Go 코드에서 생성된 TypeScript 인데 커밋되어 있다. 그래서 Go
     # 구조체를 고치고 재생성을 잊으면 낡은 타입이 저장소에 남는다.
     #
-    # 이것을 잡는 곳이 여태 없었다. check:frontend 의 svelte-check 는 **커밋된** 낡은
+    # 이것을 잡는 곳이 여태 없었다. check:frontend 의 tsc --noEmit 는 **커밋된** 낡은
     # 타입을 읽으므로 프런트가 그 타입에 맞춰져 있는 한 통과하고, build:gui 는 바인딩을
     # 새로 만들지만 vite 는 타입을 검사하지 않아 번들이 그대로 만들어진다. 검사하는 쪽은
     # 낡은 것을 보고, 새로 만드는 쪽은 검사를 안 하는 상태였다.
@@ -265,8 +275,8 @@ tasks:
 
   install:frontend:
     internal: true
-    # svelte-check 는 devDependency 라 node_modules 안에만 있다. 이 deps 가 없으면 방금
-    # 클론한 체크아웃에서 task test 가 마지막 단계에서 "svelte-check: not found" 로 깨진다.
+    # TypeScript는 devDependency라 node_modules 안에만 있다. 이 deps가 없으면 방금
+    # 클론한 체크아웃에서 task test가 마지막 단계에서 "tsc: not found"로 깨진다.
     # 여태 안 보였던 것은 개발자 머신엔 이미 node_modules 가 있고 CI 는 워크플로에 npm ci
     # 스텝을 따로 두었기 때문이다 — 무엇을 설치하는가는 이 파일이 알아야 할 지식이다.
     #

@@ -72,7 +72,8 @@ task test                    # 전체. CI 의 CLI·정적 검사 (제품 빌드�
 task check:cli               # CLI 빌드·vet·race 테스트
 task check:cli:nocgo         # CGO 없이 빌드되는지 (ADR 0002)
 task check:format            # gofmt · go mod tidy -diff
-task check:frontend          # svelte-check
+task check:frontend          # React·TypeScript 타입·ESLint·Prettier 검사
+task test:frontend           # 화면 상호작용·조회 캐시 회귀 테스트
 task check:bindings          # 커밋된 frontend/bindings 가 Go 코드와 맞는지 (wails3 필요)
 ```
 
@@ -92,6 +93,19 @@ task check:bindings          # 커밋된 frontend/bindings 가 Go 코드와 맞�
 wails3 와 (리눅스라면) GTK4·WebKitGTK 개발 패키지를 요구해 로컬 검사 우산에 넣지 않았다.
 **GUI 나 프런트를 건드렸다면 `task build` 를 따로 돌려라.**
 
+## 프런트엔드 작업 규칙
+
+- `cmd/pulsemetry-gui/frontend`는 React + TypeScript다. 신규 화면은 React로 작성한다.
+- 린트 규칙은 `frontend/eslint.config.js`, 포맷 규칙은 `frontend/.prettierrc.json`이 기준이다
+  (두 경로 모두 `cmd/pulsemetry-gui` 기준). 기존 컴포넌트 구성과 네이밍도 먼저 확인한다.
+- 검사 통과만을 위해 규칙을 끄거나 `eslint-disable`을 추가하지 않는다. 예외가 필요하면 이유를 설명한다.
+- `frontend/bindings`는 Go에서 생성된다. 직접 수정하거나 린트·포맷 대상으로 넣지 않는다.
+- 변경 후 `task check:frontend`, `task test:frontend`, `task build`를 실행한다.
+  실행하지 못한 검사나 남은 오류는 이유와 함께 보고한다.
+- 프런트엔드 디렉터리에서 `npm run lint:fix`는 린트 자동 수정,
+  `npm run format`은 전체 포맷 적용이다. 일부 파일만 고칠 때는
+  `npx prettier --write <파일>`을 사용한다. 작업과 무관한 전체 재포맷은 별도로 분리한다.
+
 ## 이 레포에서 특히 조심할 것
 
 - **로컬 ingest 토큰과 회사 `ptt_`는 다른 값이다.** 벤더 설정 파일에 들어가는 건 로컬 ingest 토큰이고,
@@ -100,6 +114,6 @@ wails3 와 (리눅스라면) GTK4·WebKitGTK 개발 패키지를 요구해 로�
   deprecated `invite: ""` 필드는 `omitempty`가 없어 항상 전송되며 **제거하면 안 된다**(서버가 이를 수용한다).
 - **로컬 수신기의 큐 포화 응답은 429가 아니라 200 + PartialSuccess다.** 벤더 exporter의 재시도 폭주를 막는 의도된 드롭 정책이다.
 - `TimeoutStopSec(20s) > 데몬 shutdown(15s)` 불변식을 깨지 않는다.
-- 알려진 미구현: **Windows 자동 시작**(PROJ-56), gRPC 상위 전송, `--force` 플래그 동작.
+- 알려진 미구현: gRPC 상위 전송, `--force` 플래그 동작.
 - ADR을 추가하면 `0014`부터. 파일명은 **한국어 슬러그**. 인덱스는 `docs/adr/README.md` —
   Status 첫 토큰이 바뀌면 같은 커밋에서 표를 갱신한다.

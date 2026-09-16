@@ -18,6 +18,8 @@ export interface TrayVendor {
   spend: string;
   tokens: string;
   credential: string;
+  /** 조회 실패 시 원인과 마지막 성공값의 기준 시각을 알린다. */
+  warning?: string;
   /**
    * 비어 있지 않다. adapter 의 toVendor 가 창이 없는 벤더를 카드로 만들지 않으므로
    * 이 배열이 빈 채로 화면에 닿는 경로가 없다 — headOf 가 그 사실에 기댄다.

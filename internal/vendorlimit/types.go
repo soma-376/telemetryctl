@@ -75,12 +75,26 @@ const (
 	// ReasonCredentialMalformed 는 파일을 읽었으나 우리가 아는 모양이 아니라는 뜻이다.
 	// 벤더가 자격증명 파일 형식을 바꾸면 여기로 온다.
 	ReasonCredentialMalformed Reason = "credential_malformed"
-	// ReasonTokenExpired 는 토큰이 만료됐다는 뜻이다. 파일의 만료 시각으로 미리 알거나
-	// 상위가 401·403 으로 거부해서 알게 된다. 우리는 갱신하지 않으므로 벤더 CLI 를 기다린다.
+	// ReasonTokenExpired 는 자격증명에 기록된 만료 시각이 지났다는 뜻이다.
+	// 서버의 인증 거부만으로 만료를 단정하지 않는다. 갱신은 벤더 CLI 가 소유한다.
 	ReasonTokenExpired Reason = "token_expired"
-	// ReasonNetwork 는 요청이 상대에 닿지 못했다는 뜻이다 (DNS·연결 거부·타임아웃·취소).
+	// ReasonAuthRejected 는 서버가 현재 자격증명을 거부했다는 뜻이다 (HTTP 401).
+	ReasonAuthRejected Reason = "auth_rejected"
+	// ReasonAccessDenied 는 접근 거부다 (HTTP 403). 권한·정책 중 원인을 단정하지 않는다.
+	ReasonAccessDenied Reason = "access_denied"
+	// ReasonRateLimited 는 사용량 조회 요청의 빈도 제한이다 (HTTP 429).
+	ReasonRateLimited Reason = "rate_limited"
+	// ReasonNetwork 는 연결 또는 응답 수신 중 통신에 실패했다는 뜻이다.
 	ReasonNetwork Reason = "network_error"
-	// ReasonUpstreamStatus 는 상위가 2xx 가 아닌 응답을 줬다는 뜻이다 (401·403 제외).
+	// ReasonDNS 는 서버 주소를 해석하지 못했다는 뜻이다.
+	ReasonDNS Reason = "dns_error"
+	// ReasonTLS 는 보안 연결을 확인하지 못했다는 뜻이다. 인증서 검증을 완화하지 않는다.
+	ReasonTLS Reason = "tls_error"
+	// ReasonTimeout 은 조회 시간 상한을 넘겼다는 뜻이다. 인터넷 단절을 뜻하지는 않는다.
+	ReasonTimeout Reason = "request_timeout"
+	// ReasonCanceled 는 조회 작업 취소다. Refresher 는 이 결과로 저장된 상태를 덮지 않는다.
+	ReasonCanceled Reason = "request_canceled"
+	// ReasonUpstreamStatus 는 그 밖의 2xx 아닌 응답이다 (5xx 등).
 	ReasonUpstreamStatus Reason = "upstream_status"
 	// ReasonResponseUnrecognized 는 2xx 를 받았으나 본문이 우리가 아는 모양이 아니라는
 	// 뜻이다. **비공개 API 가 바뀌면 여기로 온다** — 이 값이 화면에 늘어나기 시작하면

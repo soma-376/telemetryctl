@@ -150,5 +150,8 @@ jobs:
       - name: Check format and dependencies
         run: task check:format
 
-      - name: Check frontend types
+      - name: Check frontend types, lint and format
         run: task check:frontend
+
+      - name: Test frontend interactions
+        run: task test:frontend

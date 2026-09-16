@@ -30,6 +30,7 @@ const AGENT_IDS = new Set<string>([
 // 모르는 벤더는 버리지 않고 "other" 로 남긴다 — 조용히 사라지면 합계가 맞지 않는다.
 function toAgentId(vendor: string): AgentId {
   if (vendor === "claude_code") return "claude";
+
   return AGENT_IDS.has(vendor) ? (vendor as AgentId) : "other";
 }
 
@@ -45,14 +46,19 @@ const PERIOD_LABEL: Record<string, string> = {
 // 되면 어느 쪽이 막혔는지 알 수 없다. 그때만 벤더가 붙인 원래 이름을 덧붙인다.
 function windowLabels(windows: LimitWindow[]): string[] {
   const total = new Map<string, number>();
+
   for (const w of windows) total.set(w.period, (total.get(w.period) ?? 0) + 1);
 
   const seen = new Map<string, number>();
+
   return windows.map((w) => {
     const base = PERIOD_LABEL[w.period] ?? w.label;
+
     if ((total.get(w.period) ?? 0) < 2) return base;
     const n = (seen.get(w.period) ?? 0) + 1;
+
     seen.set(w.period, n);
+
     return n === 1 ? base : `${base} · ${w.label}`;
   });
 }
@@ -77,17 +83,21 @@ function startOfDay(d: Date): number {
 function resetText(w: LimitWindow, now: Date): string {
   if (w.resets_at) {
     const at = new Date(w.resets_at);
+
     if (!Number.isNaN(at.getTime())) {
       const days = Math.round((startOfDay(at) - startOfDay(now)) / 86_400_000);
       const hm = `${pad2(at.getHours())}:${pad2(at.getMinutes())}`;
+
       if (days === 0) return `오늘 ${hm}`;
       if (days === 1) return `내일 ${hm}`;
+
       return `${at.getMonth() + 1}월 ${at.getDate()}일`;
     }
   }
   if (w.resets_in_seconds > 0) {
     return `${formatDuration(Math.round(w.resets_in_seconds / 60))} 뒤`;
   }
+
   return "";
 }
 
@@ -104,10 +114,12 @@ function toWindows(
     (window) => window.period === "five_hour",
   );
   const headAt = weeklyAt >= 0 ? weeklyAt : fiveHourAt >= 0 ? fiveHourAt : 0;
+
   // map 은 길이를 보존하지만 타입에는 그 사실이 남지 않는다. 입력이 NonEmpty 이므로
   // 결과도 NonEmpty 다 — 그 한 가지만 여기서 단언한다.
   return windows.map((w, i) => {
     const pct = remainPct(w.used_ratio);
+
     return {
       label: at(labels, i),
       pct,
@@ -137,13 +149,22 @@ export interface UnavailableVendor {
 // Result.Detail 을 쓰지 않는 이유는 백엔드가 명시한 대로다 — Detail 은 사람이 읽는 보조
 // 설명이고 언제든 바뀐다. 화면 분기는 기계 판독 값인 Reason 으로 한다.
 const REASON_TEXT: Record<string, string> = {
-  credential_missing: "로그인하지 않았습니다",
+  credential_missing:
+    "자격증명을 찾지 못했습니다 — 해당 도구에서 로그인을 확인하세요",
   credential_unreadable: "자격증명을 읽을 권한이 없습니다",
   credential_malformed: "자격증명 형식을 알 수 없습니다",
-  token_expired: "토큰이 만료됐습니다 — 해당 도구에서 다시 로그인하세요",
-  network_error: "연결하지 못했습니다",
-  upstream_status: "공급자가 응답을 거부했습니다",
-  response_unrecognized: "응답 형식이 바뀐 것 같습니다",
+  token_expired: "토큰이 만료됐습니다 — 해당 도구를 실행한 뒤 새로고침하세요",
+  auth_rejected:
+    "현재 자격증명으로 조회하지 못했습니다 — 해당 도구에서 인증 상태를 확인하세요",
+  access_denied: "공급자가 사용량 조회를 허용하지 않았습니다",
+  rate_limited: "조회 요청이 제한됐습니다 — 잠시 후 새로고침하세요",
+  network_error: "통신 오류로 사용량을 조회하지 못했습니다",
+  dns_error: "공급자 서버 주소를 확인하지 못했습니다",
+  tls_error: "공급자 서버와의 보안 연결을 확인하지 못했습니다",
+  request_timeout: "사용량 조회 시간이 초과됐습니다",
+  request_canceled: "사용량 조회가 취소됐습니다",
+  upstream_status: "공급자 응답 오류로 사용량을 조회하지 못했습니다",
+  response_unrecognized: "사용량 응답을 해석하지 못했습니다",
   internal_error: "조회 중 오류가 났습니다",
 };
 
@@ -162,14 +183,16 @@ interface TrayView {
 //
 // **state 를 보지 않는다.** 백엔드는 조회에 실패해도 직전 성공값을 지우지 않으므로
 // (store 의 upsert 가 available 일 때만 windows 를 덮어쓴다) 그 숫자를 계속 보여주는 편이
-// 낫다. 429 한 번에 "공급자가 응답을 거부했습니다" 로 바뀌면, 손에 든 값을 두고 아무것도
-// 안 보여주는 셈이 된다. 값이 언제 기준인지는 헤더의 경과 시간이 말한다.
+// 낫다. 조회 실패 사유와 해당 벤더의 마지막 성공 시각을 warning 으로 함께 보여준다.
+// 다른 벤더의 성공 시각을 이 카드의 신선도로 사용하지 않는다.
 //
 // 창이 비면 보여줄 숫자가 없다 — 그때만 null 이고, 안내 문구는 unavailable 쪽이 맡는다.
 function toVendor(r: VendorLimit, now: Date): TrayVendor | null {
   const windows = r.windows ?? [];
+
   // 이 검사가 TrayVendor.windows 의 NonEmpty 보장을 만드는 자리다.
   if (!isNonEmpty(windows)) return null;
+
   return {
     id: toAgentId(r.vendor),
     plan: capitalize(r.plan),
@@ -179,8 +202,30 @@ function toVendor(r: VendorLimit, now: Date): TrayVendor | null {
     spend: "",
     tokens: "",
     credential: "",
+    warning:
+      r.state !== LimitState.StateAvailable
+        ? `${reasonText(r.reason)}. ${lastKnownText(r.observed_at)}`
+        : undefined,
     windows: toWindows(windows, now),
   };
+}
+
+function lastKnownText(observedAt: string): string {
+  const at = new Date(observedAt);
+
+  if (!Number.isFinite(at.getTime()) || at.getTime() <= 0)
+    return "마지막 성공 결과를 표시합니다. 기준 시각은 알 수 없습니다.";
+
+  const shown = at.toLocaleString("ko-KR", {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+
+  return `마지막 성공 결과(${shown})를 표시합니다.`;
 }
 
 const STATUS_TEXT: Record<string, string> = {
@@ -195,6 +240,7 @@ const STATUS_TEXT: Record<string, string> = {
 function startedText(startedAt: number): string {
   if (startedAt <= 0) return "";
   const d = new Date(startedAt * 1000);
+
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
@@ -206,12 +252,15 @@ function toSession(s: RecentSession): TraySession {
   const agentId = toAgentId(s.vendor);
   const parts: string[] = [];
   const started = startedText(s.started_at);
+
   if (started) parts.push(started);
   parts.push(AGENT_NAMES[agentId]);
   if (s.duration_ms > 0)
     parts.push(formatDuration(Math.round(s.duration_ms / 60_000)));
   const status = STATUS_TEXT[s.status];
+
   if (status) parts.push(status);
+
   return {
     id: String(s.id),
     agentId,
@@ -224,8 +273,10 @@ function toSession(s: RecentSession): TraySession {
 // 데몬의 벤더 관측 시각을 현지 시·분·초로 표시한다.
 export function observedAtText(observedAt: string): string {
   const ms = Date.parse(observedAt);
+
   if (!Number.isFinite(ms) || ms <= 0) return "한도 확인 이력 없음";
   const at = new Date(ms);
+
   return `${pad2(at.getHours())}:${pad2(at.getMinutes())}:${pad2(at.getSeconds())}`;
 }
 
@@ -234,6 +285,7 @@ export function toTrayView(
   now: Date = new Date(),
 ): TrayView {
   const limits = snap.limits ?? [];
+
   return {
     vendors: limits
       .map((r) => toVendor(r, now))

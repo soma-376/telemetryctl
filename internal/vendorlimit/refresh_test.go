@@ -27,9 +27,13 @@ func (c *refreshCollector) CollectVendor(_ context.Context, vendor Vendor) Resul
 	return Result{Vendor: vendor, State: StateAvailable}
 }
 
-type refreshStore struct{ calls atomic.Int32 }
+type refreshStore struct {
+	calls   atomic.Int32
+	reasons []Reason
+}
 
-func (s *refreshStore) UpsertVendorLimit(context.Context, Result, time.Time) error {
+func (s *refreshStore) UpsertVendorLimit(_ context.Context, result Result, _ time.Time) error {
+	s.reasons = append(s.reasons, result.Reason)
 	s.calls.Add(1)
 	return nil
 }
@@ -121,6 +125,63 @@ func TestRefresherManualCooldownBoundary(t *testing.T) {
 }
 
 type failingRefreshStore struct{ fail bool }
+
+type collectorFunc func(context.Context, Vendor) Result
+
+func (f collectorFunc) CollectVendor(ctx context.Context, vendor Vendor) Result {
+	return f(ctx, vendor)
+}
+
+func TestRefresherCancellationKeepsStoredStateAndAllowsRetry(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls := 0
+	collector := collectorFunc(func(_ context.Context, vendor Vendor) Result {
+		calls++
+		if calls == 1 {
+			cancel()
+			return unavailable(vendor, ReasonCanceled, "취소", testNow)
+		}
+		return Result{Vendor: vendor, State: StateAvailable}
+	})
+	s := &refreshStore{}
+	r := NewRefresher(collector, s, RefreshOptions{})
+	if err := r.RefreshManual(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("취소가 전달되지 않았다: %v", err)
+	}
+	if s.calls.Load() != 0 {
+		t.Fatal("취소된 조회가 저장된 상태를 덮었다")
+	}
+	if err := r.RefreshManual(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if s.calls.Load() != int32(len(SupportedVendors())) {
+		t.Fatal("취소가 수동 재시도를 막았다")
+	}
+}
+
+func TestRefresherDeadlineIsStoredAsTimeout(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	collector := collectorFunc(func(ctx context.Context, vendor Vendor) Result {
+		return unavailable(vendor, transportReason(transportFailure(ctx.Err(), "transport", 0)), "시간 초과", testNow)
+	})
+	s := &refreshStore{}
+	r := NewRefresher(collector, s, RefreshOptions{})
+	if err := r.RefreshManual(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if s.calls.Load() != int32(len(SupportedVendors())) {
+		t.Fatal("시간 초과를 작업 취소로 처리했다")
+	}
+	for _, reason := range s.reasons {
+		if reason != ReasonTimeout {
+			t.Fatalf("저장된 reason=%s, want %s", reason, ReasonTimeout)
+		}
+	}
+}
 
 func (s *failingRefreshStore) UpsertVendorLimit(context.Context, Result, time.Time) error {
 	if s.fail {

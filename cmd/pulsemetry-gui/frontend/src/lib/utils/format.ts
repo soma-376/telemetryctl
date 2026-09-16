@@ -5,5 +5,6 @@ export function formatDuration(minutes: number): string {
   minutes = Math.max(0, Math.floor(minutes));
   if (minutes < 60) return `${minutes}m`;
   const m = minutes % 60;
+
   return `${Math.floor(minutes / 60)}h ${m < 10 ? `0${m}` : m}m`;
 }

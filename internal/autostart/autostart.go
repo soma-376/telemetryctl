@@ -67,9 +67,10 @@ import (
 type Kind string
 
 const (
-	KindLaunchd     Kind = "launchd"
-	KindSystemdUser Kind = "systemd-user"
-	KindNone        Kind = "none"
+	KindLaunchd       Kind = "launchd"
+	KindSystemdUser   Kind = "systemd-user"
+	KindTaskScheduler Kind = "task-scheduler"
+	KindNone          Kind = "none"
 )
 
 func (k Kind) String() string { return string(k) }
@@ -106,7 +107,7 @@ const (
 // (nil, nil), runtimeinfo.Read)을 따른다 — Status 는 Status{Registered:false}, nil 을,
 // Disable 은 Result{AlreadyInState:true}, nil 을 돌려준다(installer.LocalReport.AlreadyInState 대칭).
 var (
-	// ErrUnsupportedPlatform 은 windows 다. 작업 스케줄러 등록은 PROJ-56 이다.
+	// ErrUnsupportedPlatform 은 지원하지 않는 나머지 OS 다.
 	ErrUnsupportedPlatform = errors.New("이 OS 는 아직 자동 실행 등록을 지원하지 않습니다")
 	// ErrNoServiceManager 는 systemd 가 없는 리눅스다 (WSL1 · systemd 를 끈 WSL2 · 컨테이너).
 	ErrNoServiceManager = errors.New("사용할 수 있는 서비스 관리자가 없습니다")
@@ -126,6 +127,10 @@ type Options struct {
 
 	// UID 는 launchd 도메인(gui/<uid>)이다. 0 이면 os.Getuid().
 	UID int
+
+	// UserID 는 Windows 작업 스케줄러의 사용자 식별자다. 비우면 현재 사용자를 조회한다.
+	// 테스트에서 호스트 계정에 의존하지 않도록 둔 seam 이다.
+	UserID string
 
 	// ExecPath 는 서비스 파일에 적을 실행 파일 경로다. 비우면 resolveExecPath 가 정한다.
 	// 명시하면 휘발성 검사를 건너뛴다 — 패키저·CI 의 탈출구이자 테스트 seam 이다.
@@ -245,7 +250,7 @@ type Manager struct {
 
 // New 는 이 호스트에 맞는 Manager 를 만든다.
 //
-// windows 는 ErrUnsupportedPlatform 을 감싼 오류다 (PROJ-56). 그 경우에도 파일을 쓰거나
+// 지원하지 않는 OS 는 ErrUnsupportedPlatform 을 감싼 오류다. 그 경우에도 파일을 쓰거나
 // 외부 명령을 부르지 않는다.
 func New(opts Options) (*Manager, error) {
 	if opts.Env.HomeDir == "" {
@@ -269,8 +274,10 @@ func New(opts Options) (*Manager, error) {
 		m.be = &darwinBackend{opts: opts, uid: uid}
 	case "linux":
 		m.be = &linuxBackend{opts: opts}
+	case "windows":
+		m.be = &windowsBackend{opts: opts}
 	default:
-		return nil, fmt.Errorf("%w (%s). Windows 자동 실행 등록은 후속 티켓입니다", ErrUnsupportedPlatform, goos)
+		return nil, fmt.Errorf("%w (%s)", ErrUnsupportedPlatform, goos)
 	}
 	return m, nil
 }

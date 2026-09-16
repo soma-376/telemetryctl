@@ -64,7 +64,9 @@ export function createUsageChartLayout(
     let sum = 0;
     const segments = bar.values.map((value, seriesIndex) => {
       const start = sum;
+
       sum += value;
+
       return {
         value,
         seriesIndex,
@@ -72,6 +74,7 @@ export function createUsageChartLayout(
         height: yAt(start) - yAt(sum),
       };
     });
+
     return { ...bar, index, x: xAt(index) - barWidth / 2, segments };
   });
 

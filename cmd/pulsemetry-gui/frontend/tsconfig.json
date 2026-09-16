@@ -4,6 +4,8 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     // strict 에 포함되지 않는다. 배열·레코드 인덱싱이 undefined 를 낼 수 있음을 타입에 반영한다.
     "noUncheckedIndexedAccess": true,
     "isolatedModules": true,
@@ -12,5 +14,5 @@
       "$lib/*": ["./src/lib/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.svelte"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
 }

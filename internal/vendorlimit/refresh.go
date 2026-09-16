@@ -2,6 +2,7 @@ package vendorlimit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -133,7 +134,14 @@ func (r *Refresher) refresh(ctx context.Context, checkedAt time.Time) error {
 
 	var firstErr error
 	for _, vendor := range SupportedVendors() {
+		if errors.Is(callCtx.Err(), context.Canceled) {
+			return errors.Join(firstErr, context.Canceled)
+		}
 		result := r.collector.CollectVendor(callCtx, vendor)
+		// 호출자 취소로 저장된 성공·실패 상태를 덮지 않는다.
+		if result.Reason == ReasonCanceled || errors.Is(callCtx.Err(), context.Canceled) {
+			return errors.Join(firstErr, context.Canceled)
+		}
 		// 조회 실패는 error 가 아니라 Result 의 상태다(패키지 머리 주석). 그래서 호출자가
 		// 알아채려면 여기서 남겨야 한다 — 429 가 반복되는지 같은 것을 DB 스냅샷만으로는
 		// 뒤늦게 알게 된다. Reason·Detail 에는 토큰이 들어가지 않는다(leak_test).

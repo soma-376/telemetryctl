@@ -1,4 +1,7 @@
-import { App, Dashboard } from "../../bindings/github.com/your-org/pulsemetry/cmd/pulsemetry-gui";
+import {
+  App,
+  Dashboard,
+} from "../../bindings/github.com/your-org/pulsemetry/cmd/pulsemetry-gui";
 import type { AppInfo } from "../../bindings/github.com/your-org/pulsemetry/cmd/pulsemetry-gui";
 import type { RecentSession } from "../../bindings/github.com/your-org/pulsemetry/internal/dashboard";
 // 트레이 타입은 Go 쪽 tray 패키지에 있어 이름에 접두사가 없다. 화면이 쓰는 이름은
@@ -26,8 +29,17 @@ import type {
 // 바인딩 전체의 복사본이 되고, 그러면 무엇이 실제로 쓰이는지 알 수 없게 된다.
 
 export { App, Dashboard, TrayState, LimitState };
-export type { SessionRow, SessionMetrics, TurnMetrics } from "../../bindings/github.com/your-org/pulsemetry/internal/dashboard";
-export type { Query as ActivityQuery, Page as ActivityPage, Row as ActivityRow, Detail as ActivityDetail } from "../../bindings/github.com/your-org/pulsemetry/internal/dashboard/activity";
+export type {
+  SessionRow,
+  SessionMetrics,
+  TurnMetrics,
+} from "../../bindings/github.com/your-org/pulsemetry/internal/dashboard";
+export type {
+  Query as ActivityQuery,
+  Page as ActivityPage,
+  Row as ActivityRow,
+  Detail as ActivityDetail,
+} from "../../bindings/github.com/your-org/pulsemetry/internal/dashboard/activity";
 export type {
   AppInfo,
   LimitWindow,

@@ -55,6 +55,19 @@ type screenFixture struct {
 
 const screenTZ = "UTC"
 
+type screenLimitCollector struct{}
+
+func (screenLimitCollector) CollectVendor(_ context.Context, vendor vendorlimit.Vendor) vendorlimit.Result {
+	return vendorlimit.Result{
+		Vendor:     vendor,
+		State:      vendorlimit.StateUnavailable,
+		Reason:     vendorlimit.ReasonCredentialMissing,
+		Detail:     "화면 계약 테스트용 자격증명이 없습니다",
+		Windows:    []vendorlimit.Window{},
+		ObservedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
 // newScreenFixture 는 walkthrough 픽스처 한 벌을 데몬으로 흘려 넣고 조회 서비스를 연다.
 func newScreenFixture(t *testing.T) *screenFixture {
 	t.Helper()
@@ -64,7 +77,11 @@ func newScreenFixture(t *testing.T) *screenFixture {
 	t.Setenv("HOME", empty)
 	t.Setenv("USERPROFILE", empty)
 
-	h := start(t, harnessOptions{})
+	h := start(t, harnessOptions{daemon: func(opts *Options) {
+		// 실제 홈과 Codex App Server를 조회하면 테스트 종료가 기동 직후 갱신을 취소할 수 있다.
+		// 화면 계약은 벤더 연결이 아니라 저장된 실패 결과의 모양을 검증하므로 결정적 대역을 쓴다.
+		opts.VendorLimitCollector = screenLimitCollector{}
+	}})
 	body, err := json.Marshal(map[string]string{
 		"session_id": fixtureSession, "cwd": fixturePath, "source": "startup",
 	})

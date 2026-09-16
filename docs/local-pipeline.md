@@ -53,7 +53,7 @@ Claude Code·Codex 의 시그널을 직접 받고, 정규화·집계해 로컬 S
 - GUI는 인증된 localhost API로 데몬이 조립한 화면 스냅샷을 받는다 (ADR 0013)
 - 모든 로컬 데이터 **400일 보존** (ADR 0008)
 
-> **현재 미충족 항목.** `cmd/pulsemetry-gui`(Wails v3 + Svelte)는 `develop`에 없고
+> **현재 미충족 항목.** `cmd/pulsemetry-gui`(Wails v3 + React)는 `develop`에 없고
 > `feature/PROJ-44-gui`에만 있다. `develop`의 `go.mod`에는 Wails 의존성이 없다. 따라서
 > "Wails 바인딩 최신성 검사"와 "GUI 모듈 빌드" 검증은 해당 브랜치가 병합된 뒤에야 가능하다.
 > PROJ-83 범위에서는 **Go 조회 계층까지** 구현하고 이 검증은 후속으로 이월한다.
@@ -123,7 +123,7 @@ internal/
   store/        SQLite 스키마·초기화·쓰기·보존 정책·read-only 열기
   dashboard/    화면별 조회 API                                                   (Wails 의존 없음)
   runtimeinfo/  runtime.json (비밀 없음: 주소·pid·데이터 경로)
-  autostart/    로그인 시 데몬 자동 실행 등록 (launchd LaunchAgent · systemd user unit)
+  autostart/    로그인 시 데몬 자동 실행 등록 (launchd · systemd user unit · Windows 작업 스케줄러)
   daemon/       위 패키지들을 잇는 배선 + 틱 루프 + graceful shutdown
 gui/            Wails v3 앱 (별도 go.mod, 아직 없음 — PROJ-35)
 ```
@@ -550,7 +550,7 @@ Windows 에서 데몬의 prune 이 막힌다.
 - `product-build` — 3개 OS 매트릭스. `task build` 로 실제 배포 산출물을 만든다. 리눅스 러너에는
   `libgtk-4-dev`·`libwebkitgtk-6.0-dev` 를 먼저 설치한다. **GUI 가 그 OS 에서 빌드되는지 아는
   곳은 이 잡뿐이다.**
-- `static-checks` — 실행하지 않고 읽기만 하는 검사. gofmt, `go mod tidy -diff`, svelte-check.
+- `static-checks` — 실행하지 않고 읽기만 하는 검사. gofmt, `go mod tidy -diff`, tsc --noEmit.
   결과가 OS 에 의존하지 않아 리눅스 하나에서만 돈다.
 
 > **주의 1 — embed.** `//go:embed all:frontend/dist` 는 컴파일 시점에 그 디렉터리를 읽는데
@@ -786,7 +786,7 @@ SQLite에서 조립한 트레이 스냅샷을 받는다. 사용자가 새로고�
 
 Windows에서 트레이 퀵뷰를 연 채 절전했다가 복귀하면 네이티브 창과 WebView의 생명주기가
 갈릴 수 있다. 확인한 사례에서는 네이티브 `WebviewWindow.IsVisible()`은 계속 `true`였지만
-WebView2 문서와 Svelte 컴포넌트가 다시 만들어져 프런트의 `visible`은 초깃값 `false`로
+WebView2 문서와 React 컴포넌트가 다시 만들어져 프런트의 `visible`은 초깃값 `false`로
 돌아갔다. 네이티브 창은 숨김에서 표시로 전이하지 않았으므로 `WindowShow`와
 `tray:shown` 이벤트도 새로 발생하지 않았다.
 
@@ -796,7 +796,7 @@ WebView2 문서와 Svelte 컴포넌트가 다시 만들어져 프런트의 `visi
 따라서 트레이 표시 상태는 다음 두 경로를 함께 쓴다.
 
 - 평상시에는 `WindowShow`·`WindowHide`가 보낸 `tray:shown`·`tray:hidden` 이벤트로 변경을 감지한다.
-- Svelte 컴포넌트가 마운트되면 Wails 바인딩 `App.IsTrayVisible()`을 호출해 네이티브 창의 현재
+- React 컴포넌트가 마운트되면 Wails 바인딩 `App.IsTrayVisible()`을 호출해 네이티브 창의 현재
   상태를 다시 읽는다. 동시에 여러 조회가 끝나면 가장 최근에 시작한 조회만 반영해 과거 응답이
   최신 상태를 덮지 않게 한다.
 
@@ -831,6 +831,21 @@ GUI의 `tray.Cache`는 주기 안이면 직전 값을 그대로 준다. 단 **�
 오류가 아니라 상태다.
 
 #### 부분 장애가 다른 벤더와 최근 세션을 지우지 않는다
+
+Claude 한도 조회는 통신 실패와 HTTP 응답 오류를 분리한다. `401`은 `auth_rejected`,
+`403`은 `access_denied`, `429`는 `rate_limited`이며, `token_expired`는 자격증명에 기록된
+만료 시각이 지났을 때만 사용한다. DNS·TLS·타임아웃은 각각 `dns_error`·`tls_error`·
+`request_timeout`, 그 밖의 연결·수신 실패는 `network_error`다.
+
+HTTP 2xx 이후에도 본문을 끝까지 제한 크기 안에서 읽은 뒤 JSON을 해석한다. 수신 중 시간
+초과나 연결 끊김을 `response_unrecognized`로 처리하지 않는다. 잘못된 JSON과 크기 초과는
+응답 오류다. 오류 원문을 문자열로 바꾸기 전에 타입으로 분류하며, 로그의 `detail`에는 고정된
+`kind`·`phase`와 HTTP 상태 코드만 남긴다. URL·본문·원본 오류는 보존하지 않는다.
+
+조회 실패 시 이전 사용량과 마지막 성공 시각은 유지하며, 트레이는 해당 벤더 카드에 실패 사유와
+그 값의 기준 시각을 함께 표시한다. 통신 실패를 재로그인 안내로 바꾸지 않는다. 작업 취소는
+`request_canceled`로 구분하고 저장된 상태를 덮지 않으며 수동 연타 제한도 시작하지 않는다.
+시간 초과는 취소와 달리 조회 실패로 저장한다. 다음 조회는 기존 데몬 주기와 수동 요청을 따른다.
 
 `vendorlimit.Collector`는 error를 반환하지 않고 벤더마다 `state`·`reason`을 만든다. 데몬은 결과를
 벤더 기본 키로 upsert하고 GUI는 이를 **손대지 않고 그대로** 실어 보낸다 — 실패한 벤더도 `unavailable` 로 자리를 지켜야 화면이
@@ -1204,7 +1219,7 @@ telemetryctl autostart status  [--data-dir <경로>] [--state <경로>]
 |---|---|---|
 | macOS | LaunchAgent (`launchctl bootstrap gui/<uid>`) | `~/Library/LaunchAgents/com.your-org.pulsemetry.daemon.plist` |
 | 리눅스 | systemd user unit (`systemctl --user enable --now`) | `$XDG_CONFIG_HOME/systemd/user/pulsemetry-daemon.service` (기본 `~/.config/…`) |
-| Windows | 없음 — `ErrUnsupportedPlatform` | PROJ-56 |
+| Windows | 작업 스케줄러 사용자 작업 `Pulsemetry Daemon` | 로그인 시 시작, 실패 시 30초 간격 최대 5회 재시작 |
 
 **둘 다 사용자 수준이다.** LaunchDaemon·시스템 유닛은 root 로 **로그인 전에** 돌아 사용자 로그인
 키체인을 읽지 못하고, 그러면 `receiver.EnsureToken()` 이 실패해 데몬 전체가 뜨지 못한다.
@@ -1261,7 +1276,7 @@ systemd `TimeoutStopSec=20` 은 `daemon.DefaultShutdownTimeout`(15초)보다 커
 계획서 「검증」을 실제 명령으로 고친 것이다. 4.3절의 정정이 5번에 반영돼 있다.
 
 ```sh
-# 0. 자동 검증 (task test 는 CI 가 보는 전부를 돈다 — 빌드·vet·race 테스트·gofmt·tidy·svelte-check)
+# 0. 자동 검증 (task test 는 CI 가 보는 전부를 돈다 — 빌드·vet·race 테스트·gofmt·tidy·tsc --noEmit)
 task build && task test
 
 # 1. 상위 Collector 대역 — 받은 본문을 덤프하는 간이 서버를 띄운다.
@@ -1399,7 +1414,7 @@ uninstall은 이 후보 판정만으로 삭제하지 않고 `managed-settings.js
 
 **PROJ-55 가 이 한계를 좁혔다.** `enroll` 이 배선 직후 자동 실행을 best-effort 로 등록하고
 (macOS LaunchAgent · 리눅스 systemd user unit, 7.7절), 등록 후 데몬 생존까지 확인한다. 남은 노출은
-셋이다 — **등록할 수 없는 환경**(Windows·systemd 없는 리눅스·`go run`), **재시작으로 낫지 않는
+셋이다 — **등록할 수 없는 환경**(systemd 없는 리눅스·`go run`), **재시작으로 낫지 않는
 영구 실패**(미enroll·잠긴 키링·바이너리 이동, ADR 0007 Negative), 그리고 **로그아웃 중**(사용자
 수준 서비스라 로그아웃하면 함께 종료된다). 세 경우 모두 `enroll`·`local enable`·`status` 가
 서로 다른 조언과 함께 알린다.
@@ -1410,7 +1425,7 @@ uninstall은 이 후보 판정만으로 삭제하지 않고 `managed-settings.js
 | **제목 품질** | `sessions.title`은 **벤더가 만든 제목만** 담는다(ADR 0018). Codex는 App Server의 `thread.name`(ADR 0017), Claude Code는 트랜스크립트의 `ai-title`이다. 조립기는 제목을 만들지 않으므로 그 경로가 없는 벤더는 NULL 이고, 화면은 제목이 없으면 벤더명으로 표시한다 |
 | **`abandoned` 오판 가능** | "마지막 툴 이벤트가 실패이고 이후 성공 없음" 이라는 휴리스틱이다. **화면 필터로만 쓰고 지표로 쓰지 않는다.** 판정 근거는 세션 마감 로그(`s.Diag.StatusReason`)에 남는다 |
 | **데몬 미실행 중 유실** | 위 첫 문단. PROJ-55 의 자동 실행 등록이 대부분을 막지만, 등록할 수 없는 환경과 영구 실패는 남는다 |
-| **Windows 는 자동 실행 등록이 없다** | `autostart` 명령이 `ErrUnsupportedPlatform` 으로 알리고 `telemetryctl daemon` 직접 실행을 안내한다. 작업 스케줄러 등록은 PROJ-56 이다. **경고가 아니라 정보로 출력한다** — 실패한 것이 없기 때문이다 |
+| **Windows 작업 스케줄러 재시작 한도 소진** | 실패 시 30초 간격으로 최대 5회만 재시작한다. 원인을 고친 뒤 `telemetryctl autostart enable`로 다시 등록·실행한다 |
 | **로그아웃하면 데몬도 종료된다** | 사용자 수준 서비스(LaunchAgent / `systemctl --user`)를 쓰고 `loginctl enable-linger` 를 켜지 않기 때문이다. 두 플랫폼이 같은 의미론을 갖게 하려는 의도적 선택이고, linger 는 "로그인한 사용자 없이 수집" 이라는 **프라이버시 의미론 변경**인 데다 세션이 없으면 Secret Service 도 없어 `EnsureToken` 이 실패한다. 필요한 사용자는 `loginctl enable-linger $USER` 를 직접 실행한다 |
 | **macOS 로그인 항목 토글을 읽을 수 없다** | macOS 13+ 는 시스템 설정 → 일반 → 로그인 항목에서 사용자가 이 항목을 끌 수 있는데, 그 상태는 `SMAppService`(Objective-C → cgo → ADR 0002 위반) 없이는 조회할 수 없다. `autostart status` 는 `등록됨` 으로 보이지만 실제로는 실행되지 않는 상태가 가능하다. 완화는 `enable` 출력의 안내 한 줄과, 데몬 생존을 `runtime.json` + `/healthz` 로 따로 확인하는 것이다 |
 | **재enroll 없는 업그레이드는 경로 드리프트가 남는다** | 유닛 파일에는 `os.Executable()` 결과를 **해석하지 않고** 적는다. macOS 에서는 Homebrew 심볼릭 링크가 보존돼 업그레이드를 견디지만, **리눅스는 `os.Executable()` 이 `/proc/self/exe` 라 이미 완전히 해석돼 있어** 심볼릭 링크를 보존할 수 없다. 바이너리만 갈고 재enroll 하지 않으면 등록된 경로가 낡은 채로 남는다. `autostart status` 의 `ExecPathDrift`·`ExecPathMissing` 이 보고하지만 **자동 복구하지 않는다** — 고치는 방법은 `autostart enable` 재실행이다 |
@@ -1463,7 +1478,7 @@ PowerShell은 `& '실행 경로' hook codex`를 사용하고, Linux·macOS의 PO
 
 ## 10. 범위 밖 · 후속 티켓
 
-1. **데몬 자동 실행 등록 — Windows** (PROJ-56, 작업 스케줄러). macOS·리눅스는 PROJ-55 에서 끝났다
+1. **완료 — 데몬 자동 실행 등록, Windows** (PROJ-56, ADR 0031). 작업 스케줄러 사용자 작업으로 등록한다
    (7.7절, ADR 0007). Settings 「시작 프로그램」 토글은 `autostart.Manager` 를 감싸면 되고,
    등록 상태를 `state.json` 에 두지 않으므로 토글의 진실원은 OS 서비스 관리자 하나다
 2. **Insights 경고 카드·제안** — 반복 실패 감지, 유사 프롬프트 탐지, 벤더 전환 분석

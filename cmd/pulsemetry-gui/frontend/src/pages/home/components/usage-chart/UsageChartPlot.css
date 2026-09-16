@@ -1,0 +1,12 @@
+.crosshair-motion.scope-ec91ct {
+  transform-box: view-box;
+  transform-origin: 0 0;
+  transition: transform 400ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crosshair-motion.scope-ec91ct {
+    transition: none;
+  }
+}
