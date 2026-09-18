@@ -56,9 +56,9 @@ export default function UsageChartPlot({
             })()}
           </Fragment>
         ))}
-        {layout.bars.map((bar, index) => (
+        {layout.bars.map((bar) => (
           <Fragment key={bar.index}>
-            {bar.segments.map((segment, index) => (
+            {bar.segments.map((segment) => (
               <Fragment key={segment.seriesIndex}>
                 {segment.value > 0 ? (
                   <>

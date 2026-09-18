@@ -1,10 +1,8 @@
 import type {
   ActivitySession,
-  FileChange,
   SessionState,
   StageStyle,
   StateStyle,
-  ToolCall,
   TurnDisplay,
   TurnKind,
   TurnSegment,

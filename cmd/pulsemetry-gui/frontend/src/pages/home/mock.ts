@@ -9,7 +9,6 @@ import type {
   BucketRung,
   BucketSet,
   ChartBucket,
-  HeroBar,
   HeroData,
   SeriesKey,
   UsageParts,
@@ -233,34 +232,6 @@ const VENDOR_META: Record<
 const MIN_PER_K = 3.73;
 // ── 히어로 집계 ──────────────────────────────────────────────────────────────
 
-/**
- * 라벨을 몇 개 걸러 보여줄지. 막대 개수가 아니라 실제로 들어갈 폭으로 정한다 —
- * 개수로 어림하면 긴 라벨("12월 31일")이 겹치거나 자리가 남는데도 지워진다.
- * 컬럼 폭은 렌더 시점에만 알 수 있어 컴포넌트가 재서 넘긴다.
- */
-function labelStep(labels: string[], colWidth: number, fontSize = 11): number {
-  if (colWidth <= 0) return 1;
-  const widest = labels.reduce(
-    (m, s) => Math.max(m, textWidth(s, fontSize)),
-    0,
-  );
-
-  if (widest === 0) return 1;
-
-  return Math.max(1, Math.ceil((widest + 6) / colWidth));
-}
-
-// 한글·CJK 는 글자당 약 1em, 그 외는 약 0.6em 으로 근사한다.
-function textWidth(s: string, fontSize: number): number {
-  let w = 0;
-
-  for (const ch of s) {
-    w += /[　-鿿가-힯]/.test(ch) ? fontSize : fontSize * 0.6;
-  }
-
-  return w;
-}
-
 export function heroData(start: string, end: string): HeroData {
   const bk = buildBuckets(start, end);
   const items = bk.items;
@@ -338,7 +309,7 @@ export function heroData(start: string, end: string): HeroData {
         }));
 
       return {
-        // 라벨 솎아내기는 컬럼 폭을 아는 렌더 시점에 정한다(labelStep).
+        // 라벨 솎아내기는 렌더 계층에서 정한다.
         label: shortLabel ? `${parseIso(b.key).getDate()}일` : b.label,
         values: [...b.parts],
         totalValue: total,

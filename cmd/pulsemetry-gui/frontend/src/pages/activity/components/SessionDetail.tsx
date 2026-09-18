@@ -52,7 +52,7 @@ export default function SessionDetail({
       setTurnSel(null);
       setFilesOpen(false);
     }
-  }, [session, position]);
+  }, [session, position, last?.id]);
 
   const shown = session ?? last;
   const d = shown ? detailDisplay(shown, position || lastPosition) : null;

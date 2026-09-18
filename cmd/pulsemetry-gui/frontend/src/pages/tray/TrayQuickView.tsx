@@ -6,7 +6,6 @@ import {
   bindRetry,
   noteFailure,
   noteSuccess,
-  reconnect,
   useReconnect,
 } from "$lib/domain/reconnect";
 import { isTrayVisible } from "$lib/ipc/app";
@@ -22,7 +21,7 @@ import TraySettingsMenu from "./components/TraySettingsMenu";
 import VendorLimits from "./components/VendorLimits";
 
 export default function TrayQuickView() {
-  useReconnect();
+  const { down } = useReconnect();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [quitOpen, setQuitOpen] = useState(false);
 
@@ -37,39 +36,41 @@ export default function TrayQuickView() {
   }));
   const [visible, setVisible] = useState(false);
   const tray = useTrayQuery(query, visible);
+  const { refetch } = tray;
   const refresh = useTrayRefreshMutation(query);
-  const visibilitySyncRef = useRef(0);
-
-  async function syncVisibility() {
-    const currentSync = ++visibilitySyncRef.current;
-    const current = await isTrayVisible();
-
-    // 마운트 조회와 show/hide 조회가 겹쳐도 늦게 끝난 과거 응답이 최신 상태를 덮지 않는다.
-    if (currentSync === visibilitySyncRef.current) setVisible(current);
-  }
 
   useEffect(() => {
+    let visibilitySync = 0;
+
+    async function syncVisibility() {
+      const currentSync = ++visibilitySync;
+      const current = await isTrayVisible();
+
+      // 마운트 조회와 show/hide 조회가 겹쳐도 늦게 끝난 과거 응답이 최신 상태를 덮지 않는다.
+      if (currentSync === visibilitySync) setVisible(current);
+    }
+
     void syncVisibility();
     const offShow = Events.On("tray:shown", () => {
       void syncVisibility();
       // 창 열기는 저장된 값을 즉시 읽기만 한다. 진행 중인 조회가 있으면 공유한다.
-      void tray.refetch({ cancelRefetch: false });
+      void refetch({ cancelRefetch: false });
     });
     const offHide = Events.On("tray:hidden", () => {
       void syncVisibility();
     });
 
     return () => {
-      visibilitySyncRef.current++;
+      visibilitySync++;
       offShow();
       offHide();
     };
-  }, [tray.refetch]);
+  }, [refetch]);
 
   const seenErrorAtRef = useRef(0);
   const seenDataAtRef = useRef(0);
 
-  useEffect(() => bindRetry(() => tray.refetch()), [tray.refetch]);
+  useEffect(() => bindRetry(() => refetch()), [refetch]);
 
   useEffect(() => {
     if (tray.errorUpdatedAt > seenErrorAtRef.current) {
@@ -80,7 +81,7 @@ export default function TrayQuickView() {
       seenDataAtRef.current = tray.dataUpdatedAt;
       noteSuccess();
     }
-  }, [tray.refetch, tray.errorUpdatedAt, tray.dataUpdatedAt]);
+  }, [tray.errorUpdatedAt, tray.dataUpdatedAt]);
 
   const fetching = tray.isFetching;
   const view = tray.data ? toTrayView(tray.data) : null;
@@ -96,7 +97,7 @@ export default function TrayQuickView() {
           observedAt={tray.data?.limits_observed_at ?? ""}
           trayState={shown?.monitoring.state}
           fetching={fetching}
-          disconnected={reconnect.down}
+          disconnected={down}
           onRefresh={async () => {
             // 헤더가 이 약속을 기다려 스피너 최소 표시 시간을 맞춘다. 스냅샷은 캐시로 들어가므로
             // (query/tray.ts) 여기서 받을 것이 없다.
@@ -115,7 +116,7 @@ export default function TrayQuickView() {
           </>
         ) : null}
         <main className="tray-scroll min-h-0 flex-1 overflow-y-auto">
-          {reconnect.down ? (
+          {down ? (
             <>
               <DaemonDown />
             </>

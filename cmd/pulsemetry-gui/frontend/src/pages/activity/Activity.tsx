@@ -3,7 +3,6 @@ import Input from "$lib/components/ui/Input";
 import Select from "$lib/components/ui/Select";
 import {
   addDays,
-  period,
   periodRangeText,
   toDate,
   usePeriod,
@@ -18,7 +17,7 @@ import SessionDetail from "./components/SessionDetail";
 import SessionTable from "./components/SessionTable";
 
 export default function Activity() {
-  usePeriod();
+  const { value: selectedPeriod } = usePeriod();
   const [visible, setVisible] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [vendor, setVendor] = useState("");
@@ -41,8 +40,10 @@ export default function Activity() {
 
   const request: ActivityQuery = useMemo(
     () => ({
-      since: Math.floor(toDate(period.value.start).getTime() / 1000),
-      until: Math.floor(addDays(toDate(period.value.end), 1).getTime() / 1000),
+      since: Math.floor(toDate(selectedPeriod.start).getTime() / 1000),
+      until: Math.floor(
+        addDays(toDate(selectedPeriod.end), 1).getTime() / 1000,
+      ),
       vendors: vendor ? [vendor] : [],
       projects: projectPath ? [projectPath] : [],
       status: status ? [status] : [],
@@ -50,10 +51,19 @@ export default function Activity() {
       limit: 50,
       cursor: { id: 0, running: false, sort_at: 0 },
     }),
-    [period.value.start, period.value.end, vendor, projectPath, status, text],
+    [
+      selectedPeriod.start,
+      selectedPeriod.end,
+      vendor,
+      projectPath,
+      status,
+      text,
+    ],
   );
   const list = useActivityQuery(request, visible);
   const detail = useActivityDetailQuery(selectedId, visible);
+  const { refetch: refetchList } = list;
+  const { refetch: refetchDetail } = detail;
   const sessions = (() => {
     // 페이지 사이에 세션이 마감돼 다시 나타나도 같은 행을 두 번 렌더링하지 않는다.
     const seen = new Set<number>();
@@ -122,9 +132,9 @@ export default function Activity() {
     const startedAt = Date.now();
 
     try {
-      const pending: Promise<unknown>[] = [list.refetch()];
+      const pending: Promise<unknown>[] = [refetchList()];
 
-      if (selectedId !== null) pending.push(detail.refetch());
+      if (selectedId !== null) pending.push(refetchDetail());
       await Promise.all(pending);
     } finally {
       const wait = MIN_SPIN_MS - (Date.now() - startedAt);
@@ -137,8 +147,8 @@ export default function Activity() {
   useEffect(() => {
     const shown = Events.On("main:shown", () => {
       setVisible(true);
-      void list.refetch();
-      if (selectedId !== null) void detail.refetch();
+      void refetchList();
+      if (selectedId !== null) void refetchDetail();
     });
     const hidden = Events.On("main:hidden", () => {
       setVisible(false);
@@ -148,7 +158,7 @@ export default function Activity() {
       shown();
       hidden();
     };
-  }, [selectedId, list.refetch, detail.refetch]);
+  }, [selectedId, refetchList, refetchDetail]);
 
   useWindowEvent("keydown", onKeydown);
 
@@ -160,7 +170,7 @@ export default function Activity() {
             Activity
           </h1>
           <span className="text-text-muted text-sm">
-            ({periodRangeText(period.value)})
+            ({periodRangeText(selectedPeriod)})
           </span>
 
           <button

@@ -1,7 +1,7 @@
 import QuitDialog from "$lib/components/dialog/QuitDialog";
 import Header from "$lib/components/shell/Header";
 import Nav from "$lib/components/shell/Nav";
-import { period, usePeriod } from "$lib/domain/period";
+import { usePeriod } from "$lib/domain/period";
 import type { AppSection } from "$lib/navigation";
 import { makeQueryClient } from "$lib/query/client";
 import { cssStyle, useWindowEvent } from "$lib/react-utils";
@@ -14,7 +14,7 @@ import SettingsModal from "./pages/settings/SettingsModal";
 import TrayQuickView from "./pages/tray/TrayQuickView";
 
 export default function App() {
-  usePeriod();
+  const { value: selectedPeriod } = usePeriod();
   const isTray =
     new URLSearchParams(window.location.search).get("view") === "tray";
   const [queryClient] = useState(makeQueryClient);
@@ -45,7 +45,7 @@ export default function App() {
       observer.observe(scroller.firstElementChild);
 
     return () => observer.disconnect();
-  }, [activeTab, period.value, scroller, syncFade]);
+  }, [activeTab, selectedPeriod, scroller, syncFade]);
 
   const maskStyle = (() => {
     if (!fadeTop && !fadeBottom) return "";

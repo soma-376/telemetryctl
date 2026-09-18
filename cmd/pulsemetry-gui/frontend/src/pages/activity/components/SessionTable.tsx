@@ -47,7 +47,7 @@ export default function SessionTable({
           </>
         ) : (
           <>
-            {running.map((row, index) => (
+            {running.map((row) => (
               <Fragment key={row.session.id}>
                 <SessionRow
                   session={row.session}
