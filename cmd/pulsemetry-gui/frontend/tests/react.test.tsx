@@ -24,6 +24,7 @@ const api = vi.hoisted(() => ({
   ActivitySession: vi.fn(),
   Tray: vi.fn(),
   RefreshTray: vi.fn(),
+  Updates: vi.fn(),
   GetAppInfo: vi.fn(),
   IsTrayVisible: vi.fn(),
   listeners: new Map<string, () => void>(),
@@ -111,6 +112,16 @@ beforeEach(() => {
   api.listeners.clear();
   api.GetAppInfo.mockResolvedValue({ name: "Pulsemetry", version: "test" });
   api.IsTrayVisible.mockResolvedValue(false);
+
+  api.Updates.mockResolvedValue({
+    status: "disabled",
+    current_version: "test",
+    latest_version: "",
+    update_available: null,
+    last_attempt_at: "",
+    last_success_at: "",
+  });
+
   api.Activity.mockResolvedValue({ rows: [row(1), row(2)], has_more: false });
 
   api.ActivitySession.mockImplementation((id: number) =>
@@ -125,7 +136,7 @@ describe("React 전환 후 화면과 조회 수명주기", () => {
     const view = render(<App />);
 
     fireEvent.click(screen.getByTitle("설정"));
-    await screen.findByText(/test/);
+    await screen.findByText(/^Pulsemetrytest$/);
     expect(api.GetAppInfo).toHaveBeenCalledTimes(1);
     fireEvent.keyDown(window, { key: "Escape" });
     fireEvent.click(screen.getByTitle("종료"));

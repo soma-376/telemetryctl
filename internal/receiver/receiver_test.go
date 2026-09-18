@@ -189,6 +189,46 @@ func TestActivityAPIRequiresAuthBeforeDelegating(t *testing.T) {
 	}
 }
 
+func TestUpdatesAPIRequiresLocalAuthAndRejectsPreflight(t *testing.T) {
+	calls := 0
+	rc, _, _ := newTestReceiver(t, func(opt *Options) {
+		opt.LocalAPI = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			calls++
+			w.WriteHeader(http.StatusOK)
+		})
+	})
+	for _, tc := range []struct {
+		name, method, path string
+		token, localHeader bool
+		want               int
+	}{
+		{"인증 없음", "GET", "/v1/updates", false, false, 401},
+		{"토큰만", "GET", "/v1/updates", true, false, 401},
+		{"헤더만", "GET", "/v1/updates", false, true, 401},
+		{"preflight", "OPTIONS", "/v1/updates", true, true, 405},
+		{"하위 경로 미개방", "GET", "/v1/updates/extra", true, true, 404},
+		{"정상", "GET", "/v1/updates", true, true, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(tc.method, tc.path, nil)
+			if tc.token {
+				r.Header.Set("Authorization", "Bearer "+testToken)
+			}
+			if tc.localHeader {
+				r.Header.Set(LocalHeader, LocalHeaderValue)
+			}
+			w := do(rc, r)
+			if w.Code != tc.want {
+				t.Fatalf("status=%d want=%d", w.Code, tc.want)
+			}
+			assertNoCORS(t, w)
+		})
+	}
+	if calls != 1 {
+		t.Fatalf("인증되지 않은 요청이 로컬 API에 위임됨: %d", calls)
+	}
+}
+
 func TestUnsupportedMediaType(t *testing.T) {
 	rc, _, _ := newTestReceiver(t, nil)
 

@@ -8,6 +8,7 @@ import (
 	"github.com/your-org/pulsemetry/internal/hostenv"
 	"github.com/your-org/pulsemetry/internal/localapi"
 	"github.com/your-org/pulsemetry/internal/store"
+	"github.com/your-org/pulsemetry/internal/updatecheck"
 )
 
 // Dashboard 는 프런트엔드가 부를 수 있는 Go 함수의 목록이다. Wails 가 공개 메서드를
@@ -36,6 +37,11 @@ func NewDashboard() *Dashboard {
 
 // ServiceName 은 Wails 가 로그에 쓰는 이름이다. 없으면 타입 이름으로 짓는다.
 func (d *Dashboard) ServiceName() string { return "Dashboard" }
+
+// Updates는 데몬이 마지막으로 확인한 업데이트 상태만 조회한다.
+func (d *Dashboard) Updates(ctx context.Context) (updatecheck.Snapshot, error) {
+	return d.ipcClient.Updates(ctx)
+}
 
 func (d *Dashboard) Activity(ctx context.Context, q activity.Query) (activity.Page, error) {
 	return d.ipcClient.Activity(ctx, q)

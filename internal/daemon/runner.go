@@ -46,6 +46,7 @@ import (
 	"github.com/your-org/pulsemetry/internal/receiver"
 	"github.com/your-org/pulsemetry/internal/runtimeinfo"
 	"github.com/your-org/pulsemetry/internal/store"
+	"github.com/your-org/pulsemetry/internal/updatecheck"
 	"github.com/your-org/pulsemetry/internal/vendorlimit"
 )
 
@@ -110,6 +111,9 @@ const (
 	// 퍼센트가 최대 2%p 뒤처지는 정도다. 지금 당장 정확한 값이 필요하면 새로고침을 누른다.
 	DefaultLimitInterval = 5 * time.Minute
 
+	// DefaultUpdateInterval 은 등록 서버의 업데이트 확인 주기다.
+	DefaultUpdateInterval = 24 * time.Hour
+
 	// pipelineQueue 는 소유자 고루틴 앞의 커맨드 버퍼다. 수신기 워커 2개 + 틱들이
 	// 잠깐 겹치는 것만 흡수하면 되므로 작게 둔다. 진짜 버퍼는 수신기 큐다.
 	pipelineQueue = 8
@@ -145,6 +149,7 @@ type Options struct {
 	TokenInterval   time.Duration
 	ShutdownTimeout time.Duration
 	LimitInterval   time.Duration
+	UpdateInterval  time.Duration
 	BatchEvents     int
 
 	// IngestToken 은 loopback ingest 토큰이다. 비우면 receiver.EnsureToken 이
@@ -159,6 +164,8 @@ type Options struct {
 	VendorLimitCollector vendorlimit.VendorCollector
 	// CodexThreadReader 는 테스트가 실제 App Server를 띄우지 않게 하는 seam 이다.
 	CodexThreadReader codexapp.ThreadReader
+	// UpdateChecker 는 실제 등록 서버를 호출하지 않는 테스트용 조회 경계다.
+	UpdateChecker updatecheck.Checker
 
 	// Ready 는 기동이 끝나 요청을 받을 수 있게 된 순간 한 번 호출된다.
 	// runtime.json 에 쓴 것과 같은 값을 준다.
@@ -191,6 +198,9 @@ func (o Options) normalized() (Options, error) {
 	}
 	if o.LimitInterval <= 0 {
 		o.LimitInterval = DefaultLimitInterval
+	}
+	if o.UpdateInterval <= 0 {
+		o.UpdateInterval = DefaultUpdateInterval
 	}
 	if o.BatchEvents <= 0 {
 		o.BatchEvents = DefaultBatchEvents
@@ -239,6 +249,8 @@ type daemon struct {
 	codex          *codexapp.Client
 	codexTitles    *titleRefresher
 	claudeTitles   *titleRefresher
+	updates        *updatecheck.Service
+	updatesDone    chan struct{}
 	// query 는 GUI 조회에 쓰는 read-only 핸들이다. 쓰기 커넥션(db)과 별개다 —
 	// dashboard 는 mode=ro 를 강제하고, 조회가 쓰기를 할 수 없다는 것이 그 계약이다.
 	query *dashboard.Service
@@ -263,6 +275,7 @@ func (d *daemon) start(ctx context.Context) error {
 		return fmt.Errorf("pulsemetry is not enrolled: state file not found at %s", d.opts.StatePath)
 	}
 	d.state = state
+	d.initUpdates()
 	if drift, err := installer.InspectManaged(d.opts.StatePath, state); err != nil {
 		d.log.Printf("경고: 설정 drift 검사 실패: %v", err)
 	} else {
@@ -391,6 +404,7 @@ func (d *daemon) start(ctx context.Context) error {
 	d.log.Printf("데몬 기동: installation_id=%s db=%s 보존=%d일 원문보관=%t 수신=%t 전달=%t",
 		state.InstallationID, db.Path(), store.DefaultRetentionDays, storeContent,
 		!d.opts.DisableReceiver, d.fwd != nil)
+	d.startUpdates(ctx)
 
 	if d.opts.Ready != nil {
 		d.opts.Ready(info)
@@ -501,7 +515,7 @@ func (d *daemon) startReceiver() error {
 		Logger:     d.log,
 		Decode:     otlpdecode.Options{InstallationID: d.state.InstallationID, SkipPayload: !d.state.Local.StoreContent || d.opts.NoStoreContent},
 		Now:        d.opts.Now,
-		LocalAPI:   localapi.WithActivity(localapi.NewServer(d.limits, tray.NewBuilder(d.query), d.pipe), d.query),
+		LocalAPI:   localapi.WithUpdates(localapi.WithActivity(localapi.NewServer(d.limits, tray.NewBuilder(d.query), d.pipe), d.query), d.updates),
 	})
 	if err != nil {
 		return fmt.Errorf("로컬 수신기 기동: %w", err)
@@ -679,6 +693,9 @@ func (d *daemon) warmToken(ctx context.Context) {
 // 각 단계는 전체 예산(ShutdownTimeout)을 1/3 씩 나눠 쓰고, 앞 단계가 남긴 시간은
 // 뒤로 넘어간다. 어느 단계도 무한정 기다리지 않는다 (§5.4).
 func (d *daemon) shutdown() {
+	if d.cancel != nil {
+		d.cancel()
+	}
 	defer func() {
 		if d.lease != nil {
 			_ = d.lease.Close()
@@ -721,6 +738,7 @@ func (d *daemon) shutdown() {
 		}
 		cancel()
 	}
+	d.waitUpdates(overall)
 
 	if d.query != nil {
 		if err := d.query.Stop(); err != nil {

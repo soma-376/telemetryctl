@@ -374,6 +374,7 @@ func (s *Service) Stop() error            // ServiceShutdown 자리
 | Insights MCP 카드 | `MCPUsage(n)` |
 | Settings 저장소·데몬 상태 | `Status()` |
 | Tray 스냅샷 (상태·마지막 갱신·활성/최근 세션·벤더 한도·가장 빠듯한 한도) | `GET /v1/tray` · `POST /v1/tray/refresh` |
+| Settings 데몬 업데이트 · CLI `status` 업데이트 상태 | `GET /v1/updates` |
 | 세션의 작업 폴더 열기 | `Service.OpenWorkspace(sessionID)` |
 
 ### 6.1.2 Activity 목록 (`Activity`, PROJ-90)
@@ -781,6 +782,36 @@ SQLite에서 조립한 트레이 스냅샷을 받는다. 사용자가 새로고�
 `POST /v1/tray/refresh`를 보낸다. 데몬은 두 벤더 조회와 SQLite upsert를 마친 뒤 갱신된
 트레이 스냅샷을 `200`으로 반환한다. 두 요청 모두 기존 local ingest token과
 `X-Pulsemetry-Local: 1`을 재사용한다. GUI 프로세스는 SQLite를 직접 열지 않는다(ADR 0013).
+
+#### 데몬 업데이트 확인 (PROJ-162)
+
+`internal/updatecheck`는 enroll 서버의 업데이트 정보를 조회하고 마지막 성공 결과를 메모리에
+보관한다. 데몬 시작 직후와 24시간마다 독립 워커가 순차 조회하며, 요청 제한은 10초다.
+종료 신호는 진행 중인 요청도 취소한다. 서버 주소가 없으면 확인을 비활성화한다.
+
+외부 요청은 `state.ServerURL`에 실행 바이너리의 `installer.Version`과 OS·아키텍처를 보낸다.
+설치 당시의 `state.InstallerVersion`이나 GUI 버전을 사용하지 않는다. 경로·요청·응답의 정본은
+[문서 허브의 업데이트 계약](https://github.com/soma-376/docs/blob/main/contracts/daemon-updates.md)이다.
+계약은 `Proposed`이며 backend의 최신 버전 선정 원천과 판정 규칙은 합의 전이다.
+클라이언트는 서버의 업데이트 여부를 사용하고 버전 문자열을 다시 비교하지 않는다.
+
+`GET /v1/updates`는 기존 로컬 인증을 거쳐 저장된 결과만 반환한다. 외부 요청과 SQLite 접근을
+일으키지 않는다. GUI는 Wails의 `Dashboard.Updates`를 통해 설정을 열 때와 열린 동안 60초마다
+읽고, CLI는 `pulsemetry status`에서 DB 상태와 독립적으로 읽는다. 다운로드·설치나 수동 외부
+확인 경로는 제공하지 않는다.
+
+| 로컬 응답 필드 | 의미 |
+|---|---|
+| `status` | `disabled`(서버 없음), `checking`, `ready`, `unsupported`(서버 404), `error` |
+| `current_version` | 실행 중인 데몬 버전 |
+| `latest_version` | 마지막 성공 응답의 서버 지정 버전. 첫 성공 전에는 빈 문자열 |
+| `update_available` | 마지막 성공 응답의 판정. 첫 성공 전에는 `null` |
+| `last_attempt_at` · `last_success_at` | 마지막 요청 시작·성공 시각. UTC RFC3339이며 해당 기록이 없으면 빈 문자열 |
+
+모든 필드는 응답에 포함한다. 실패하면 마지막 성공값과 시각을 보존하고 실패 상태를 함께
+표시한다. 첫 확인 전·실패·미지원을 최신 상태로 표시하지 않는다. 재시도는 다음 정규 주기에
+수행하며 재시작하면 메모리 결과가 초기화된다. GUI가 데몬에 연결하지 못해도 마지막 화면
+캐시를 유지하되 연결 실패를 표시한다.
 
 #### 절전 복귀 시 트레이 표시 상태를 이벤트만으로 복구하지 않는다
 

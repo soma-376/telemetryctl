@@ -9,8 +9,10 @@ import RefreshIcon from "$lib/icons/RefreshIcon";
 import SlidersIcon from "$lib/icons/SlidersIcon";
 import XIcon from "$lib/icons/XIcon";
 import { getAppInfo, type AppInfo } from "$lib/ipc/app";
+import { useUpdatesQuery } from "$lib/query/updates";
 import { cssStyle, useWindowEvent } from "$lib/react-utils";
 import { Fragment, useEffect, useState } from "react";
+import DaemonUpdates from "./DaemonUpdates";
 import {
   COLLECTION,
   CONNECTIONS,
@@ -29,6 +31,7 @@ export default function SettingsModal({
   open: boolean;
   onClose: () => void;
 }) {
+  const updates = useUpdatesQuery(open);
   const [toggles, setToggles] = useState(PREF_DEFAULTS);
   const [appInfo, setAppInfo] = useState<AppInfo>({
     name: "Pulsemetry",
@@ -211,6 +214,10 @@ export default function SettingsModal({
                     </div>
                   </Fragment>
                 ))}
+                <DaemonUpdates
+                  snapshot={updates.data}
+                  unavailable={updates.isError}
+                />
                 <div className="text-text-muted font-semibold text-[11.5px] tracking-[0.02em] m-[22px_0_2px]">
                   연결 상태
                 </div>

@@ -43,19 +43,11 @@ export const PREFS: Pref[] = [
     desc: "반복 실패·연결 끊김을 알려줍니다",
     kind: "toggle",
   },
-  {
-    key: "update",
-    icon: "⇩",
-    name: "자동 업데이트",
-    desc: "새 버전을 백그라운드에서 설치",
-    kind: "toggle",
-  },
 ];
 
 export const PREF_DEFAULTS: Record<string, boolean> = {
   launch: true,
   notify: true,
-  update: false,
 };
 
 export const CONNECTIONS: ConnectionRow[] = [

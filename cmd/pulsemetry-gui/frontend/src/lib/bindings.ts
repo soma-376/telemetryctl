@@ -40,6 +40,7 @@ export type {
   Row as ActivityRow,
   Detail as ActivityDetail,
 } from "../../bindings/github.com/your-org/pulsemetry/internal/dashboard/activity";
+export type { Snapshot as UpdateSnapshot } from "../../bindings/github.com/your-org/pulsemetry/internal/updatecheck";
 export type {
   AppInfo,
   LimitWindow,
