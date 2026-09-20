@@ -1,4 +1,4 @@
-import { QueryClient } from "@tanstack/svelte-query";
+import { QueryClient } from "@tanstack/react-query";
 
 // 앱당 하나인 조회 캐시. 캐시·신선도·폴링·로딩/오류 상태는 전부 여기 위에서 돈다 (ADR 0015).
 //

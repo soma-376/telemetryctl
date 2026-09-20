@@ -23,9 +23,9 @@ const (
 	// perSourceFactor 는 출처별로 얼마나 많이 긁어올지다. 세 출처가 같은 세션을 가리키는 일이
 	// 흔해서 최종 개수보다 넉넉히 받아야 limit 를 채운다.
 	perSourceFactor = 4
-	// maxSearchRunes 는 받아들이는 검색어 길이다. 붙여넣기 한 번으로 수천 자짜리 LIKE
+	// MaxSearchRunes 는 받아들이는 검색어 길이다. 붙여넣기 한 번으로 수천 자짜리 LIKE
 	// 패턴이 생기면 전체 스캔이 몇 초씩 걸린다.
-	maxSearchRunes = 128
+	MaxSearchRunes = 128
 	// snippetContextRunes 는 발췌에서 일치 지점 앞뒤로 보여 줄 룬 수다.
 	snippetContextRunes = 40
 )
@@ -75,7 +75,7 @@ type Hit struct {
 // 빈 질의는 에러가 아니라 빈 결과다. 검색창을 지우는 동작이 매번 에러 토스트를 띄울 이유가 없다.
 func (r *Reader) Search(ctx context.Context, q SearchQuery) ([]Hit, error) {
 	out := []Hit{}
-	text := capRunes(strings.TrimSpace(q.Text), maxSearchRunes)
+	text := CapRunes(strings.TrimSpace(q.Text), MaxSearchRunes)
 	if text == "" {
 		return out, nil
 	}
@@ -84,9 +84,9 @@ func (r *Reader) Search(ctx context.Context, q SearchQuery) ([]Hit, error) {
 		return out, nil
 	}
 
-	limit := clampLimit(q.Limit, defaultSearchLimit, maxSearchLimit)
+	limit := ClampLimit(q.Limit, defaultSearchLimit, maxSearchLimit)
 	scan := limit * perSourceFactor
-	pattern := likePattern(text)
+	pattern := LikePattern(text)
 
 	acc := newHitAccumulator()
 	if err := searchSessionColumn(ctx, db, searchTitleSQL, "제목 검색", SourceTitle, pattern, scan, acc); err != nil {
@@ -119,17 +119,17 @@ ORDER BY s.started_at DESC LIMIT ?`
 
 // searchSessionColumn 은 sessions 의 한 컬럼을 뒤져 세션 id 만 거둔다. 두 출처가 질의문과
 // 출처 이름만 다르고 나머지는 같아서 하나로 묶었다.
-func searchSessionColumn(ctx context.Context, db sqlQuerier, query, op, source, pattern string, limit int, acc *hitAccumulator) (err error) {
+func searchSessionColumn(ctx context.Context, db SQLQuerier, query, op, source, pattern string, limit int, acc *hitAccumulator) (err error) {
 	rows, err := db.QueryContext(ctx, query, pattern, limit)
 	if err != nil {
-		return queryErr(op, err)
+		return QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	for rows.Next() {
 		var id int64
 		if serr := rows.Scan(&id); serr != nil {
-			return queryErr(op, serr)
+			return QueryErr(op, serr)
 		}
 		acc.mark(id, source)
 	}
@@ -146,13 +146,13 @@ JOIN turns t ON t.id = c.turn_id
 WHERE f.file_path LIKE ? ESCAPE '\'
 ORDER BY c.called_at DESC LIMIT ?`
 
-func searchFiles(ctx context.Context, db sqlQuerier, pattern string, limit int, acc *hitAccumulator) (err error) {
+func searchFiles(ctx context.Context, db SQLQuerier, pattern string, limit int, acc *hitAccumulator) (err error) {
 	const op = "파일 경로 검색"
 	rows, err := db.QueryContext(ctx, searchFileSQL, pattern, limit)
 	if err != nil {
-		return queryErr(op, err)
+		return QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	for rows.Next() {
 		var (
@@ -160,7 +160,7 @@ func searchFiles(ctx context.Context, db sqlQuerier, pattern string, limit int, 
 			path string
 		)
 		if serr := rows.Scan(&id, &path); serr != nil {
-			return queryErr(op, serr)
+			return QueryErr(op, serr)
 		}
 		acc.mark(id, SourceFile)
 		acc.addFile(id, baseName(path))
@@ -178,13 +178,13 @@ FROM turns t
 WHERE t.prompt_text LIKE ? ESCAPE '\'
 ORDER BY t.started_at DESC LIMIT ?`
 
-func searchContent(ctx context.Context, db sqlQuerier, pattern, text string, limit int, acc *hitAccumulator) (err error) {
+func searchContent(ctx context.Context, db SQLQuerier, pattern, text string, limit int, acc *hitAccumulator) (err error) {
 	const op = "원문 검색"
 	rows, err := db.QueryContext(ctx, searchContentSQL, pattern, limit)
 	if err != nil {
-		return queryErr(op, err)
+		return QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	for rows.Next() {
 		var (
@@ -192,7 +192,7 @@ func searchContent(ctx context.Context, db sqlQuerier, pattern, text string, lim
 			body string
 		)
 		if serr := rows.Scan(&id, &body); serr != nil {
-			return queryErr(op, serr)
+			return QueryErr(op, serr)
 		}
 		acc.mark(id, SourceContent)
 		acc.addSnippet(id, snippetOf(body, text))
@@ -256,7 +256,7 @@ func (a *hitAccumulator) addSnippet(id int64, snippet string) {
 // 세션 행이 없는 히트도 버리지 않는다. 원문·파일 변경이 세션보다 먼저 지워지는 일은 보존
 // 정책상 없지만(삭제는 자식에서 부모 순서다), 그래도 결과에서 조용히 사라지는 것보다
 // 제목 없는 한 줄로 보이는 편이 진단 가능하다.
-func (a *hitAccumulator) resolve(ctx context.Context, db sqlQuerier, q SearchQuery, limit int) (hits []Hit, err error) {
+func (a *hitAccumulator) resolve(ctx context.Context, db SQLQuerier, q SearchQuery, limit int) (hits []Hit, err error) {
 	const op = "검색 결과 조회"
 
 	ids := make([]any, len(a.order))
@@ -264,13 +264,13 @@ func (a *hitAccumulator) resolve(ctx context.Context, db sqlQuerier, q SearchQue
 		ids[i] = id
 	}
 	query := `SELECT s.id, s.session_key, s.vendor_id, COALESCE(s.title,''),
-	  COALESCE(s.started_at,0), ` + statusExpr + `, COALESCE(s.workspace_path,'')
-FROM sessions s WHERE s.id IN (` + placeholders(len(ids)) + `)`
+	  COALESCE(s.started_at,0), ` + StatusExpr + `, COALESCE(s.workspace_path,'')
+FROM sessions s WHERE s.id IN (` + Placeholders(len(ids)) + `)`
 	rows, err := db.QueryContext(ctx, query, ids...)
 	if err != nil {
-		return nil, queryErr(op, err)
+		return nil, QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	for rows.Next() {
 		var (
@@ -279,7 +279,7 @@ FROM sessions s WHERE s.id IN (` + placeholders(len(ids)) + `)`
 			started                               int64
 		)
 		if serr := rows.Scan(&id, &key, &vendor, &title, &started, &status, &workspace); serr != nil {
-			return nil, queryErr(op, serr)
+			return nil, QueryErr(op, serr)
 		}
 		h := a.byID[id]
 		if h == nil {
@@ -315,7 +315,7 @@ FROM sessions s WHERE s.id IN (` + placeholders(len(ids)) + `)`
 
 // ── 입력 정제와 발췌 ────────────────────────────────────────────────────────
 
-// likePattern 은 LIKE 부분 일치 패턴을 만든다.
+// LikePattern 은 LIKE 부분 일치 패턴을 만든다.
 //
 // `%` 와 `_` 는 LIKE 의 와일드카드다. 사용자가 친 `_test` 를 그대로 넣으면 `_` 가 "아무 글자
 // 하나" 로 읽혀 `atest`·`btest` 까지 걸린다. ESCAPE '\' 와 짝을 이룬다 — 질의문에서 ESCAPE 를
@@ -323,14 +323,14 @@ FROM sessions s WHERE s.id IN (` + placeholders(len(ids)) + `)`
 //
 // FTS5 시절과 달리 사용자 입력이 **질의 언어로 해석되지 않는다.** LIKE 의 오른쪽은 그냥
 // 문자열이라 연산자도 괄호도 없고, 값은 전부 바인딩되므로 정제할 것은 와일드카드뿐이다.
-func likePattern(s string) string {
+func LikePattern(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return "%" + r.Replace(s) + "%"
 }
 
-// capRunes 는 룬 기준으로 자른다. 바이트로 자르면 한글 3바이트 중간에서 끊겨 뒤따르는
+// CapRunes 는 룬 기준으로 자른다. 바이트로 자르면 한글 3바이트 중간에서 끊겨 뒤따르는
 // LIKE 패턴에 깨진 룬이 들어간다 (session/title.go 의 같은 이름 함수와 같은 이유).
-func capRunes(s string, limit int) string {
+func CapRunes(s string, limit int) string {
 	r := []rune(s)
 	if limit <= 0 || len(r) <= limit {
 		return s

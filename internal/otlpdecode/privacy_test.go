@@ -31,6 +31,7 @@ var localOnlyFields = []string{
 	"UserAccountID", // event.Attributes — sessions.user_account_id
 	"ErrorMessage",  // event.Measures  — tool_calls.error_message
 	"RawPath",       // otlpdecode.Target — file_changes.file_path
+	"RenamedFrom",   // otlpdecode.Target — file_changes.renamed_from (ADR 0023)
 }
 
 // TestNoFullPathsInDecodedEvents 는 계획서가 "가장 중요한 테스트" 로 지목한 것이다.

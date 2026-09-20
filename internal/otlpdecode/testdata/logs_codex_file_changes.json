@@ -1,0 +1,263 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "codex_cli_rs"
+            }
+          }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "logRecords": [
+            {
+              "timeUnixNano": "1789142400000000000",
+              "attributes": [
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.tool_decision"
+                  }
+                },
+                {
+                  "key": "conversation.id",
+                  "value": {
+                    "stringValue": "patch-session"
+                  }
+                },
+                {
+                  "key": "call_id",
+                  "value": {
+                    "stringValue": "patch-1"
+                  }
+                },
+                {
+                  "key": "tool_name",
+                  "value": {
+                    "stringValue": "apply_patch"
+                  }
+                },
+                {
+                  "key": "cwd",
+                  "value": {
+                    "stringValue": "C:\\work\\project"
+                  }
+                },
+                {
+                  "key": "decision",
+                  "value": {
+                    "stringValue": "accept"
+                  }
+                }
+              ]
+            },
+            {
+              "timeUnixNano": "1789142400000000000",
+              "attributes": [
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.tool_result"
+                  }
+                },
+                {
+                  "key": "conversation.id",
+                  "value": {
+                    "stringValue": "patch-session"
+                  }
+                },
+                {
+                  "key": "call_id",
+                  "value": {
+                    "stringValue": "patch-1"
+                  }
+                },
+                {
+                  "key": "tool_name",
+                  "value": {
+                    "stringValue": "apply_patch"
+                  }
+                },
+                {
+                  "key": "cwd",
+                  "value": {
+                    "stringValue": "C:\\work\\project"
+                  }
+                },
+                {
+                  "key": "success",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "arguments",
+                  "value": {
+                    "stringValue": "*** Begin Patch\n*** Add File: src/new.go\n+hello\n*** Update File: src/existing.go\n@@\n-old\n+new\n*** Delete File: src/old.go\n*** Update File: src/before.go\n*** Move to: src/after.go\n@@\n-old\n+new\n*** End Patch"
+                  }
+                },
+                {
+                  "key": "output",
+                  "value": {
+                    "stringValue": "Success. Updated files."
+                  }
+                }
+              ]
+            },
+            {
+              "timeUnixNano": "1789142400000000000",
+              "attributes": [
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.tool_result"
+                  }
+                },
+                {
+                  "key": "conversation.id",
+                  "value": {
+                    "stringValue": "patch-session"
+                  }
+                },
+                {
+                  "key": "call_id",
+                  "value": {
+                    "stringValue": "failed"
+                  }
+                },
+                {
+                  "key": "tool_name",
+                  "value": {
+                    "stringValue": "apply_patch"
+                  }
+                },
+                {
+                  "key": "cwd",
+                  "value": {
+                    "stringValue": "C:\\work\\project"
+                  }
+                },
+                {
+                  "key": "success",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "arguments",
+                  "value": {
+                    "stringValue": "*** Begin Patch\n*** Add File: src/new.go\n+hello\n*** Update File: src/existing.go\n@@\n-old\n+new\n*** Delete File: src/old.go\n*** Update File: src/before.go\n*** Move to: src/after.go\n@@\n-old\n+new\n*** End Patch"
+                  }
+                },
+                {
+                  "key": "output",
+                  "value": {
+                    "stringValue": "Success. Updated files."
+                  }
+                }
+              ]
+            },
+            {
+              "timeUnixNano": "1789142400000000000",
+              "attributes": [
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.tool_result"
+                  }
+                },
+                {
+                  "key": "conversation.id",
+                  "value": {
+                    "stringValue": "patch-session"
+                  }
+                },
+                {
+                  "key": "call_id",
+                  "value": {
+                    "stringValue": "missing"
+                  }
+                },
+                {
+                  "key": "tool_name",
+                  "value": {
+                    "stringValue": "apply_patch"
+                  }
+                },
+                {
+                  "key": "cwd",
+                  "value": {
+                    "stringValue": "C:\\work\\project"
+                  }
+                },
+                {
+                  "key": "success",
+                  "value": {
+                    "boolValue": true
+                  }
+                }
+              ]
+            },
+            {
+              "timeUnixNano": "1789142400000000000",
+              "attributes": [
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.tool_result"
+                  }
+                },
+                {
+                  "key": "conversation.id",
+                  "value": {
+                    "stringValue": "patch-session"
+                  }
+                },
+                {
+                  "key": "call_id",
+                  "value": {
+                    "stringValue": "invalid"
+                  }
+                },
+                {
+                  "key": "tool_name",
+                  "value": {
+                    "stringValue": "apply_patch"
+                  }
+                },
+                {
+                  "key": "cwd",
+                  "value": {
+                    "stringValue": "C:\\work\\project"
+                  }
+                },
+                {
+                  "key": "success",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "arguments",
+                  "value": {
+                    "stringValue": "unsupported patch"
+                  }
+                },
+                {
+                  "key": "output",
+                  "value": {
+                    "stringValue": "Success. Updated files."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

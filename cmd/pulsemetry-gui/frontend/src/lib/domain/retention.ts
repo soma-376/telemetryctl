@@ -1,4 +1,4 @@
-import { addDays, isoDate } from "./period.svelte";
+import { addDays, isoDate } from "./period";
 
 export const RETAIN_DAYS = 400;
 export const HOURLY_DAYS = 90;

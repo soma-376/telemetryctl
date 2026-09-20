@@ -1,5 +1,37 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "Pretendard Variable";
+  src: url("/fonts/pretendard/PretendardVariable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/jetbrains-mono/JetBrainsMono-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/jetbrains-mono/JetBrainsMono-Medium.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/jetbrains-mono/JetBrainsMono-SemiBold.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
 @theme {
   /* ── Page width: Overview v2 기준 ─────────────────────
      본문·헤더·내비 공통 폭. 좌우 패딩은 32px 고정. */
@@ -68,12 +100,15 @@
   --color-ramp-3: #c79a5b;
   --color-ramp-4: #6b5333;
 
-  --font-sans: "Helvetica Neue", Helvetica, "Apple SD Gothic Neo",
+  --font-sans:
+    "Pretendard Variable", "Helvetica Neue", Helvetica, "Apple SD Gothic Neo",
     "Malgun Gothic", Arial, sans-serif;
+  --font-mono:
+    "JetBrains Mono", "Pretendard Variable", ui-monospace, SFMono-Regular,
+    Menlo, monospace;
 }
 
 @layer base {
-
   html,
   body {
     margin: 0;
@@ -204,5 +239,56 @@
   100% {
     transform: translateY(12px) scaleX(0.28) scaleY(0.1) skewX(-7deg);
     opacity: 0;
+  }
+}
+/* ── 동작 줄이기 (prefers-reduced-motion) ───────────────────
+   OS 접근성 설정이다. 전정기관 장애가 있으면 화면의 움직임이 실제로 어지럼증을
+   유발하고, 편두통 유발 요인이기도 하다. WCAG SC 2.2.2 는 5초 넘게 자동 재생되는
+   움직임에 정지 수단을 요구한다(Level A) — Dot 의 livePulse 가 infinite 라 여기 걸린다.
+
+   0 이 아니라 0.01ms 인 이유: 0 이면 animationend·transitionend 가 발화하지 않아
+   그 이벤트를 기다리는 코드가 멈춘다. 사실상 즉시 끝나면서 이벤트는 살려 둔다.
+
+   상세 패널은 usePresence에서도 모션 감소 설정을 확인한다. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+/* React 포털은 닫는 동안 마지막 세션을 유지한다. */
+.session-overlay > button {
+  transition: opacity 180ms ease-out;
+}
+.session-sheet {
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: session-enter 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.session-overlay[data-open="false"] {
+  pointer-events: none;
+}
+.session-overlay[data-open="false"] > button {
+  opacity: 0;
+}
+.session-overlay[data-open="false"] .session-sheet {
+  transform: translateX(100%);
+}
+@keyframes session-enter {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-sheet,
+  .session-overlay > button {
+    transition: none;
+    animation: none;
   }
 }

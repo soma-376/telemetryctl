@@ -265,10 +265,14 @@ func autostartSummary(st autostart.Status) string {
 }
 
 func autostartLabelFor(kind autostart.Kind) string {
-	if kind == autostart.KindSystemdUser {
+	switch kind {
+	case autostart.KindSystemdUser:
 		return autostart.UnitName
+	case autostart.KindTaskScheduler:
+		return autostart.TaskName
+	default:
+		return autostart.Label
 	}
-	return autostart.Label
 }
 
 // autostartArgs 는 유닛에 구울 데몬 인자를 만든다.
@@ -345,7 +349,7 @@ type autostartHint struct {
 	Registered bool
 	Kind       autostart.Kind
 	LogPath    string
-	// Unsupported 는 이 호스트에서 자동 실행을 등록할 수 없다는 뜻이다 (windows·비-systemd).
+	// Unsupported 는 이 호스트에서 자동 실행을 등록할 수 없다는 뜻이다 (비-systemd 리눅스 등).
 	Unsupported bool
 }
 

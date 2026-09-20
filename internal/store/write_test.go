@@ -56,7 +56,7 @@ func TestWriteCreatesParentChain(t *testing.T) {
 	if want := evrec("claude_code.user_prompt", baseTime, 0).Event.DedupKey(); hash != want {
 		t.Errorf("record_hash = %q, want %q", hash, want)
 	}
-	// payload 는 NULL 이다. 원본 OTLP 를 붙들고 있는 경로가 없다 (ADR 0002·0003).
+	// 이 픽스처는 payload를 전달하지 않아 NULL이다.
 	if payload != nil {
 		t.Errorf("payload = %v, want NULL", payload)
 	}

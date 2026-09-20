@@ -48,11 +48,11 @@ import (
 //  2. 같은 장비에서 위 요청을 직접 던져(`curl -H "Authorization: Bearer $(jq -r
 //     '.claudeAiOauth.accessToken' ~/.claude/.credentials.json)" -H 'anthropic-beta:
 //     oauth-2025-04-20' https://api.anthropic.com/api/oauth/usage`) 두 숫자가 같은지 본다.
+//     맥에는 그 파일이 없다 — 토큰을 꺼내는 방법은 claude_credentials.go 를 본다.
 //  3. 다르면 실제 경로·필드명을 이 주석과 claudeUsageResponse 에 반영한다.
 //
-// 확실하지 않은 것: `utilization` 이 퍼센트(0~100)라고 가정했다. 비율(0~1)이라면 화면
-// 숫자가 100배 작게 나온다 — 위 2번에서 가장 먼저 확인할 값이다.
-// `extra_usage` 는 추가 한도를 켠 계정에서만 나타나는 것으로 보인다.
+// `utilization` 은 0~100 퍼센트다. `extra_usage` 는 추가 한도를 켠 계정에서만 나타나는
+// 것으로 보인다.
 const (
 	claudeAPIBase   = "https://api.anthropic.com"
 	claudeUsagePath = "/api/oauth/usage"

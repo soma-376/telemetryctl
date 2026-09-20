@@ -5,7 +5,8 @@ Codex와 Claude Code의 OpenTelemetry 설정을 조직 단위로 안전하게 �
 클라이언트가 Claude Code·Codex 설정에 필요한 OTel 키만 병합합니다.
 
 이 저장소는 **클라이언트 CLI/데몬 전용**입니다(Go, 단일 정적 바이너리). enrollment 서버는 **별도
-저장소**로 분리돼 있으며, 둘을 잇는 것은 `contracts/` 의 JSON Schema 계약뿐입니다.
+저장소**로 분리돼 있으며, 레포 간 계약은 [문서 허브](https://github.com/soma-376/docs/tree/main/contracts)에 있습니다.
+enrollment의 기계 판독 원본은 이 레포의 `contracts/` JSON Schema입니다.
 
 ## 구조
 
@@ -42,15 +43,16 @@ Codex와 Claude Code의 OpenTelemetry 설정을 조직 단위로 안전하게 �
     ├── vendorlimit/           #   벤더 구독 사용 한도 조회 (Claude API·Codex App Server)
     ├── codexapp/              #   Codex App Server 프로세스·프로토콜 (ADR 0011)
     ├── localapi/              #   GUI ↔ 데몬 로컬 HTTP 계약 (ADR 0013)
+    ├── updatecheck/           #   enroll 서버 업데이트 확인과 마지막 성공 결과
     │
     ├── runtimeinfo/           #   runtime.json (비밀 없음: 주소·pid·데이터 경로)
     ├── autostart/             #   로그인 시 데몬 자동 실행 등록 (launchd·systemd user unit)
     └── daemon/                #   위 패키지 배선 + 틱 루프 + graceful shutdown
 ```
 
-**경계 규칙**: 클라이언트(Go)와 서버는 코드를 공유하지 않습니다. 유일한 계약은 `contracts/` 의
-JSON Schema 이며, `internal/contract` 의 Go 타입이 이 스키마와 1:1 로 대응하는지 계약 테스트로
-검증합니다. 서버가 스키마를 갱신하면 `contracts/` 사본을 수동으로 동기화합니다.
+**경계 규칙**: 클라이언트(Go)와 서버는 코드를 공유하지 않습니다. enrollment는 `contracts/`의
+JSON Schema와 `internal/contract`의 Go 타입이 대응하는지 계약 테스트로 검증합니다.
+업데이트 확인은 문서 허브의 [별도 계약](https://github.com/soma-376/docs/blob/main/contracts/daemon-updates.md)을 따릅니다.
 
 ## 사용법
 
@@ -74,7 +76,7 @@ curl -fsSL "<server>/unix?code=<초대코드>" | sh        # bash
 ```sh
 telemetryctl enroll --invite <code> [--server <url>]   # 등록 후 설정 적용
 telemetryctl reconnect [--server <url>]                # 텔레메트리 토큰 재발급 및 설정 갱신
-telemetryctl status                                    # 설치·로컬 파이프라인 상태 표시
+telemetryctl status                                    # 설치·로컬 파이프라인·데몬 업데이트 상태 표시
 telemetryctl daemon [옵션]                             # foreground 데몬 (로컬 수신기 + 집계 + 상위 전달)
 telemetryctl local enable|disable [--port 4318]        # 벤더 설정을 로컬 수신기로 재배선/해제
 telemetryctl autostart enable|disable|status           # 로그인 시 데몬 자동 실행 등록/해제/조회
@@ -84,6 +86,10 @@ telemetryctl purge --content [--before 2026-07-01]     # 보관된 프롬프트�
 ```
 
 전체 플래그는 `telemetryctl help` 를 보세요.
+
+데몬은 시작 직후와 24시간마다 enroll 서버에서 업데이트 여부를 확인합니다. CLI `status`와
+GUI 설정의 **데몬 업데이트**는 마지막 확인 결과를 표시하며 다운로드·설치는 수행하지 않습니다.
+백엔드 API는 아직 임시 계약이므로 서버가 404를 반환하면 미지원으로 표시하고 수집은 계속합니다.
 
 `enroll` 은 서버에서 받은 설정 봉투(`{installation_id, installation_token, telemetry_token, manifest}`)를 적용해
 Claude Code(`~/.claude/settings.json`)·Codex(`~/.codex/config.toml`)에 OTel 키만 병합하고,
@@ -189,7 +195,7 @@ task build          # CLI + GUI → artifacts/build/{os}-{arch}
 task build:cli      # 현재 컴퓨터용 CLI만 빌드
 task build:cli TARGET_OS=linux TARGET_ARCH=arm64  # 지정한 대상용 CLI
 task build:cli:all  # Windows·macOS·Linux × amd64·arm64 CLI 6종
-task test           # 전체 검사 (빌드·vet·race 테스트·gofmt·go mod tidy·svelte-check)
+task test           # 전체 검사 (빌드·vet·race 테스트·gofmt·go mod tidy·tsc --noEmit)
 ```
 
 CLI의 `TARGET_OS`는 `windows`, `darwin`(macOS), `linux`, `TARGET_ARCH`는 `amd64`, `arm64`를

@@ -68,8 +68,11 @@ func decodeBoth(t *testing.T, kind PayloadKind, name string, opt Options) Result
 	if err != nil {
 		t.Fatalf("%s protobuf 디코드: %v", name, err)
 	}
-	if !reflect.DeepEqual(fromJSON, fromProto) {
-		t.Fatalf("%s: protojson 과 protobuf 결과가 다름\njson  = %+v\nproto = %+v", name, fromJSON, fromProto)
+	// 수신 payload는 입력 인코딩의 표현을 유지한다. 정규화 결과만 동일해야 한다.
+	left, right := fromJSON, fromProto
+	left.Payloads, right.Payloads = nil, nil
+	if !reflect.DeepEqual(left, right) {
+		t.Fatalf("%s: protojson 과 protobuf 결과가 다름\njson  = %+v\nproto = %+v", name, left, right)
 	}
 	return fromJSON
 }

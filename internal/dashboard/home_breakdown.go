@@ -263,7 +263,7 @@ func (r *Reader) HomeBreakdown(ctx context.Context, q HomeBreakdownQuery) (HomeB
 	if err := acc.collectCalls(ctx, db); err != nil {
 		return HomeBreakdown{}, err
 	}
-	acc.apply(&out, clampLimit(q.ModelLimit, defaultTopModels, maxTopModels))
+	acc.apply(&out, ClampLimit(q.ModelLimit, defaultTopModels, maxTopModels))
 	return out, nil
 }
 

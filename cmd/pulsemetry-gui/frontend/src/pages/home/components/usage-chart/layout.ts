@@ -1,4 +1,5 @@
 import type { BucketUnit, HeroBar } from "../../types";
+import { at, type NonEmpty } from "$lib/utils/array";
 
 export interface ChartMargin {
   top: number;
@@ -20,6 +21,11 @@ export interface ChartBar extends HeroBar {
   segments: ChartSegment[];
 }
 
+export interface ChartTick {
+  x: number;
+  label: string;
+}
+
 export interface UsageChartLayout {
   width: number;
   height: number;
@@ -29,7 +35,7 @@ export interface UsageChartLayout {
   barWidth: number;
   niceMax: number;
   bars: ChartBar[];
-  tickIndexes: number[];
+  ticks: ChartTick[];
   xAt: (index: number) => number;
   yAt: (value: number) => number;
 }
@@ -58,7 +64,9 @@ export function createUsageChartLayout(
     let sum = 0;
     const segments = bar.values.map((value, seriesIndex) => {
       const start = sum;
+
       sum += value;
+
       return {
         value,
         seriesIndex,
@@ -66,6 +74,7 @@ export function createUsageChartLayout(
         height: yAt(start) - yAt(sum),
       };
     });
+
     return { ...bar, index, x: xAt(index) - barWidth / 2, segments };
   });
 
@@ -78,7 +87,11 @@ export function createUsageChartLayout(
     barWidth,
     niceMax,
     bars,
-    tickIndexes: chooseTickIndexes(unit, bucketSize, source.length),
+    ticks: chooseTickIndexes(unit, bucketSize, source.length).map((i) => ({
+      x: xAt(i),
+      // chooseTickIndexes 가 source.length 로 걸러 낸 인덱스라 범위 안이다.
+      label: at(source, i).label,
+    })),
     xAt,
     yAt,
   };
@@ -115,7 +128,16 @@ function chooseTickIndexes(
   ).filter((index) => index < count);
 }
 
-function niceStep(count: number, candidates: number[], maxTicks: number): number {
-  return candidates.find((step) => Math.ceil(count / step) <= maxTicks)
-    ?? candidates[candidates.length - 1];
+// candidates 는 오름차순이고 비어 있지 않다. 어느 후보로도 maxTicks 안에 못 넣으면
+// 가장 성긴 마지막 후보를 쓴다.
+function niceStep(
+  count: number,
+  candidates: NonEmpty<number>,
+  maxTicks: number,
+): number {
+  return (
+    candidates.find((step) => Math.ceil(count / step) <= maxTicks) ??
+    candidates[candidates.length - 1] ??
+    candidates[0]
+  );
 }

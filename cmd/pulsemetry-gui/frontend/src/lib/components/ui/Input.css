@@ -1,0 +1,8 @@
+.box.scope-n2qvko:hover,
+.box.scope-n2qvko:focus-within {
+  border-color: var(--color-border-strong);
+}
+
+.field.scope-n2qvko::placeholder {
+  color: var(--color-text-muted);
+}

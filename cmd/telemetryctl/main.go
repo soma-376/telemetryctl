@@ -557,6 +557,7 @@ func runStatus(stdout, stderr io.Writer, args []string) int {
 		}
 	}
 	printLocalStatus(stdout, target)
+	printUpdateStatus(stdout, target)
 	return 0
 }
 

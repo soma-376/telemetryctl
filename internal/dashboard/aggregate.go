@@ -36,7 +36,7 @@ type aggRow struct {
 //
 // cols 와 dest 의 순서가 서로 대응해야 한다. 어긋나면 스캔이 조용히 다른 필드로 들어간다.
 type factSource struct {
-	// op 는 오류 메시지에 쓰는 사람이 읽는 동작 이름이다. SQL 은 넣지 않는다 (queryErr).
+	// op 는 오류 메시지에 쓰는 사람이 읽는 동작 이름이다. SQL 은 넣지 않는다 (QueryErr).
 	op string
 	// from 은 FROM 절이다. 별칭은 s(sessions) · t(turns) · c(승격 테이블) 로 고정한다.
 	from string
@@ -166,7 +166,7 @@ type bucketRef struct {
 //
 // 결과는 (키, 시간 버킷) 오름차순으로 정렬돼 있다. 정렬을 고정해야 같은 입력이 같은
 // 순서를 주고, 호출자가 그 위에 다시 정렬을 얹어도 동률의 순서가 흔들리지 않는다.
-func aggregate(ctx context.Context, db sqlQuerier, dim Dim, keyFilter string, tr timeRange) ([]aggRow, error) {
+func aggregate(ctx context.Context, db SQLQuerier, dim Dim, keyFilter string, tr timeRange) ([]aggRow, error) {
 	acc := map[bucketRef]*Totals{}
 
 	for _, src := range factSources {
@@ -198,12 +198,12 @@ func aggregate(ctx context.Context, db sqlQuerier, dim Dim, keyFilter string, tr
 	return out, nil
 }
 
-func (f factSource) collect(ctx context.Context, db sqlQuerier, query string, args []any, acc map[bucketRef]*Totals) (err error) {
+func (f factSource) collect(ctx context.Context, db SQLQuerier, query string, args []any, acc map[bucketRef]*Totals) (err error) {
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return queryErr(f.op, err)
+		return QueryErr(f.op, err)
 	}
-	defer closeRows(rows, f.op, &err)
+	defer CloseRows(rows, f.op, &err)
 
 	for rows.Next() {
 		var (
@@ -212,7 +212,7 @@ func (f factSource) collect(ctx context.Context, db sqlQuerier, query string, ar
 		)
 		dest := append([]any{&ref.key, &ref.hour}, f.dest(&part)...)
 		if serr := rows.Scan(dest...); serr != nil {
-			return queryErr(f.op, serr)
+			return QueryErr(f.op, serr)
 		}
 		into, ok := acc[ref]
 		if !ok {
@@ -225,7 +225,7 @@ func (f factSource) collect(ctx context.Context, db sqlQuerier, query string, ar
 }
 
 // sumAggregate 는 구간 전체의 단일 합계다. Today 카드가 쓴다.
-func sumAggregate(ctx context.Context, db sqlQuerier, dim Dim, keyFilter string, tr timeRange) (Totals, error) {
+func sumAggregate(ctx context.Context, db SQLQuerier, dim Dim, keyFilter string, tr timeRange) (Totals, error) {
 	rows, err := aggregate(ctx, db, dim, keyFilter, tr)
 	if err != nil {
 		return Totals{}, err

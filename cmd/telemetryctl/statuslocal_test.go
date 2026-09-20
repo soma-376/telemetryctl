@@ -30,6 +30,7 @@ func TestStatusWithoutAnything(t *testing.T) {
 		"DB: 설정 안 됨",
 		"데몬: 실행 안 됨 (runtime.json 없음)",
 		"ingest 토큰: 없음",
+		"데몬 업데이트: 비활성 (등록 서버 없음)",
 	)
 }
 

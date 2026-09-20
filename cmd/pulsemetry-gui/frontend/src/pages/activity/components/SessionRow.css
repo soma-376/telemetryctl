@@ -1,0 +1,7 @@
+.row.scope-r6mhn2 {
+  background: var(--row-bg);
+  transition: background 0.12s ease;
+}
+.row.scope-r6mhn2:hover {
+  background: var(--color-surface-hover);
+}

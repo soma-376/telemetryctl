@@ -13,7 +13,7 @@
 //     v3 스키마가 요구하는 값 — 작업 경로 원문 · user.email · user.id/account_uuid — 은
 //     **로컬 저장 전용 필드로** allowlist 에 있다 (ADR 0010). 경로는 해시+basename 과
 //     원경로를 나란히 산출하고, 상위 전달과 관련된 코드는 해시 쪽만 쓴다.
-//     organization.id 는 여전히 자리가 없다 — 그것을 요구하는 v3 컬럼이 없다.
+//     수신 payload는 ADR 0025에 따라 이 allowlist를 적용하지 않고 로컬에 보관한다.
 //   - 상위 전달 규칙: Scrub 은 denylist 다. 회사 Privacy 가 금지한 것만 지우고 나머지는 보존한다.
 //     상위 Collector 는 우리가 모르는 필드도 받을 수 있어야 하므로 여기서 allowlist 를 쓰면 안 된다.
 //

@@ -24,6 +24,7 @@ import (
 	"github.com/your-org/pulsemetry/internal/receiver"
 	"github.com/your-org/pulsemetry/internal/runtimeinfo"
 	"github.com/your-org/pulsemetry/internal/store"
+	"github.com/your-org/pulsemetry/internal/updatecheck"
 )
 
 // 픽스처 안의 표식. logs_session_walkthrough.json 에 실제로 들어 있는 문자열이다.
@@ -199,6 +200,9 @@ func (h *harness) run(o harnessOptions) {
 		ListenPort:    freePort(h.t),
 		IngestToken:   testIngestToken,
 		ForwardTokens: forward.StaticToken("telemetry-token-for-test"),
+		UpdateChecker: updateCheckerFunc(func(context.Context) (updatecheck.Result, error) {
+			return updatecheck.Result{LatestVersion: installer.Version}, nil
+		}),
 		// 틱을 짧게 잡아 테스트가 실시간을 기다리지 않게 한다.
 		Interval:      50 * time.Millisecond,
 		FlushInterval: 20 * time.Millisecond,

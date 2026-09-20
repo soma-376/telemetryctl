@@ -388,12 +388,22 @@ func (p *pipeline) ingest(b receiver.Batch) {
 		}
 		contents[c.EventIndex] = append(contents[c.EventIndex], c.Content)
 	}
-	targets := make(map[int]otlpdecode.Target, len(res.Targets))
+	if diag := res.Patches; diag != (otlpdecode.PatchDiagnostics{}) {
+		p.log.Printf("파일 변경 추출 생략: 입력없음=%d 불완전=%d 형식오류=%d 성공미확인=%d", diag.MissingInput, diag.Truncated, diag.Invalid, diag.Unconfirmed)
+	}
+	payloads := make(map[int][]byte, len(res.Payloads))
+	for _, payload := range res.Payloads {
+		payloads[payload.EventIndex] = payload.JSON
+	}
+	if res.PayloadsDropped > 0 {
+		p.log.Printf("payload 저장 생략: %d", res.PayloadsDropped)
+	}
+	targets := make(map[int][]otlpdecode.Target, len(res.Targets))
 	for _, t := range res.Targets {
 		if t.EventIndex < 0 || t.EventIndex >= len(res.Events) {
 			continue
 		}
-		targets[t.EventIndex] = t
+		targets[t.EventIndex] = append(targets[t.EventIndex], t)
 	}
 
 	for i := range res.Events {
@@ -408,11 +418,16 @@ func (p *pipeline) ingest(b receiver.Batch) {
 			continue
 		}
 
+		// 단일 대상 컬럼에는 여러 경로를 합치거나 임의의 첫 파일을 넣지 않는다.
+		var target otlpdecode.Target
+		if len(targets[i]) == 1 {
+			target = targets[i][0]
+		}
 		in := session.Input{
 			Event:      e,
 			Content:    pickContent(cs),
-			Target:     targets[i].Path,
-			TargetPath: targets[i].RawPath,
+			Target:     target.Path,
+			TargetPath: target.RawPath,
 		}
 		// Add 의 반환값으로 분기하지 않는다 — session.id 가 없어 조립기가 무시한 이벤트도
 		// 같은 스트림의 일부이고, 턴 추적기는 그 사실을 알아야 한다.
@@ -420,14 +435,27 @@ func (p *pipeline) ingest(b receiver.Batch) {
 		turn := p.asm.TurnOf(in)
 
 		rec := store.EventRecord{
+			Payload:    payloads[i],
 			Event:      e,
 			Contents:   cs,
 			TurnKey:    turn.Key,
 			CallKey:    turn.CallKey,
-			TargetPath: targets[i].RawPath,
+			TargetPath: target.RawPath,
 		}
-		if fc, ok := session.FileChangeOf(in); ok {
-			rec.File = fc
+		for _, file := range targets[i] {
+			if file.Operation != "" {
+				rec.Files = append(rec.Files, session.FileChange{
+					Path: file.RawPath, Operation: file.Operation, RenamedFrom: file.RenamedFrom,
+					Additions: file.Additions, Deletions: file.Deletions,
+				})
+			} else {
+				fileInput := in
+				fileInput.TargetPath = file.RawPath
+				if fc, ok := session.FileChangeOf(fileInput); ok {
+					fc.Additions, fc.Deletions = file.Additions, file.Deletions
+					rec.Files = append(rec.Files, fc)
+				}
+			}
 		}
 		p.pending = append(p.pending, rec)
 		p.dirty = true

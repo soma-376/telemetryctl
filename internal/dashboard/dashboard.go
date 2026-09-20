@@ -12,7 +12,7 @@
 //   - **모든 공개 구조체 필드에 json 태그를 붙인다.** 태그가 곧 TS 필드명이라 필드 이름을
 //     바꾸면 프런트엔드가 조용히 undefined 를 읽는다. 규약은 snake_case 다.
 //   - **에러 메시지가 사용자에게 보인다.** Go 의 error 는 Promise reject 로 전파된다.
-//     그래서 어떤 에러에도 SQL 문장을 싣지 않는다 (queryErr).
+//     그래서 어떤 에러에도 SQL 문장을 싣지 않는다 (QueryErr).
 //
 // # 미설치는 에러가 아니다
 //
@@ -174,7 +174,7 @@ func (r *Reader) db() (*sql.DB, bool) {
 	return r.ro.SQL(), true
 }
 
-// sqlQuerier 는 조회 함수가 필요로 하는 최소 인터페이스다. *sql.DB 를 그대로 받지 않는
+// SQLQuerier 는 조회 함수가 필요로 하는 최소 인터페이스다. *sql.DB 를 그대로 받지 않는
 // 이유는 이 패키지가 쓰기를 할 수 없다는 것을 타입으로 못박기 위해서다 — Exec 가 없으면
 // read-only 연결에서 실패할 문장을 실수로 넣을 방법도 없다.
 // Querier 는 하위 화면 패키지가 자기 질의를 할 때 쓰는 read-only 핸들이다. Exec 가 없어
@@ -183,18 +183,18 @@ type Querier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
-type sqlQuerier interface {
+type SQLQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
-// queryErr 는 조회 실패를 화면에 띄워도 되는 형태로 감싼다.
+// QueryErr 는 조회 실패를 화면에 띄워도 되는 형태로 감싼다.
 //
 // Wails 가 Go 의 error 를 Promise reject 로 전파하므로 이 문자열이 그대로 사용자에게 보인다.
 // op 는 사람이 읽는 동작 이름이고, **SQL 문장을 여기에 넣지 않는다** — 질의문은 사용자에게
 // 아무 도움이 되지 않으면서 내부 스키마만 드러낸다. 원인 에러는 감싸 두되(드라이버 메시지는
 // 문장을 담지 않는다) 호출자가 질의 상수를 포맷 인자로 넘기는 일은 없어야 한다.
-func queryErr(op string, err error) error {
+func QueryErr(op string, err error) error {
 	return fmt.Errorf("dashboard: %s 실패: %w", op, err)
 }
 
@@ -220,20 +220,20 @@ func nullBool(n sql.NullInt64) *bool {
 	return &v
 }
 
-// closeRows 는 조회 루프의 마무리다. rows.Err() 를 빠뜨리면 중간에 끊긴 결과가 정상 종료로
+// CloseRows 는 조회 루프의 마무리다. rows.Err() 를 빠뜨리면 중간에 끊긴 결과가 정상 종료로
 // 보여 화면이 조용히 일부 데이터만 그린다.
-func closeRows(rows *sql.Rows, op string, err *error) {
+func CloseRows(rows *sql.Rows, op string, err *error) {
 	if cerr := rows.Close(); cerr != nil && *err == nil {
-		*err = queryErr(op, cerr)
+		*err = QueryErr(op, cerr)
 	}
 	if rerr := rows.Err(); rerr != nil && *err == nil {
-		*err = queryErr(op, rerr)
+		*err = QueryErr(op, rerr)
 	}
 }
 
-// clampLimit 는 조회 상한을 정한다. 0 이하는 기본값, 상한 초과는 상한으로 자른다 —
+// ClampLimit 는 조회 상한을 정한다. 0 이하는 기본값, 상한 초과는 상한으로 자른다 —
 // GUI 가 실수로 0 이나 100000 을 넘겨 화면 전체가 멈추는 일을 여기서 막는다.
-func clampLimit(v, def, max int) int {
+func ClampLimit(v, def, max int) int {
 	switch {
 	case v <= 0:
 		return def
@@ -244,9 +244,9 @@ func clampLimit(v, def, max int) int {
 	}
 }
 
-// placeholders 는 IN (?,?,?) 자리표시자를 만든다. 값은 전부 바인딩되므로 문자열 결합이
+// Placeholders 는 IN (?,?,?) 자리표시자를 만든다. 값은 전부 바인딩되므로 문자열 결합이
 // 질의에 닿는 것은 이 자리표시자뿐이다.
-func placeholders(n int) string {
+func Placeholders(n int) string {
 	if n <= 0 {
 		return ""
 	}

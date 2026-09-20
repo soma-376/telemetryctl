@@ -15,7 +15,21 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as activity$0 from "../../internal/dashboard/activity/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as tray$0 from "../../internal/dashboard/tray/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as updatecheck$0 from "../../internal/updatecheck/models.js";
+
+export function Activity(q: activity$0.Query): $CancellablePromise<activity$0.Page> {
+    return $Call.ByID(3148998841, q);
+}
+
+export function ActivitySession(id: number): $CancellablePromise<activity$0.Detail> {
+    return $Call.ByID(3638835675, id);
+}
 
 /**
  * RefreshTray 는 데몬에 수동 갱신을 명령하고 그 결과를 다시 받는다 (퀵뷰의 새로고침 버튼).
@@ -29,4 +43,11 @@ export function RefreshTray(q: tray$0.Query): $CancellablePromise<tray$0.Snapsho
  */
 export function Tray(q: tray$0.Query): $CancellablePromise<tray$0.Snapshot> {
     return $Call.ByID(3098134964, q);
+}
+
+/**
+ * Updates는 데몬이 마지막으로 확인한 업데이트 상태만 조회한다.
+ */
+export function Updates(): $CancellablePromise<updatecheck$0.Snapshot> {
+    return $Call.ByID(1697746978);
 }

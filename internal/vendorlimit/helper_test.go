@@ -186,13 +186,19 @@ func statusUpstream(t *testing.T, code int) *upstream {
 	})
 }
 
-// deadUpstream 은 이미 닫힌 서버의 주소다. 연결 자체가 실패하는 경로를 태운다.
+// deadUpstream 은 응답 없이 연결을 끊는다. 닫은 리스너 주소를 재사용하면 다른 병렬
+// 테스트가 같은 포트를 열 수 있으므로, 요청을 받을 때까지 리스너를 유지한다.
 func deadUpstream(t *testing.T) string {
 	t.Helper()
-	up := newUpstream(t, func(http.ResponseWriter, *http.Request) {})
-	addr := up.srv.URL
-	up.srv.Close()
-	return addr
+	up := newUpstream(t, func(w http.ResponseWriter, _ *http.Request) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		conn.Close()
+	})
+	return up.srv.URL
 }
 
 // --- 단언 도우미 ------------------------------------------------------------

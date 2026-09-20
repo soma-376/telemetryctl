@@ -1,4 +1,4 @@
-package dashboard
+package dashboard_test
 
 // 화면 사이의 합의 (PROJ-97).
 //
@@ -18,6 +18,8 @@ package dashboard
 
 import (
 	"context"
+	. "github.com/your-org/pulsemetry/internal/dashboard"
+	"github.com/your-org/pulsemetry/internal/dashboard/activity"
 	"reflect"
 	"testing"
 	"time"
@@ -27,68 +29,24 @@ import (
 	"github.com/your-org/pulsemetry/internal/store"
 )
 
-// crossDay 는 이 파일이 검사하는 "그 날" 이다. testNow(2026-08-10 02:00 UTC =
+// TestCrossDay 는 이 파일이 검사하는 "그 날" 이다. TestNow(2026-08-10 02:00 UTC =
 // 서울 11:00) 기준 어제라, 하루가 통째로 과거이면서 진행 중 세션과 섞이지 않는다.
-const crossDay = "2026-08-09"
 
-// seedCleanDay 는 자정을 넘지 않고 잘리지도 않는 하루를 만든다.
+// TestSeedCleanDay 는 자정을 넘지 않고 잘리지도 않는 하루를 만든다.
 //
-// 세션 셋이 전부 crossDay 안에서 시작하고 끝난다. 이 상태에서만 "줄 합 = 카드" 가
+// 세션 셋이 전부 TestCrossDay 안에서 시작하고 끝난다. 이 상태에서만 "줄 합 = 카드" 가
 // 성립한다 — 그 전제가 깨지면 아래 단언은 버그가 아니라 정의를 확인하는 것이 된다.
-func seedCleanDay(t *testing.T, f *fixture) {
-	t.Helper()
-	base := mustTime(t, "2006-01-02 15:04", crossDay+" 09:00", seoul)
-
-	specs := []struct {
-		key    string
-		at     time.Time
-		vendor func(*session.Session)
-		llm    llmSpec
-	}{
-		{key: "cs-a", at: base, llm: llmSpec{Model: "claude-sonnet-4-5", Cost: 0.5, Input: 100, Output: 40, CacheRead: 7}},
-		{key: "cs-b", at: base.Add(2 * time.Hour), llm: llmSpec{Model: "claude-opus-4-1", Cost: 1.25, Input: 300, Output: 90}},
-		{key: "cs-c", at: base.Add(5 * time.Hour), vendor: codex,
-			llm: llmSpec{Vendor: vendorCodex, Model: "gpt-5-codex", Cost: 0.2, Input: 50, Output: 25}},
-	}
-	for i, s := range specs {
-		mods := []func(*session.Session){}
-		if s.vendor != nil {
-			mods = append(mods, s.vendor)
-		}
-		sess := newSession(s.key, s.at, mods...)
-		vendor := vendorClaude
-		if s.llm.Vendor != "" {
-			vendor = s.llm.Vendor
-		}
-		turn := s.key + "-t1"
-		f.write(store.Batch{
-			Sessions: []session.Session{sess},
-			Events: []store.EventRecord{
-				promptRecord(s.key, turn, s.at, 1, "인증 토큰 검증 프록시 "+s.key),
-				llmRecord(s.key, turn, s.at.Add(time.Minute), 2, s.llm),
-				toolRecord(s.key, turn, s.key+"-call-1", s.at.Add(2*time.Minute), 3, toolSpec{
-					Vendor: vendor, ToolName: "Edit", Success: event.Some(true),
-					Target: workspaceA + "/apply.go",
-					File:   fileChange(workspaceA+"/apply.go", int64(10+i), int64(2+i)),
-				}),
-				toolRecord(s.key, turn, s.key+"-call-2", s.at.Add(3*time.Minute), 4, toolSpec{
-					Vendor: vendor, ToolName: "Bash", Success: event.Some(false), ErrorType: "exit_1",
-				}),
-			},
-		})
-	}
-}
 
 // homeAndActivity 는 같은 날을 두 화면으로 동시에 조회한다.
-func homeAndActivity(t *testing.T, f *fixture, date string) (HomeSummary, ActivityPage) {
+func homeAndActivity(t *testing.T, f *TestFixture, date string) (HomeSummary, activity.Page) {
 	t.Helper()
 	ctx := context.Background()
-	home, err := f.reader.Home(ctx, HomeQuery{TZ: seoul, Date: date})
+	home, err := f.TestReader().Home(ctx, HomeQuery{TZ: TestSeoul, Date: date})
 	if err != nil {
 		t.Fatalf("Home(%s): %v", date, err)
 	}
-	page, err := f.reader.Activity(ctx, ActivityQuery{
-		Since: home.StartAt, Until: home.EndAt, Limit: maxActivityLimit,
+	page, err := readActivity(f.TestPath(), ctx, activity.Query{
+		Since: home.StartAt, Until: home.EndAt, Limit: 200,
 	})
 	if err != nil {
 		t.Fatalf("Activity(%s): %v", date, err)
@@ -110,7 +68,7 @@ type activitySums struct {
 	Lines       int64
 }
 
-func sumActivity(rows []ActivityRow) activitySums {
+func sumActivity(rows []activity.Row) activitySums {
 	var s activitySums
 	s.Rows = len(rows)
 	for _, r := range rows {
@@ -132,10 +90,10 @@ func sumActivity(rows []ActivityRow) activitySums {
 // 이 단언이 깨지는 방식은 둘 중 하나다 — 한쪽이 구간을 다르게 자르거나, 한쪽이 조인으로
 // 행을 부풀린다. 두 화면 중 어느 쪽이 틀렸는지는 각 화면의 자기 일관성 테스트가 가른다.
 func TestCrossSurface_HomeDayTotalsEqualActivityRowSums(t *testing.T) {
-	f := newFixture(t)
-	seedCleanDay(t, f)
+	f := TestNewFixture(t)
+	TestSeedCleanDay(t, f)
 
-	home, page := homeAndActivity(t, f, crossDay)
+	home, page := homeAndActivity(t, f, TestCrossDay)
 	got := sumActivity(page.Rows)
 
 	cases := []struct {
@@ -167,10 +125,10 @@ func TestCrossSurface_HomeDayTotalsEqualActivityRowSums(t *testing.T) {
 // 목록이 같은 세션을 같은 순서로 보는지 본다. 두 화면이 다른 순서를 그리면 사용자는
 // 같은 목록의 두 판본을 보게 된다.
 func TestCrossSurface_HomeRecentMatchesActivityRows(t *testing.T) {
-	f := newFixture(t)
-	seedCleanDay(t, f)
+	f := TestNewFixture(t)
+	TestSeedCleanDay(t, f)
 
-	home, page := homeAndActivity(t, f, crossDay)
+	home, page := homeAndActivity(t, f, TestCrossDay)
 	if len(home.Recent) != len(page.Rows) {
 		t.Fatalf("Home 최근 = %d건, Activity 줄 = %d건", len(home.Recent), len(page.Rows))
 	}
@@ -206,24 +164,24 @@ func TestCrossSurface_HomeRecentMatchesActivityRows(t *testing.T) {
 // Home 카드(구간 안의 사실만)에는 없다. 이 관계가 뒤집히면 둘 중 하나가 구간을 잘못
 // 자른 것이다 (home.go 「합계의 정의」).
 func TestCrossSurface_MidnightCrossingMakesRowsExceedCards(t *testing.T) {
-	f := newFixture(t)
-	seedCleanDay(t, f)
+	f := TestNewFixture(t)
+	TestSeedCleanDay(t, f)
 
 	// 23:30 에 시작해 다음 날 00:30 에 호출이 하나 더 있는 세션.
-	late := mustTime(t, "2006-01-02 15:04", crossDay+" 23:30", seoul)
-	f.write(store.Batch{
-		Sessions: []session.Session{newSession("cs-midnight", late)},
+	late := TestMustTime(t, "2006-01-02 15:04", TestCrossDay+" 23:30", TestSeoul)
+	f.TestWrite(store.Batch{
+		Sessions: []session.Session{TestNewSession("cs-midnight", late)},
 		Events: []store.EventRecord{
-			promptRecord("cs-midnight", "cs-midnight-t1", late, 1, "자정을 넘긴 작업"),
-			llmRecord("cs-midnight", "cs-midnight-t1", late.Add(10*time.Minute), 2,
-				llmSpec{Model: "claude-sonnet-4-5", Cost: 0.1, Input: 20, Output: 10}),
+			TestPromptRecord("cs-midnight", "cs-midnight-t1", late, 1, "자정을 넘긴 작업"),
+			TestLlmRecord("cs-midnight", "cs-midnight-t1", late.Add(10*time.Minute), 2,
+				TestLlmSpec{Model: "claude-sonnet-4-5", Cost: 0.1, Input: 20, Output: 10}),
 			// 다음 날로 넘어간 호출.
-			llmRecord("cs-midnight", "cs-midnight-t1", late.Add(time.Hour), 3,
-				llmSpec{Model: "claude-sonnet-4-5", Cost: 0.9, Input: 500, Output: 200}),
+			TestLlmRecord("cs-midnight", "cs-midnight-t1", late.Add(time.Hour), 3,
+				TestLlmSpec{Model: "claude-sonnet-4-5", Cost: 0.9, Input: 500, Output: 200}),
 		},
 	})
 
-	home, page := homeAndActivity(t, f, crossDay)
+	home, page := homeAndActivity(t, f, TestCrossDay)
 	got := sumActivity(page.Rows)
 
 	if got.Tokens <= home.Totals.Tokens() {
@@ -231,7 +189,7 @@ func TestCrossSurface_MidnightCrossingMakesRowsExceedCards(t *testing.T) {
 			got.Tokens, home.Totals.Tokens())
 	}
 	// 넘어간 몫은 정확히 다음 날 카드에 있다. 사실은 사라지지 않고 옮겨 갈 뿐이다.
-	next, err := f.reader.Home(context.Background(), HomeQuery{TZ: seoul, Date: "2026-08-10"})
+	next, err := f.TestReader().Home(context.Background(), HomeQuery{TZ: TestSeoul, Date: "2026-08-10"})
 	if err != nil {
 		t.Fatalf("Home(다음 날): %v", err)
 	}
@@ -239,8 +197,8 @@ func TestCrossSurface_MidnightCrossingMakesRowsExceedCards(t *testing.T) {
 		t.Errorf("다음 날 카드 토큰 = %d, want 700 (자정 이후 호출)", next.Totals.Tokens())
 	}
 	// 그 세션은 다음 날 목록에는 없다 — 시작한 날에만 줄이 선다.
-	nextPage, err := f.reader.Activity(context.Background(), ActivityQuery{
-		Since: next.StartAt, Until: next.EndAt, Limit: maxActivityLimit,
+	nextPage, err := readActivity(f.TestPath(), context.Background(), activity.Query{
+		Since: next.StartAt, Until: next.EndAt, Limit: 200,
 	})
 	if err != nil {
 		t.Fatalf("Activity(다음 날): %v", err)
@@ -253,11 +211,11 @@ func TestCrossSurface_MidnightCrossingMakesRowsExceedCards(t *testing.T) {
 // TestCrossSurface_TruncatedRecentIsSmallerThanCards 는 반대 방향의 정당한 불일치다.
 // 목록이 RecentLimit 에서 잘리면 행 합은 카드보다 작고, RecentTruncated 가 그 사실을 알린다.
 func TestCrossSurface_TruncatedRecentIsSmallerThanCards(t *testing.T) {
-	f := newFixture(t)
-	seedCleanDay(t, f)
+	f := TestNewFixture(t)
+	TestSeedCleanDay(t, f)
 
-	home, err := f.reader.Home(context.Background(),
-		HomeQuery{TZ: seoul, Date: crossDay, RecentLimit: 1})
+	home, err := f.TestReader().Home(context.Background(),
+		HomeQuery{TZ: TestSeoul, Date: TestCrossDay, RecentLimit: 1})
 	if err != nil {
 		t.Fatalf("Home: %v", err)
 	}
@@ -272,7 +230,7 @@ func TestCrossSurface_TruncatedRecentIsSmallerThanCards(t *testing.T) {
 			home.Recent[0].Tokens, home.Totals.Tokens())
 	}
 	// 카드는 자르기와 무관하다. 상한을 바꿔도 같은 값이어야 한다.
-	full, err := f.reader.Home(context.Background(), HomeQuery{TZ: seoul, Date: crossDay})
+	full, err := f.TestReader().Home(context.Background(), HomeQuery{TZ: TestSeoul, Date: TestCrossDay})
 	if err != nil {
 		t.Fatalf("Home(기본 상한): %v", err)
 	}
@@ -286,16 +244,16 @@ func TestCrossSurface_TruncatedRecentIsSmallerThanCards(t *testing.T) {
 // TestCrossSurface_SessionDetailMatchesItsActivityRow 는 목록에서 클릭해 들어간 상세가
 // 목록의 그 줄과 같은 세션·같은 숫자인지 본다.
 func TestCrossSurface_SessionDetailMatchesItsActivityRow(t *testing.T) {
-	f := newFixture(t)
-	seedCleanDay(t, f)
+	f := TestNewFixture(t)
+	TestSeedCleanDay(t, f)
 	ctx := context.Background()
 
-	_, page := homeAndActivity(t, f, crossDay)
+	_, page := homeAndActivity(t, f, TestCrossDay)
 	if len(page.Rows) == 0 {
 		t.Fatal("Activity 줄이 없다")
 	}
 	for _, row := range page.Rows {
-		detail, err := f.reader.Session(ctx, row.ID)
+		detail, err := f.TestReader().Session(ctx, row.ID)
 		if err != nil {
 			t.Fatalf("Session(%d): %v", row.ID, err)
 		}
@@ -310,7 +268,7 @@ func TestCrossSurface_SessionDetailMatchesItsActivityRow(t *testing.T) {
 				row.ID, row.SessionRow, detail.Session)
 		}
 
-		metrics, err := f.reader.SessionMetrics(ctx, SessionMetricsQuery{SessionID: row.ID})
+		metrics, err := f.TestReader().SessionMetrics(ctx, SessionMetricsQuery{SessionID: row.ID})
 		if err != nil {
 			t.Fatalf("SessionMetrics(%d): %v", row.ID, err)
 		}
@@ -348,48 +306,54 @@ func TestCrossSurface_SessionDetailMatchesItsActivityRow(t *testing.T) {
 // TestCrossSurface_FileChangesMatchSessionDetailFiles 는 파일 변경 화면과 세션 상세의
 // 파일 줄이 같은 사실을 보는지 본다.
 //
-// 두 화면은 **정당하게 다르다** — 상세는 목록용이라 미관측 줄 수를 0 으로 눕히고
-// (sessionFilesSQL 의 COALESCE), 파일 변경 화면은 미관측을 null 로 보존한다.
-// 그래서 같음이 아니라 "눕힌 값이 서로 맞는가" 를 본다.
+// 두 화면 모두 관측된 줄 수의 합과 미관측(null)을 보존해야 한다.
 func TestCrossSurface_FileChangesMatchSessionDetailFiles(t *testing.T) {
-	f := newFixture(t)
-	at := testNow.Add(-3 * time.Hour)
+	f := TestNewFixture(t)
+	at := TestNow.Add(-3 * time.Hour)
 
 	// 줄 수를 관측한 변경과 관측하지 못한 변경을 섞는다.
 	unobserved := session.FileChange{
-		Path:      workspaceA + "/README.md",
+		Path:      TestWorkspaceA + "/README.md",
 		Operation: session.OperationModify,
 	}
-	f.write(store.Batch{
-		Sessions: []session.Session{newSession("cs-files", at)},
+	f.TestWrite(store.Batch{
+		Sessions: []session.Session{TestNewSession("cs-files", at)},
 		Events: []store.EventRecord{
-			promptRecord("cs-files", "cs-files-t1", at, 1, "파일 변경 대조"),
-			toolRecord("cs-files", "cs-files-t1", "cs-files-c1", at.Add(time.Minute), 2, toolSpec{
+			TestPromptRecord("cs-files", "cs-files-t1", at, 1, "파일 변경 대조"),
+			TestToolRecord("cs-files", "cs-files-t1", "cs-files-c1", at.Add(time.Minute), 2, TestToolSpec{
 				ToolName: "Edit", Success: event.Some(true),
-				Target: workspaceA + "/apply.go",
-				File:   fileChange(workspaceA+"/apply.go", 12, 3),
+				Target: TestWorkspaceA + "/apply.go",
+				File:   TestFileChange(TestWorkspaceA+"/apply.go", 12, 3),
 			}),
-			toolRecord("cs-files", "cs-files-t1", "cs-files-c2", at.Add(2*time.Minute), 3, toolSpec{
+			TestToolRecord("cs-files", "cs-files-t1", "cs-files-c2", at.Add(2*time.Minute), 3, TestToolSpec{
 				ToolName: "Edit", Success: event.Some(true),
-				Target: workspaceA + "/apply.go",
-				File:   fileChange(workspaceA+"/apply.go", 4, 1),
+				Target: TestWorkspaceA + "/apply.go",
+				File:   TestFileChange(TestWorkspaceA+"/apply.go", 4, 1),
 			}),
-			toolRecord("cs-files", "cs-files-t1", "cs-files-c3", at.Add(3*time.Minute), 4, toolSpec{
+			TestToolRecord("cs-files", "cs-files-t1", "cs-files-c3", at.Add(3*time.Minute), 4, TestToolSpec{
 				ToolName: "Write", Success: event.Some(true),
-				Target: workspaceA + "/README.md",
+				Target: TestWorkspaceA + "/README.md",
 				File:   unobserved,
+			}),
+			TestToolRecord("cs-files", "cs-files-t1", "cs-files-c4", at.Add(4*time.Minute), 5, TestToolSpec{
+				ToolName: "apply_patch", Success: event.Some(true),
+				Target: TestWorkspaceA + "/deleted.go",
+				File: session.FileChange{
+					Path: TestWorkspaceA + "/deleted.go", Operation: session.OperationDelete,
+					Additions: event.Some[int64](0),
+				},
 			}),
 		},
 	})
 
 	ctx := context.Background()
-	id := f.sessionID(vendorClaude, "cs-files")
+	id := f.TestSessionID(TestVendorClaude, "cs-files")
 
-	detail, err := f.reader.Session(ctx, id)
+	detail, err := f.TestReader().Session(ctx, id)
 	if err != nil {
 		t.Fatalf("Session: %v", err)
 	}
-	changes, err := f.reader.FileChanges(ctx, id)
+	changes, err := f.TestReader().FileChanges(ctx, id)
 	if err != nil {
 		t.Fatalf("FileChanges: %v", err)
 	}
@@ -415,9 +379,14 @@ func TestCrossSurface_FileChangesMatchSessionDetailFiles(t *testing.T) {
 		if file.Edits != sum.Changes {
 			t.Errorf("%q 변경 건수: 상세 = %d, 파일변경 = %d", file.FilePath, file.Edits, sum.Changes)
 		}
-		if file.LinesAdded != sum.Additions.Or(0) || file.LinesRemoved != sum.Deletions.Or(0) {
-			t.Errorf("%q 줄 수: 상세 = +%d/-%d, 파일변경 = %v/%v",
-				file.FilePath, file.LinesAdded, file.LinesRemoved, sum.Additions, sum.Deletions)
+		for _, counts := range []struct {
+			got  *int64
+			want LineCount
+		}{{file.LinesAdded, sum.Additions}, {file.LinesRemoved, sum.Deletions}} {
+			want, observed := counts.want.Get()
+			if (counts.got != nil) != observed || (counts.got != nil && *counts.got != want) {
+				t.Errorf("%q 줄 수: 상세 = %v, 파일변경 = %v", file.FilePath, counts.got, counts.want)
+			}
 		}
 		if file.LastTS != sum.LastTS {
 			t.Errorf("%q 마지막 시각: 상세 = %d, 파일변경 = %d", file.FilePath, file.LastTS, sum.LastTS)
@@ -427,9 +396,8 @@ func TestCrossSurface_FileChangesMatchSessionDetailFiles(t *testing.T) {
 		t.Errorf("변경 건수 합: 상세 = %d, 파일변경 합계 = %d", edits, changes.Totals.Changes)
 	}
 
-	// 미관측은 상세에서 0 으로 눕고 파일 변경 화면에서는 null 로 남는다. 그 차이가
-	// 사라지면 화면이 "0줄을 바꿨다" 고 단정하게 된다 (LineCount 주석).
-	readme := byPath[workspaceA+"/README.md"]
+	// 미관측을 관측된 0으로 바꾸지 않는다 (LineCount 주석).
+	readme := byPath[TestWorkspaceA+"/README.md"]
 	if readme.Additions.Observed() {
 		t.Errorf("README.md 의 추가 줄이 관측된 것으로 나온다: %v", readme.Additions)
 	}
@@ -449,18 +417,18 @@ func TestCrossSurface_FileChangesMatchSessionDetailFiles(t *testing.T) {
 // TestCrossSurface_BreakdownVendorRowsSumToHomeTotals 는 축별 집계의 합이 그 날 카드와
 // 같은지 본다. 축을 나눠도 전체는 변하지 않아야 한다.
 func TestCrossSurface_BreakdownVendorRowsSumToHomeTotals(t *testing.T) {
-	f := newFixture(t)
-	seedCleanDay(t, f)
+	f := TestNewFixture(t)
+	TestSeedCleanDay(t, f)
 	ctx := context.Background()
 
-	home, err := f.reader.Home(ctx, HomeQuery{TZ: seoul, Date: crossDay})
+	home, err := f.TestReader().Home(ctx, HomeQuery{TZ: TestSeoul, Date: TestCrossDay})
 	if err != nil {
 		t.Fatalf("Home: %v", err)
 	}
 	for _, dim := range []Dim{DimVendor, DimModel, DimProject} {
 		t.Run(string(dim), func(t *testing.T) {
-			rows, err := f.reader.Breakdown(ctx, BreakdownQuery{
-				Dim: dim, TZ: seoul, From: home.StartAt, To: home.EndAt, Limit: 100,
+			rows, err := f.TestReader().Breakdown(ctx, BreakdownQuery{
+				Dim: dim, TZ: TestSeoul, From: home.StartAt, To: home.EndAt, Limit: 100,
 			})
 			if err != nil {
 				t.Fatalf("Breakdown(%s): %v", dim, err)
@@ -484,16 +452,16 @@ func TestCrossSurface_BreakdownVendorRowsSumToHomeTotals(t *testing.T) {
 // TestCrossSurface_ClassifierCoversTheSessionsTurns 는 분류 결과의 턴 수가 지표 화면의
 // 턴 수와 같은지 본다. 분류가 일부 턴만 보면 화면의 비율이 조용히 왜곡된다.
 func TestCrossSurface_ClassifierCoversTheSessionsTurns(t *testing.T) {
-	f := newFixture(t)
-	seedCleanDay(t, f)
+	f := TestNewFixture(t)
+	TestSeedCleanDay(t, f)
 	ctx := context.Background()
 
-	id := f.sessionID(vendorClaude, "cs-a")
-	metrics, err := f.reader.SessionMetrics(ctx, SessionMetricsQuery{SessionID: id})
+	id := f.TestSessionID(TestVendorClaude, "cs-a")
+	metrics, err := f.TestReader().SessionMetrics(ctx, SessionMetricsQuery{SessionID: id})
 	if err != nil {
 		t.Fatalf("SessionMetrics: %v", err)
 	}
-	got, err := NewClassifier(f.reader).Session(ctx, id)
+	got, err := NewClassifier(f.TestReader()).Session(ctx, id)
 	if err != nil {
 		t.Fatalf("Classifier.Session: %v", err)
 	}

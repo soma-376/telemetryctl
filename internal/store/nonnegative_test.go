@@ -41,7 +41,7 @@ func TestInvalidMeasuresDoNotRejectBatch(t *testing.T) {
 		tool.Event.Measure.DurationMS = someInt(-1)
 		tool.Event.Measure.ToolInputBytes = someInt(-1)
 		tool.Event.Measure.ToolResultBytes = someInt(0)
-		tool.File.Additions, tool.File.Deletions = someInt(-1), someInt(0)
+		tool.Files[0].Additions, tool.Files[0].Deletions = someInt(-1), someInt(0)
 		good := evrec("claude_code.api_request", baseTime, 2, cost(0.5), tokens(10, 20))
 		mustWrite(t, db, Batch{Events: []EventRecord{bad, tool, good}})
 		if countRows(t, db, "events") != 3 || countRows(t, db, "llm_calls") != 2 {

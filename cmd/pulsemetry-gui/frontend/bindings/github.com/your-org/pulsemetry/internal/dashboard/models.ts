@@ -54,6 +54,104 @@ export interface CostSummary {
 }
 
 /**
+ * CostTotals 는 여러 호출의 비용 합계다.
+ * 
+ * 금액 필드가 Total 하나뿐인 것은 pricing.Cost 와 같은 이유다 — 보고값과 추정값을 서로
+ * 다른 필드에 담아 두면 언젠가 누군가 둘 다 더한다. 어느 쪽이 몇 건이었는지는 아래 세 카운터가
+ * 말한다.
+ */
+export interface CostTotals {
+    "total": pricing$0.Money;
+
+    /**
+     * ReportedCalls·EstimatedCalls·UnavailableCalls 는 pricing.Source 별 호출 수다.
+     */
+    "reported_calls": number;
+    "estimated_calls": number;
+    "unavailable_calls": number;
+
+    /**
+     * Complete 은 비용을 정하지 못한 호출이 하나도 없었다는 뜻이다. false 면 Total 은
+     * **하한**이고, 화면은 그 사실을 함께 그려야 한다. 호출이 아예 없으면 true 다.
+     */
+    "complete": boolean;
+}
+
+/**
+ * Evidence 는 분류 근거 한 줄이다. 같은 규칙이 여러 번 걸리면 행이 늘지 않고 Count 만 는다 —
+ * 근거 목록의 길이가 도구 호출 수에 비례하면 JSON 이 감당하지 못하고, 잘라내는 순간
+ * "무엇이 판정했는가" 가 사라진다.
+ */
+export interface Evidence {
+    "work_type": WorkType;
+
+    /**
+     * Rule 은 규칙 식별자다 (Rule* 상수).
+     */
+    "rule": string;
+
+    /**
+     * Detail 은 이 규칙을 **처음** 발동시킨 값이다. 도구 이름·명령 토큰·파일 경로 따위다.
+     */
+    "detail": string;
+    "count": number;
+}
+
+/**
+ * FileRow 는 세션 안의 파일 하나에 대한 변경 집계다 (계획서 「파일 변경」).
+ * 
+ * v3 의 file_changes 는 파일당 한 행이 아니라 **변경 한 건당 한 행**이라 파일 경로로
+ * 묶어서 준다. v1 의 file_path_hash 는 v3 에 없고 원경로가 그 자리를 대신한다 (ADR 0010).
+ */
+export interface FileRow {
+    "file_name": string;
+    "file_ext": string;
+
+    /**
+     * FilePath 는 원경로다. 「작업 폴더 열기」 가 이 값을 쓴다.
+     */
+    "file_path": string;
+
+    /**
+     * 파일별 합계는 관측된 값만 더하며, 한 번도 관측하지 못했으면 null이다.
+     */
+    "lines_added": number | null;
+    "lines_removed": number | null;
+    "edits": number;
+    "last_ts": number;
+}
+
+/**
+ * Phase 는 연속된 같은 분류의 턴 묶음이다 — 화면 「세션 흐름」의 한 칸.
+ */
+export interface Phase {
+    /**
+     * Index 는 세션 안에서의 순번이다 (0부터).
+     */
+    "index": number;
+    "work_type": WorkType;
+    "start_turn_index": number;
+    "end_turn_index": number;
+    "turn_count": number;
+
+    /**
+     * StartedAt 은 첫 턴의 시작(UTC 초)이다. 알 수 없으면 0.
+     */
+    "started_at": number;
+    "duration_sec": number;
+
+    /**
+     * SharePermille 은 세션 전체 대비 이 단계의 비율(천분율)이다. 단계 전체의 합은 1000 이다.
+     */
+    "share_permille": number;
+
+    /**
+     * Reason 은 이 단계가 그 유형인 근거다. 속한 턴들의 규칙 이름을 중복 없이 모은 것이다.
+     */
+    "reason": string;
+}
+
+/**
  * RecentSession 은 최근 활동 목록의 한 줄이다 — 화면 표시용 요약이다.
  * 
  * SessionRow 를 그대로 쓰지 않는 이유는 두 가지다. 목록이 쓰지 않는 20여 개 필드를 매 행
@@ -105,4 +203,490 @@ export interface RecentSession {
      * (Home 머리말의 「합계의 정의」).
      */
     "cost": CostSummary;
+}
+
+/**
+ * SavingsTotals 는 캐시 절감액 합계다. **비용이 아니다** — 어떤 비용 합계에도 더하지
+ * 않는다 (pricing/savings.go).
+ */
+export interface SavingsTotals {
+    /**
+     * Read 는 캐시 읽기로 아낀 금액, Write 는 캐시 쓰기의 차액이다. 쓰기 단가가 입력보다
+     * 비싼 벤더에서는 Write 가 **음수**이고 그것은 오류가 아니다.
+     */
+    "read": pricing$0.Money;
+    "write": pricing$0.Money;
+    "total": pricing$0.Money;
+    "available_calls": number;
+    "unavailable_calls": number;
+
+    /**
+     * Complete 은 절감액을 계산하지 못한 호출이 하나도 없었다는 뜻이다 (모르는 모델 등).
+     */
+    "complete": boolean;
+}
+
+/**
+ * SessionClassification 은 세션 하나의 분류 결과 전부다.
+ */
+export interface SessionClassification {
+    "session_id": number;
+
+    /**
+     * WorkType 은 세션의 주 작업 유형이다. 턴이 하나도 없으면 unknown 이다.
+     */
+    "work_type": WorkType;
+
+    /**
+     * WorkTypeReason 은 그 유형이 어떻게 뽑혔는지다. 동률로 우선순위가 개입했는지,
+     * 시간을 몰라 턴 수로 갈랐는지가 여기 적힌다.
+     */
+    "work_type_reason": string;
+    "turn_count": number;
+    "total_duration_sec": number;
+
+    /**
+     * DurationKnown 이 false 면 세션 전체 길이가 0 초라 비율과 주 유형을 **턴 수**로
+     * 갈랐다는 뜻이다. turns.ended_at 이 비어 있고 활동 시각도 없는 세션이 그렇다.
+     */
+    "duration_known": boolean;
+    "turns": TurnClass[] | null;
+    "phases": Phase[] | null;
+    "shares": WorkTypeShare[] | null;
+}
+
+/**
+ * SessionDetail 은 Activity 세션 상세 화면 한 장이다.
+ */
+export interface SessionDetail {
+    /**
+     * Found 가 false 면 그 id 가 없다는 뜻이다. 에러가 아니다 — 보존 정책이 지운 세션의
+     * id 를 화면이 아직 들고 있는 것은 정상 상황이고, 그때 앱이 에러 토스트를 띄울
+     * 이유가 없다.
+     */
+    "found": boolean;
+    "session": SessionRow;
+    "files": FileRow[] | null;
+    "tools": ToolRow[] | null;
+    "mcp": SessionMCPRow[] | null;
+
+    /**
+     * ToolsTruncated 는 타임라인이 maxToolEvents 에서 잘렸다는 뜻이다.
+     */
+    "tools_truncated": boolean;
+}
+
+/**
+ * SessionMCPRow 는 한 세션의 MCP 서버별 사용량이다.
+ * 
+ * v3 에는 mcp_session_usage 테이블이 없다. 연결 성공/실패와 토큰 수를 담던 자리가
+ * 사라졌고, 남은 관측은 tool_calls.mcp_server 하나다. 여러 세션을 가로지르는 집계는
+ * MCPRow 가 따로 있다 (Insights 카드).
+ */
+export interface SessionMCPRow {
+    "server_name": string;
+    "tool_calls": number;
+
+    /**
+     * Errors 는 success = 0 인 호출 수다.
+     */
+    "errors": number;
+}
+
+/**
+ * SessionMetrics 는 세션 상세 화면의 지표 한 장이다.
+ */
+export interface SessionMetrics {
+    /**
+     * Found 가 false 면 그 id 가 없다는 뜻이다. **에러가 아니다** — 보존 정책(400일)이
+     * 지운 세션의 id 를 화면이 아직 들고 있는 것은 정상이고, 그때 앱이 에러 토스트를
+     * 띄울 이유가 없다 (Session() 과 같은 계약).
+     */
+    "found": boolean;
+    "session_id": number;
+    "session_key": string;
+    "vendor": string;
+    "title": string;
+    "workspace_path": string;
+    "project_name": string;
+
+    /**
+     * Status 는 running 또는 completed 다. v3 에는 status 컬럼이 없어 조회 시점에
+     * 계산한다 (ADR 0009, StatusExpr).
+     */
+    "status": string;
+
+    /**
+     * StartedAt·EndedAt 은 관측되지 않았으면 null 이다. EndedAt 이 null 이면 진행 중이다.
+     */
+    "started_at": number | null;
+    "ended_at": number | null;
+
+    /**
+     * LastActivityAt 은 마지막으로 알려진 활동 시각이다 (lastActivityExpr).
+     */
+    "last_activity_at": number;
+
+    /**
+     * DurationSeconds 는 세션 소요 시간이다. 진행 중이면 마지막 활동까지를 길이로 본다 —
+     * 그래야 화면의 값이 멈추지 않는다 (durationMS 와 같은 규칙). 시작 시각을 모르면 null.
+     * 
+     * **턴 길이의 합이 아니다.** 턴 사이의 빈 시간을 포함하는 벽시계 길이다.
+     */
+    "duration_seconds": number | null;
+
+    /**
+     * ActiveSeconds 는 sessions.active_time_sec 다. 한 번도 관측되지 않으면 null 이며
+     * 0초와 다르다 (sessions 스키마 문서).
+     */
+    "active_seconds": number | null;
+
+    /**
+     * Totals 의 TurnTotals 부분은 **Turns 가 잘려도 세션 전체**를 덮는다.
+     */
+    "totals": SessionTotals;
+    "turns": TurnMetrics[] | null;
+
+    /**
+     * TurnLimit 은 이 응답에 적용한 상한이다. 상한을 응답에 실어 보내야 화면이
+     * "1000개 중 200개" 를 말할 수 있다.
+     */
+    "turn_limit": number;
+
+    /**
+     * TurnsTruncated 는 턴 목록이 TurnLimit 에서 잘렸다는 뜻이다. 전체 턴 수는
+     * Totals.TurnCount 에 있다.
+     */
+    "turns_truncated": boolean;
+
+    /**
+     * PricingTableVersion·PricingEffectiveDate 는 비용·절감액을 계산한 가격표의 판이다.
+     * 화면에 뜬 금액이 어느 판에서 나왔는지 되짚을 수 있어야 한다 (pricing.Applied).
+     */
+    "pricing_table_version": string;
+    "pricing_effective_date": string;
+}
+
+/**
+ * SessionRow 는 세션 한 줄이다. 계획서 「세션 상세 지표 5종」이 이 안에 있다.
+ * 
+ * # v3 에 출처가 없는 필드
+ * 
+ * v3 sessions 에는 v1 이 갖고 있던 15개 남짓의 비정규화 지표 컬럼이 없다. 수치는 전부
+ * 승격 테이블에서 상관 서브쿼리로 다시 센다. 그래도 되살릴 수 없는 것이 남는다.
+ * 
+ * 	APIErrors    — 오류 응답을 세는 입력이 v3 events 에 없다. 항상 0
+ * 	Retries      — 같은 이유로 항상 0
+ * 	Responses    — 응답 수를 담는 자리가 없다. 항상 0
+ * 
+ * 필드를 지우지 않는 이유는 Totals 와 같다 — GUI TypeScript 바인딩과 `sessions --json`
+ * 출력이 깨진다.
+ */
+export interface SessionRow {
+    /**
+     * ID 는 sessions.id 다. **세션을 가리키는 유일한 키**이고 Session() 의 인자다 —
+     * v3 에서 session_key 는 벤더 안에서만 고유하다.
+     */
+    "id": number;
+
+    /**
+     * SessionKey 는 벤더가 준 세션 식별자다 (v1 의 session_id). 표시·디버깅용이다.
+     */
+    "session_key": string;
+    "vendor": string;
+    "started_at": number;
+
+    /**
+     * LastEventAt 은 마지막으로 알려진 활동 시각이다 (lastActivityExpr).
+     */
+    "last_event_at": number;
+
+    /**
+     * EndedAt 은 null 이면 진행 중이다.
+     */
+    "ended_at": number | null;
+    "status": string;
+
+    /**
+     * Title 은 벤더가 준 세션 제목이다. 없으면 빈 문자열이고, 무엇을 대신 그릴지는
+     * 표시 계층이 정한다 (PROJ-124).
+     */
+    "title": string;
+
+    /**
+     * WorkspacePath 는 작업 폴더 원경로, ProjectName 은 그 basename 이다 (ADR 0010).
+     */
+    "workspace_path": string;
+    "project_name": string;
+    "duration_ms": number;
+    "active_seconds": number;
+    "input_tokens": number;
+    "output_tokens": number;
+    "cache_read_tokens": number;
+    "cache_creation_tokens": number;
+    "cost_usd": number;
+    "tool_calls": number;
+    "tool_errors": number;
+    "tool_rejects": number;
+    "api_requests": number;
+    "reported_cost_calls": number;
+
+    /**
+     * APIErrors·Retries·Responses 는 v3 에 출처가 없어 항상 0 이다 (위 주석).
+     */
+    "api_errors": number;
+    "retries": number;
+    "prompts": number;
+    "responses": number;
+    "lines_added": number;
+    "lines_removed": number;
+}
+
+/**
+ * SessionTotals 는 세션 상단 값이다.
+ * 
+ * TurnTotals 를 임베드해 JSON 에서 평평하게 펼쳐지고, 그 부분은 **정확히 턴별 값의 합**이다
+ * (TestSessionMetricsTopLineEqualsTurnSum).
+ */
+export interface SessionTotals {
+    /**
+     * TurnCount 는 세션의 모든 턴 수다. 가상 턴(turn_index IS NULL)을 포함한다 —
+     * 세션 수준 이벤트가 귀속되는 자리라 그 안의 호출도 세션 비용에 든다.
+     */
+    "turn_count": number;
+
+    /**
+     * PromptTurns 는 실제 턴 수다(turn_index IS NOT NULL). 사용자 프롬프트 수와 같다.
+     */
+    "prompt_turns": number;
+
+    /**
+     * LLMCalls·ToolCalls 는 티켓이 요구하는 「턴별 LLM 호출과 툴 호출 합계」다.
+     */
+    "llm_calls": number;
+    "tool_calls": number;
+
+    /**
+     * ToolErrors 는 success = 0 인 호출, ToolRejects 는 decision = 'reject' 인 호출이다.
+     * success 가 NULL 인 호출(결정만 있고 결과가 없는 것)은 실패가 아니다.
+     */
+    "tool_errors": number;
+    "tool_rejects": number;
+
+    /**
+     * Retries 는 **이벤트 payload 가 명시한** 재시도 횟수다. 같은 도구가 반복됐다는
+     * 이유로 추측하지 않는다 (session_retry.go).
+     */
+    "retries": number;
+
+    /**
+     * LLMDurationMS·ToolDurationMS 는 NULL 이 아닌 duration_ms 만 더한 값이다.
+     * 관측되지 않은 호출은 0 을 보태지 않고 빠진다.
+     */
+    "llm_duration_ms": number;
+    "tool_duration_ms": number;
+    "tokens": TokenTotals;
+    "cost": CostTotals;
+    "cache_savings": SavingsTotals;
+}
+
+/**
+ * TokenTotals 는 토큰 합계다. 값이 NULL 인 컬럼은 더하지 않는다 — 0 으로 눕히면
+ * "0 토큰을 쓴 호출" 과 "토큰을 보고하지 않은 호출" 이 같아진다.
+ */
+export interface TokenTotals {
+    "input_tokens": number;
+    "output_tokens": number;
+    "cache_read_tokens": number;
+
+    /**
+     * CacheWrite 는 llm_calls.cache_write_tokens 다. SessionRow 는 같은 값을
+     * cache_creation_tokens 라는 v1 이름으로 내보낸다.
+     */
+    "cache_write_tokens": number;
+
+    /**
+     * Reasoning 은 **출력 토큰의 부분집합**이라 Billable 에 다시 더하지 않는다
+     * (llm_calls 스키마 문서). Codex reasoning_token_count에서 온다.
+     */
+    "reasoning_tokens": number;
+}
+
+/**
+ * ToolRow 는 tool_calls 한 행이다 (계획서 「최근 작업 타임라인」).
+ * 
+ * v1 의 action(read|edit|write|run|search)과 target_hash 는 v3 에 컬럼이 없어 사라졌다.
+ * 대상은 원경로 하나로 온다.
+ */
+export interface ToolRow {
+    "id": number;
+    "turn_id": number;
+    "ts": number;
+    "tool_name": string;
+
+    /**
+     * Target 은 대상의 원경로, TargetName 은 그 basename 이다.
+     */
+    "target": string;
+    "target_name": string;
+
+    /**
+     * Success 가 null 이면 성공 여부를 모른다는 뜻이고 실패와 다르다 — 결정만 있고 결과가
+     * 없는 호출(거부된 편집)이 그 경우다.
+     */
+    "success": boolean | null;
+    "duration_ms": number | null;
+    "error_type": string;
+    "decision": string;
+    "mcp_server": string;
+}
+
+/**
+ * TurnClass 는 턴 하나의 분류 결과다.
+ */
+export interface TurnClass {
+    "turn_id": number;
+    "turn_index": number;
+    "work_type": WorkType;
+
+    /**
+     * StartedAt 은 turns.started_at(UTC 초)이다. 0 이면 모른다.
+     */
+    "started_at": number;
+
+    /**
+     * DurationSec 는 턴 길이다. ClassifyTurns 가 채운다 — 이웃 턴을 봐야 정해지므로
+     * 턴 하나만으로는 알 수 없다.
+     */
+    "duration_sec": number;
+
+    /**
+     * Evidence 는 관측 순서 그대로의 근거다. 결정은 이 목록 전체에서 나온다.
+     */
+    "evidence": Evidence[] | null;
+
+    /**
+     * Reason 은 Evidence 를 사람이 읽는 한 줄로 만든 것이다. 테스트 실패 메시지가
+     * 이 문자열을 싣는다 — 분류가 어긋났을 때 근거를 다시 캐낼 필요가 없어야 한다.
+     */
+    "reason": string;
+}
+
+/**
+ * TurnMetrics 는 턴 하나의 지표다.
+ */
+export interface TurnMetrics {
+    "prompt_text": string;
+    "prompt_truncated": boolean;
+    "files_changed": number;
+
+    /**
+     * TurnID 는 turns.id 다.
+     */
+    "turn_id": number;
+
+    /**
+     * TurnKey 는 벤더가 준 턴 식별자다 (Claude Code prompt.id, Codex 합성 키).
+     */
+    "turn_key": string;
+
+    /**
+     * TurnIndex 는 실제 턴 순서다. null 이면 가상 턴이다.
+     */
+    "turn_index": number | null;
+
+    /**
+     * Virtual 은 TurnIndex 가 null 이라는 뜻이다. 화면이 포인터를 풀지 않아도 되게 둔다.
+     */
+    "virtual": boolean;
+    "started_at": number | null;
+    "ended_at": number | null;
+
+    /**
+     * DurationSeconds 는 두 시각을 다 아는 턴에서만 값이 있다. 모르는 것을 0 으로 눕히면
+     * "즉시 끝난 턴" 과 구분되지 않는다.
+     */
+    "duration_seconds": number | null;
+
+    /**
+     * TTFTMS 는 Codex 의 time-to-first-token 이다. 관측되지 않으면 null 이다.
+     */
+    "ttft_ms": number | null;
+
+    /**
+     * LLMCalls·ToolCalls 는 티켓이 요구하는 「턴별 LLM 호출과 툴 호출 합계」다.
+     */
+    "llm_calls": number;
+    "tool_calls": number;
+
+    /**
+     * ToolErrors 는 success = 0 인 호출, ToolRejects 는 decision = 'reject' 인 호출이다.
+     * success 가 NULL 인 호출(결정만 있고 결과가 없는 것)은 실패가 아니다.
+     */
+    "tool_errors": number;
+    "tool_rejects": number;
+
+    /**
+     * Retries 는 **이벤트 payload 가 명시한** 재시도 횟수다. 같은 도구가 반복됐다는
+     * 이유로 추측하지 않는다 (session_retry.go).
+     */
+    "retries": number;
+
+    /**
+     * LLMDurationMS·ToolDurationMS 는 NULL 이 아닌 duration_ms 만 더한 값이다.
+     * 관측되지 않은 호출은 0 을 보태지 않고 빠진다.
+     */
+    "llm_duration_ms": number;
+    "tool_duration_ms": number;
+    "tokens": TokenTotals;
+    "cost": CostTotals;
+    "cache_savings": SavingsTotals;
+}
+
+/**
+ * WorkType 은 턴·단계·세션의 작업 유형이다. 문자열이 곧 TS 계약이다 (ADR 0004).
+ */
+export enum WorkType {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    /**
+     * WorkTypeExploration 은 읽기·검색만 한 턴이다.
+     */
+    WorkTypeExploration = "exploration",
+
+    /**
+     * WorkTypeImplementation 은 파일을 만들거나 고친 턴이다.
+     */
+    WorkTypeImplementation = "implementation",
+
+    /**
+     * WorkTypeDebugging 은 실패·오류를 마주한 턴이다.
+     */
+    WorkTypeDebugging = "debugging",
+
+    /**
+     * WorkTypeVerification 은 테스트·빌드·정적검사를 돌린 턴이다.
+     */
+    WorkTypeVerification = "verification",
+
+    /**
+     * WorkTypeUnknown 은 근거가 없거나 모르는 도구·명령만 있는 턴이다. **안전한 fallback**
+     * 이고, 모르는 것을 그럴듯한 값으로 채우지 않는다 — 추측한 유형은 틀려도 아무 데서도
+     * 실패하지 않은 채 화면의 비율만 조용히 왜곡한다.
+     */
+    WorkTypeUnknown = "unknown",
+};
+
+/**
+ * WorkTypeShare 는 세션 안에서 작업 유형 하나가 차지하는 몫이다 — 「작업 유형 비율」.
+ */
+export interface WorkTypeShare {
+    "work_type": WorkType;
+    "duration_sec": number;
+    "turn_count": number;
+    "phase_count": number;
+    "share_permille": number;
 }

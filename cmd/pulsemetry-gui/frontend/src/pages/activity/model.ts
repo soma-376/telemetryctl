@@ -1,4 +1,14 @@
-import type { ActivitySession, FileChange, SessionState, StageStyle, StateStyle, ToolCall, TurnDisplay, TurnKind, TurnSegment, TurnStyle } from "./types";
+import type {
+  ActivitySession,
+  SessionState,
+  StageStyle,
+  StateStyle,
+  TurnDisplay,
+  TurnKind,
+  TurnSegment,
+  TurnStyle,
+} from "./types";
+
 export type * from "./types";
 import { AGENT_NAMES } from "$lib/domain/agent";
 import { formatDuration } from "$lib/utils/format";
@@ -12,15 +22,35 @@ const AGENT_LABELS = AGENT_NAMES;
 // oo: 세션 상태 스타일 맵 — 진행 중은 모래빛+dot, 종료는 중립 회색+dot 없음
 const STATE_STYLE: Record<SessionState, StateStyle> = {
   running: { label: "진행 중", bg: "var(--color-sand-soft)", fg: "#8b6b36" },
-  done: { label: "종료", bg: "var(--color-inactive-soft)", fg: "var(--color-text-secondary)" },
+  done: {
+    label: "종료",
+    bg: "var(--color-inactive-soft)",
+    fg: "var(--color-text-secondary)",
+  },
 };
 
 // so: 스테이지 스타일 맵 (디버깅 bar 색은 리터럴 #FF9A5C)
 const STAGE_STYLE: Record<string, StageStyle> = {
-  Exploring: { ko: "탐색 중", bar: "var(--color-border)", label: "var(--color-text-secondary)" },
-  Implementing: { ko: "구현 중", bar: "var(--color-info)", label: "var(--color-info)" },
-  Debugging: { ko: "디버깅 중", bar: "#FF9A5C", label: "var(--color-text-secondary)" },
-  Verifying: { ko: "검증 중", bar: "var(--color-success)", label: "var(--color-success)" },
+  Exploring: {
+    ko: "탐색 중",
+    bar: "var(--color-border)",
+    label: "var(--color-text-secondary)",
+  },
+  Implementing: {
+    ko: "구현 중",
+    bar: "var(--color-info)",
+    label: "var(--color-info)",
+  },
+  Debugging: {
+    ko: "디버깅 중",
+    bar: "#FF9A5C",
+    label: "var(--color-text-secondary)",
+  },
+  Verifying: {
+    ko: "검증 중",
+    bar: "var(--color-success)",
+    label: "var(--color-success)",
+  },
 };
 
 // xl: 스테이지 이름 → 한국어 라벨
@@ -28,20 +58,80 @@ const stageKo = (name: string): string => STAGE_STYLE[name]?.ko ?? "";
 
 // 턴 라벨 스타일 맵 (Activity v2 드로어 전용 팔레트 — 디버깅 계열은 리터럴)
 const TURN_STYLE: Record<TurnKind, TurnStyle> = {
-  explore: { name: "탐색", bar: "var(--color-inactive)", fg: "#5e5a54", bg: "#f1efeb", border: "#ddd8d0" },
-  implement: { name: "구현", bar: "var(--color-sand)", fg: "var(--color-accent)", bg: "var(--color-sand-soft)", border: "#e6d5b8" },
-  debug: { name: "디버깅", bar: "#e08a3c", fg: "#9a5a14", bg: "#fbeee0", border: "#f0d2ae" },
-  verify: { name: "검증", bar: "var(--color-success)", fg: "#2f7e55", bg: "var(--color-success-soft)", border: "#c9e7d6" },
+  unknown: {
+    name: "미분류",
+    bar: "var(--color-border)",
+    fg: "var(--color-text-secondary)",
+    bg: "var(--color-surface-hover)",
+    border: "var(--color-border)",
+  },
+  explore: {
+    name: "탐색",
+    bar: "var(--color-inactive)",
+    fg: "#5e5a54",
+    bg: "#f1efeb",
+    border: "#ddd8d0",
+  },
+  implement: {
+    name: "구현",
+    bar: "var(--color-sand)",
+    fg: "var(--color-accent)",
+    bg: "var(--color-sand-soft)",
+    border: "#e6d5b8",
+  },
+  debug: {
+    name: "디버깅",
+    bar: "#e08a3c",
+    fg: "#9a5a14",
+    bg: "#fbeee0",
+    border: "#f0d2ae",
+  },
+  verify: {
+    name: "검증",
+    bar: "var(--color-success)",
+    fg: "#2f7e55",
+    bg: "var(--color-success-soft)",
+    border: "#c9e7d6",
+  },
 };
 
 const TURN_KINDS = Object.keys(TURN_STYLE) as TurnKind[];
-import { SESSIONS } from "./mock";
 
 // ml: 세션 행 표시 데이터 계산
+// dayHeadings 는 각 행 위에 놓을 날짜 머리말이다. 머리말이 없는 자리는 null 이다.
+//
+// 상태별 헤더는 두지 않는다. 여러 날짜가 있으면 연속된 시작 날짜가 바뀌는 곳만 표시한다.
+export function dayHeadings(sessions: ActivitySession[]): (string | null)[] {
+  const days = new Set(sessions.map((s) => s.day).filter(Boolean));
+
+  if (days.size < 2) return sessions.map(() => null);
+  let previous = "";
+
+  return sessions.map((s) => {
+    const day = s.day ?? "";
+
+    if (!day || day === previous) return null;
+    previous = day;
+
+    return dayLabel(day);
+  });
+}
+
+function dayLabel(day: string): string {
+  // 시간대 표기 없는 날짜-시각은 로컬로 해석된다. `day` 만 넘기면 UTC 자정이라 하루 밀린다.
+  return new Date(`${day}T00:00:00`).toLocaleDateString([], {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    weekday: "short",
+  });
+}
+
 export function rowDisplay(e: ActivitySession, selected: boolean) {
   const n = STATE_STYLE[e.state];
   const running = e.state === "running";
   const stage = running ? e.stages[e.active] : undefined;
+
   return {
     dot: running ? "var(--color-accent)" : "var(--color-border-strong)",
     running,
@@ -70,21 +160,30 @@ export function rowDisplay(e: ActivitySession, selected: boolean) {
 }
 
 // bl: 세션 상세(드로어) 표시 데이터 계산
-export function detailDisplay(index: number) {
-  const t = SESSIONS[index];
+//
+// 세션을 인자로 받는다. 예전에는 mock 의 SESSIONS 를 직접 인덱싱했는데, 그러면 이 함수가
+// 데이터 출처를 알아야 하고 index 의 의미가 그 배열에 묶인다. position 도 같은 이유로
+// 호출부가 만든다 — 전체 개수를 아는 것은 목록이지 이 함수가 아니다.
+export function detailDisplay(t: ActivitySession, position: string) {
   const n = STATE_STYLE[t.state];
 
   const turns = t.turns;
-  const totalMins = turns.reduce((sum, u) => sum + u.mins, 0) || 1;
+  const totalMins = turns.reduce((sum, u) => sum + (u.mins ?? 0), 0);
+  const durationKnown = turns.length > 0 && turns.every((u) => u.mins !== null);
+  const weight = (u: (typeof turns)[number]) =>
+    durationKnown ? (u.mins ?? 0) : 1;
+  const totalWeight = turns.reduce((sum, u) => sum + weight(u), 0) || 1;
   const minsByKind: Partial<Record<TurnKind, number>> = {};
+
   turns.forEach((u) => {
-    minsByKind[u.kind] = (minsByKind[u.kind] ?? 0) + u.mins;
+    minsByKind[u.kind] = (minsByKind[u.kind] ?? 0) + weight(u);
   });
+
   // 가장 오래 머문 턴 분류가 세션 성격이 된다.
   const topKind = TURN_KINDS.reduce((a, b) =>
     (minsByKind[b] ?? 0) > (minsByKind[a] ?? 0) ? b : a,
   );
-  const cl = TURN_STYLE[topKind];
+  const cl = TURN_STYLE[t.workType ?? topKind];
 
   return {
     title: t.title,
@@ -93,26 +192,40 @@ export function detailDisplay(index: number) {
     agentName: AGENT_LABELS[t.agentId],
     agentId: t.agentId,
     badge: { label: n.label, bg: n.bg, fg: n.fg },
-    character: { label: cl.name + "형 세션", fg: cl.fg, bg: cl.bg, border: cl.border, dot: cl.bar },
+    character: {
+      label: cl.name + "형 세션",
+      fg: cl.fg,
+      bg: cl.bg,
+      border: cl.border,
+      dot: cl.bar,
+    },
     range: t.range,
     kpi: t.kpi,
     turnCount:
-      turns.length + "턴 · " + formatDuration(totalMins),
+      turns.length +
+      "턴 · " +
+      (durationKnown ? formatDuration(totalMins) : "턴 수 기준 · 시간 미수집"),
     legend: TURN_KINDS.map((k) => ({
       name: TURN_STYLE[k].name,
       color: TURN_STYLE[k].bar,
-      pct: Math.round(((minsByKind[k] ?? 0) / totalMins) * 100) + "%",
+      pct: Math.round(((minsByKind[k] ?? 0) / totalWeight) * 100) + "%",
     })),
-    segments: turns.map(
-      (u, i): TurnSegment => ({
-        grow: u.mins,
-        color: TURN_STYLE[u.kind].bar,
-        radius: i === 0 ? "4px 0 0 4px" : i === turns.length - 1 ? "0 4px 4px 0" : "0",
-        tip: i + 1 + "턴 · " + TURN_STYLE[u.kind].name + " · " + u.mins + "분",
-      }),
-    ),
+    segments: turns.map((u, i): TurnSegment => ({
+      grow: weight(u),
+      color: TURN_STYLE[u.kind].bar,
+      radius:
+        i === 0 ? "4px 0 0 4px" : i === turns.length - 1 ? "0 4px 4px 0" : "0",
+      tip:
+        i +
+        1 +
+        "턴 · " +
+        TURN_STYLE[u.kind].name +
+        " · " +
+        (u.mins === null ? "시간 미수집" : formatDuration(u.mins)),
+    })),
     turns: turns.map((u, i): TurnDisplay => {
       const s = TURN_STYLE[u.kind];
+
       return {
         n: i + 1,
         time: u.time,
@@ -121,21 +234,39 @@ export function detailDisplay(index: number) {
         labelBg: s.bg,
         labelBorder: s.border,
         labelDot: s.bar,
-        preview: u.prompt.split("\n")[0],
-        prompt: u.prompt,
-        chars: u.prompt.length + "자",
+        preview: u.prompt.split("\n")[0] || "프롬프트 미수집",
+        prompt: u.prompt || "수집된 프롬프트가 없습니다.",
+        chars:
+          u.prompt.length + "자" + (u.promptTruncated ? " · 일부 표시" : ""),
         meta: u.actions + " Action · " + u.tokens,
         stats: [
-          { name: "Agent Action", value: String(u.actions), fg: "var(--color-text)" },
-          { name: "변경 파일", value: String(u.filesChanged), fg: "var(--color-text)" },
+          {
+            name: "Agent Action",
+            value: String(u.actions),
+            fg: "var(--color-text)",
+          },
+          {
+            name: "변경 파일",
+            value: String(u.filesChanged),
+            fg: "var(--color-text)",
+          },
           { name: "토큰", value: u.tokens, fg: "var(--color-text)" },
-          { name: "재시도", value: String(u.retries), fg: u.retries ? "#9a6a14" : "var(--color-text)" },
+          {
+            name: "재시도",
+            value: u.retries === null ? "미수집" : String(u.retries),
+            fg: u.retries ? "#9a6a14" : "var(--color-text)",
+          },
         ],
-        callNote: u.calls.length + "회 · 실패 " + u.calls.filter((c) => !c.ok).length,
+        callNote:
+          u.calls.length +
+          "회 표시 · 실패 " +
+          u.calls.filter((c) => c.ok === false).length +
+          " · 결과 미수집 " +
+          u.calls.filter((c) => c.ok === null).length,
         calls: u.calls,
       };
     }),
     files: t.files,
-    position: `${index + 1} / ${SESSIONS.length}`,
+    position,
   };
 }

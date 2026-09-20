@@ -2,10 +2,15 @@ package vendorlimit
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -18,18 +23,17 @@ func TestGetJSON은실패종류를Reason으로가른다(t *testing.T) {
 		status     int
 		body       string
 		dead       bool
-		wantErr    error
 		wantReason Reason
 	}{
 		{name: "200 은 성공", status: 200, body: `{"ok":true}`},
-		{name: "401 은 토큰 만료", status: 401, wantErr: errUnauthorized, wantReason: ReasonTokenExpired},
-		{name: "403 도 토큰 만료", status: 403, wantErr: errUnauthorized, wantReason: ReasonTokenExpired},
-		{name: "429 는 상위 상태", status: 429, wantErr: errStatus, wantReason: ReasonUpstreamStatus},
-		{name: "500 은 상위 상태", status: 500, wantErr: errStatus, wantReason: ReasonUpstreamStatus},
-		{name: "404 는 상위 상태 — 엔드포인트가 사라진 경우", status: 404, wantErr: errStatus, wantReason: ReasonUpstreamStatus},
-		{name: "본문이 JSON 이 아니면 응답 미인식", status: 200, body: `<html>maintenance</html>`, wantErr: errUnrecognized, wantReason: ReasonResponseUnrecognized},
-		{name: "빈 본문도 응답 미인식", status: 200, body: ``, wantErr: errUnrecognized, wantReason: ReasonResponseUnrecognized},
-		{name: "연결 실패는 네트워크 오류", dead: true, wantErr: errNetwork, wantReason: ReasonNetwork},
+		{name: "401 은 인증 거부", status: 401, wantReason: ReasonAuthRejected},
+		{name: "403 은 접근 거부", status: 403, wantReason: ReasonAccessDenied},
+		{name: "429 는 요청 빈도 제한", status: 429, wantReason: ReasonRateLimited},
+		{name: "500 은 상위 상태", status: 500, wantReason: ReasonUpstreamStatus},
+		{name: "404 는 상위 상태 — 엔드포인트가 사라진 경우", status: 404, wantReason: ReasonUpstreamStatus},
+		{name: "본문이 JSON 이 아니면 응답 미인식", status: 200, body: `<html>maintenance</html>`, wantReason: ReasonResponseUnrecognized},
+		{name: "빈 본문도 응답 미인식", status: 200, body: ``, wantReason: ReasonResponseUnrecognized},
+		{name: "연결 실패는 네트워크 오류", dead: true, wantReason: ReasonNetwork},
 	}
 
 	for _, tc := range tests {
@@ -43,7 +47,10 @@ func TestGetJSON은실패종류를Reason으로가른다(t *testing.T) {
 					w.WriteHeader(tc.status)
 					// 요청 헤더를 그대로 되비추는 상위를 흉내 낸다. 오류 문자열이 본문을
 					// 싣는 순간 토큰이 새는 가장 현실적인 경로다.
-					_, _ = fmt.Fprintf(w, "%s", tc.body+r.Header.Get("Authorization"))
+					_, _ = fmt.Fprint(w, tc.body)
+					if tc.status >= 400 {
+						_, _ = fmt.Fprint(w, r.Header.Get("Authorization"))
+					}
 				})
 				endpoint = up.srv.URL
 			}
@@ -51,7 +58,7 @@ func TestGetJSON은실패종류를Reason으로가른다(t *testing.T) {
 			var out map[string]any
 			err := getJSON(context.Background(), newHTTPClient(), endpoint, newToken(claudeCanary), nil, &out)
 
-			if tc.wantErr == nil {
+			if tc.wantReason == ReasonNone {
 				if err != nil {
 					t.Fatalf("getJSON: %v", err)
 				}
@@ -62,9 +69,6 @@ func TestGetJSON은실패종류를Reason으로가른다(t *testing.T) {
 			}
 			if err == nil {
 				t.Fatal("실패해야 하는데 성공했다")
-			}
-			if !errors.Is(err, tc.wantErr) {
-				t.Fatalf("errors.Is(%v, %v) = false", err, tc.wantErr)
 			}
 			if got := transportReason(err); got != tc.wantReason {
 				t.Errorf("transportReason = %q, want %q", got, tc.wantReason)
@@ -120,36 +124,121 @@ func TestGetJSON은컨텍스트취소를따른다(t *testing.T) {
 	if err == nil {
 		t.Fatal("취소됐는데 성공했다")
 	}
-	if !errors.Is(err, errNetwork) {
-		t.Fatalf("errors.Is(%v, errNetwork) = false", err)
+	if got := transportReason(err); got != ReasonTimeout {
+		t.Fatalf("reason = %q, want %q", got, ReasonTimeout)
 	}
 	assertNoSecret(t, "취소 오류 문자열", []string{err.Error()}, claudeCanary)
 }
 
-// *url.Error 는 요청 URL 을 통째로 담아 온다. 질의 문자열이나 userinfo 에 비밀이 실리면
-// %v 한 번으로 그대로 로그에 남는다.
-func TestSanitizeErr는URL을버린다(t *testing.T) {
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestGetJSON은감싸진통신오류를분류하고원문을버린다(t *testing.T) {
 	t.Parallel()
-	cause := errors.New("connection refused")
-	wrapped := &url.Error{
-		Op:  "Get",
-		URL: "https://user:LEAK-SECRET@api.example.com/usage?token=LEAK-SECRET",
-		Err: cause,
+	tests := []struct {
+		name   string
+		err    error
+		reason Reason
+		kind   string
+	}{
+		{"DNS", &net.DNSError{Err: claudeCanary, Name: "private.example"}, ReasonDNS, "dns"},
+		{"DNS 타임아웃", &net.DNSError{Err: claudeCanary, IsTimeout: true}, ReasonTimeout, "dns_timeout"},
+		{"기한 초과", fmt.Errorf("%s: %w", claudeCanary, context.DeadlineExceeded), ReasonTimeout, "timeout"},
+		{"소켓 타임아웃", &net.OpError{Op: "read", Err: os.ErrDeadlineExceeded}, ReasonTimeout, "timeout"},
+		{"취소", fmt.Errorf("%s: %w", claudeCanary, context.Canceled), ReasonCanceled, "canceled"},
+		{"연결 거부", &net.OpError{Op: "dial", Err: errors.New(claudeCanary)}, ReasonNetwork, "connection"},
+		{"인증서 검증", &tls.CertificateVerificationError{Err: errors.New(claudeCanary)}, ReasonTLS, "tls"},
+		{"인증서 발급자", x509.UnknownAuthorityError{}, ReasonTLS, "tls"},
+		{"인증서 호스트", x509.HostnameError{Host: claudeCanary}, ReasonTLS, "tls"},
+		{"인증서 만료", x509.CertificateInvalidError{Detail: claudeCanary}, ReasonTLS, "tls"},
+		{"TLS 응답", tls.RecordHeaderError{Msg: claudeCanary}, ReasonTLS, "tls"},
+		{"기타 통신 오류", errors.New(claudeCanary), ReasonNetwork, "transport"},
 	}
-	got := sanitizeErr(wrapped)
-	if strings.Contains(got.Error(), "LEAK-SECRET") {
-		t.Fatalf("URL 이 남아 있다: %v", got)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+				return nil, &url.Error{Op: "Get", URL: "https://private.example/?token=" + claudeCanary, Err: tc.err}
+			})}
+			err := getJSON(context.Background(), client, "https://api.example/usage", newToken(claudeCanary), nil, new(map[string]any))
+			assertRequestFailure(t, err, tc.reason, tc.kind, "transport", 0)
+		})
 	}
-	if !errors.Is(got, cause) {
-		t.Fatalf("원인이 사라졌다: %v", got)
+}
+
+type errorReader struct{ err error }
+
+func (r errorReader) Read([]byte) (int, error) { return 0, r.err }
+
+type trackedBody struct {
+	io.Reader
+	read   int
+	closed bool
+}
+
+func (b *trackedBody) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	b.read += n
+	return n, err
+}
+
+func (b *trackedBody) Close() error { b.closed = true; return nil }
+
+func TestGetJSON은본문수신실패와해석실패를구분한다(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		body        io.Reader
+		reason      Reason
+		kind, phase string
+	}{
+		{"본문 타임아웃", io.MultiReader(strings.NewReader(`{"ok":`), errorReader{context.DeadlineExceeded}), ReasonTimeout, "timeout", "response_body"},
+		{"본문 취소", errorReader{context.Canceled}, ReasonCanceled, "canceled", "response_body"},
+		{"JSON 뒤 연결 끊김", io.MultiReader(strings.NewReader(`{"ok":true}`), errorReader{io.ErrUnexpectedEOF}), ReasonNetwork, "connection_closed", "response_body"},
+		{"수신 오류 원문 제거", errorReader{errors.New(claudeCanary)}, ReasonNetwork, "transport", "response_body"},
+		{"잘못된 JSON", strings.NewReader(claudeCanary), ReasonResponseUnrecognized, "invalid_json", "decode"},
+		{"잘린 JSON", strings.NewReader(`{"ok":`), ReasonResponseUnrecognized, "invalid_json", "decode"},
+		{"JSON 뒤 추가 원문", strings.NewReader(`{"ok":true}` + claudeCanary), ReasonResponseUnrecognized, "invalid_json", "decode"},
+		{"본문 크기 초과", strings.NewReader(`{"ok":true}` + strings.Repeat(" ", maxResponseBytes)), ReasonResponseUnrecognized, "body_too_large", "response_body"},
 	}
-	plain := errors.New("그냥 오류")
-	if sanitizeErr(plain) != plain {
-		t.Error("url.Error 가 아닌 오류가 변형됐다")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body := &trackedBody{Reader: tc.body}
+			client := &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Body: body}, nil
+			})}
+			err := getJSON(context.Background(), client, "https://api.example/usage", newToken(claudeCanary), nil, new(map[string]any))
+			assertRequestFailure(t, err, tc.reason, tc.kind, tc.phase, http.StatusOK)
+			if !body.closed || body.read > maxResponseBytes+1 {
+				t.Fatalf("본문 자원 제한 위반: closed=%v read=%d", body.closed, body.read)
+			}
+		})
 	}
-	if sanitizeErr(nil) != nil {
-		t.Error("nil 이 변형됐다")
+}
+
+func TestGetJSON은HTTP오류본문을읽지않는다(t *testing.T) {
+	t.Parallel()
+	body := &trackedBody{Reader: strings.NewReader(claudeCanary)}
+	client := &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusForbidden, Body: body}, nil
+	})}
+	err := getJSON(context.Background(), client, "https://api.example/usage", newToken(claudeCanary), nil, new(map[string]any))
+	assertRequestFailure(t, err, ReasonAccessDenied, "access_denied", "response_headers", http.StatusForbidden)
+	if body.read != 0 || !body.closed {
+		t.Fatalf("오류 본문을 읽었거나 닫지 않았다: read=%d closed=%v", body.read, body.closed)
 	}
+}
+
+func assertRequestFailure(t *testing.T, err error, reason Reason, kind, phase string, status int) {
+	t.Helper()
+	var failure *requestFailure
+	if !errors.As(err, &failure) {
+		t.Fatalf("분류된 오류가 아니다: %v", err)
+	}
+	if transportReason(err) != reason || failure.kind != kind || failure.phase != phase || failure.status != status {
+		t.Fatalf("failure=%+v reason=%s, want %s/%s/%s/%d", failure, transportReason(err), reason, kind, phase, status)
+	}
+	assertNoSecret(t, "오류 내부와 출력", append(allStrings(failure), err.Error(), fmt.Sprintf("%#v", err)), claudeCanary, "private.example", "Bearer ")
 }
 
 func TestTransportReason은모르는오류를내부오류로본다(t *testing.T) {

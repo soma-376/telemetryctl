@@ -56,16 +56,16 @@ func (r *Reader) Vendors(ctx context.Context) (out []VendorStatus, err error) {
 	}
 	rows, err := db.QueryContext(ctx, vendorsSQL)
 	if err != nil {
-		return nil, queryErr(op, err)
+		return nil, QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	cutoff := r.now().Add(-VendorActiveWindow).Unix()
 	for rows.Next() {
 		var v VendorStatus
 		if serr := rows.Scan(&v.Vendor, &v.FirstSeen, &v.LastSeen, &v.Status,
 			&v.EventsTotal, &v.Sessions, &v.RunningSessions); serr != nil {
-			return nil, queryErr(op, serr)
+			return nil, QueryErr(op, serr)
 		}
 		v.Connected = v.LastSeen >= cutoff
 		out = append(out, v)
@@ -134,23 +134,23 @@ func (r *Reader) MCPUsage(ctx context.Context, lastNSessions int) (out []MCPRow,
 	if !ok {
 		return out, nil
 	}
-	n := clampLimit(lastNSessions, defaultMCPSessions, maxMCPSessions)
+	n := ClampLimit(lastNSessions, defaultMCPSessions, maxMCPSessions)
 
 	var scope int64
 	if serr := db.QueryRowContext(ctx, scopeSessionCountSQL, n).Scan(&scope); serr != nil {
-		return nil, queryErr(op, serr)
+		return nil, QueryErr(op, serr)
 	}
 
 	rows, err := db.QueryContext(ctx, mcpUsageSQL, n)
 	if err != nil {
-		return nil, queryErr(op, err)
+		return nil, QueryErr(op, err)
 	}
-	defer closeRows(rows, op, &err)
+	defer CloseRows(rows, op, &err)
 
 	for rows.Next() {
 		var m MCPRow
 		if serr := rows.Scan(&m.ServerName, &m.Sessions, &m.ToolCalls, &m.Errors); serr != nil {
-			return nil, queryErr(op, serr)
+			return nil, QueryErr(op, serr)
 		}
 		m.ScopeSessions = scope
 		out = append(out, m)

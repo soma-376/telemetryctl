@@ -122,12 +122,12 @@ func TestClaudeAdapter실패경로는벤더만unavailable로만든다(t *testing
 			wantReason: ReasonTokenExpired,
 		},
 		{
-			name: "상위가 401 이면 만료",
+			name: "상위가 401 이면 인증 거부이며 만료로 단정하지 않는다",
 			setup: func(t *testing.T, home string) string {
 				writeClaudeCredential(t, home, claudeCredentialJSON(claudeCanary, time.Time{}, "max"))
 				return statusUpstream(t, http.StatusUnauthorized).srv.URL
 			},
-			wantReason: ReasonTokenExpired,
+			wantReason: ReasonAuthRejected,
 		},
 		{
 			name: "상위가 500 이면 상위 상태",

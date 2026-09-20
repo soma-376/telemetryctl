@@ -13,6 +13,15 @@ export async function getAppInfo(): Promise<AppInfo> {
   }
 }
 
+// WebView가 절전 복귀 등으로 다시 만들어져도 네이티브 퀵뷰의 현재 상태를 복구한다.
+export async function isTrayVisible(): Promise<boolean> {
+  try {
+    return await App.IsTrayVisible();
+  } catch {
+    return false;
+  }
+}
+
 // 트레이 퀵뷰 → 메인 창 제어. 브라우저 프리뷰에서는 조용히 무시된다.
 export async function openMainWindow(): Promise<void> {
   try {

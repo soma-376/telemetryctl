@@ -20,6 +20,14 @@ export function GetAppInfo(): $CancellablePromise<$models.AppInfo> {
 }
 
 /**
+ * IsTrayVisible 은 WebView가 다시 만들어졌을 때도 네이티브 퀵뷰의 현재 상태를 복구하게 한다.
+ * tray:shown/tray:hidden은 상태 변경 알림일 뿐이므로 마운트 시점의 상태 원본이 될 수 없다.
+ */
+export function IsTrayVisible(): $CancellablePromise<boolean> {
+    return $Call.ByID(2463498113);
+}
+
+/**
  * OpenMainSettings 는 메인 창을 열고 설정 모달을 띄우라는 이벤트를 보낸다 (퀵뷰 "트레이 설정").
  */
 export function OpenMainSettings(): $CancellablePromise<void> {

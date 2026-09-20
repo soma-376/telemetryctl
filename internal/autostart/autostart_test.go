@@ -50,27 +50,19 @@ func TestNew는빈HomeDir를거부한다(t *testing.T) {
 	}
 }
 
-func TestNew는windows에서ErrUnsupportedPlatform이다(t *testing.T) {
+func TestNew는windows작업스케줄러를선택한다(t *testing.T) {
 	env := testEnv(t, "windows")
 	fr := newFakeRunner(nil)
 
 	m, err := New(Options{Env: env, GOOS: "windows", Runner: fr, ExecPath: `C:\bin\telemetryctl.exe`})
-	if !errors.Is(err, ErrUnsupportedPlatform) {
-		t.Fatalf("New err = %v, want ErrUnsupportedPlatform", err)
+	if err != nil {
+		t.Fatalf("New: %v", err)
 	}
-	if m != nil {
-		t.Fatal("windows 에서 Manager 를 돌려줬다")
+	if m.Kind() != KindTaskScheduler {
+		t.Fatalf("Kind = %q, want %q", m.Kind(), KindTaskScheduler)
 	}
-	// 파일도 쓰지 않고 명령도 부르지 않아야 한다.
 	if fr.count() != 0 {
 		t.Fatalf("exec 호출 %d회, want 0", fr.count())
-	}
-	entries, err := os.ReadDir(env.HomeDir)
-	if err != nil {
-		t.Fatalf("ReadDir: %v", err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("홈에 파일이 생겼다: %v", entries)
 	}
 }
 

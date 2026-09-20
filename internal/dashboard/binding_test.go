@@ -149,7 +149,7 @@ func TestWailsBinding_EveryGUIFacingTypeUsesSnakeCaseTags(t *testing.T) {
 	// 화면별 대표 타입이 실제로 수집됐는지 확인한다. 수집기가 조용히 좁아지면 이 테스트
 	// 전체가 무의미하게 통과한다.
 	for _, want := range []any{
-		HomeSummary{}, HomeBreakdown{}, ActivityPage{}, ActivityRow{},
+		HomeSummary{}, HomeBreakdown{},
 		SessionDetail{}, SessionMetrics{}, SessionFileChanges{},
 		SessionClassification{}, Status{}, TodaySummary{}, Row{}, Hit{},
 		VendorStatus{}, MCPRow{}, WorkspaceFolder{},
@@ -281,7 +281,6 @@ func TestWailsBinding_ServiceCoversEveryScreen(t *testing.T) {
 		{"Home", "Home"},
 		{"Home 사용량 분해", "HomeBreakdown"},
 		{"Today(레거시 카드)", "Today"},
-		{"Activity 목록", "Activity"},
 		{"Activity 세션 상세", "Session"},
 		{"세션 지표", "SessionMetrics"},
 		{"세션 파일 변경", "FileChanges"},
@@ -331,7 +330,6 @@ func TestWailsBinding_ScreenResponsesRoundTripThroughJSON(t *testing.T) {
 			return f.reader.HomeBreakdown(ctx, HomeBreakdownQuery{TZ: seoul, Date: crossDay})
 		}},
 		{"Today", func() (any, error) { return f.reader.Today(ctx, seoul) }},
-		{"Activity", func() (any, error) { return f.reader.Activity(ctx, ActivityQuery{}) }},
 		{"Session", func() (any, error) { return f.reader.Session(ctx, id) }},
 		{"SessionMetrics", func() (any, error) {
 			return f.reader.SessionMetrics(ctx, SessionMetricsQuery{SessionID: id})

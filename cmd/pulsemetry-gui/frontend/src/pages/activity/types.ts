@@ -1,4 +1,5 @@
 import type { AgentId } from "$lib/domain/agent.types";
+
 export type SessionState = "running" | "done";
 type StageName = "Exploring" | "Implementing" | "Debugging" | "Verifying" | "";
 export interface Stage {
@@ -6,23 +7,26 @@ export interface Stage {
   dur: string;
   weight: number;
 }
-export type TurnKind = "explore" | "implement" | "debug" | "verify";
+export type TurnKind = "explore" | "implement" | "debug" | "verify" | "unknown";
 export interface ToolCall {
+  id?: number;
   time: string;
   tool: string;
   arg: string;
   dur: string;
-  ok: boolean;
+  ok: boolean | null;
 }
 export interface Turn {
+  id?: number;
+  promptTruncated?: boolean;
   time: string;
   kind: TurnKind;
-  mins: number;
+  mins: number | null;
   prompt: string;
   actions: number;
   filesChanged: number;
   tokens: string;
-  retries: number;
+  retries: number | null;
   calls: ToolCall[];
 }
 export interface FileChange {
@@ -32,7 +36,13 @@ export interface FileChange {
   del: string;
 }
 export interface ActivitySession {
+  workType?: TurnKind;
+  notice?: string;
+  /// 목록 재조정용 안정 키. 실데이터에서는 store 의 세션 id 가 들어온다.
+  id: string;
   time: string;
+  /// 날짜 구분용 로컬 날짜 키(YYYY-MM-DD). 시작 시각이 없으면 빈 문자열이다.
+  day?: string;
   agentId: AgentId;
   state: SessionState;
   title: string;

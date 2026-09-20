@@ -124,6 +124,17 @@ func TestTokenNeverEscapes(t *testing.T) {
 			newToken(claudeCanary), map[string]string{"anthropic-beta": claudeOAuthBeta}, new(map[string]any)))
 	}
 
+	// 키체인 원문 경로 (ADR 0030). 맥이 아니면 readClaudeKeychain 이 아무것도 돌려주지
+	// 않으므로, 실제로 새는 지점인 파서에 원문을 직접 먹인다.
+	for _, body := range []string{
+		claudeCredentialJSON(claudeCanary, testNow.Add(time.Hour), "max"),
+		`{"claudeAiOauth":{"token":"` + claudeCanary + `"}}`,
+		claudeCanary,
+	} {
+		_, err := parseClaudeCredential([]byte(body), claudeKeychainShown)
+		addErr(err)
+	}
+
 	// 컨텍스트 취소 경로.
 	blocked := make(chan struct{})
 	hang := newUpstream(t, func(http.ResponseWriter, *http.Request) { <-blocked })

@@ -53,7 +53,7 @@ Claude Code·Codex 의 시그널을 직접 받고, 정규화·집계해 로컬 S
 - GUI는 인증된 localhost API로 데몬이 조립한 화면 스냅샷을 받는다 (ADR 0013)
 - 모든 로컬 데이터 **400일 보존** (ADR 0008)
 
-> **현재 미충족 항목.** `cmd/pulsemetry-gui`(Wails v3 + Svelte)는 `develop`에 없고
+> **현재 미충족 항목.** `cmd/pulsemetry-gui`(Wails v3 + React)는 `develop`에 없고
 > `feature/PROJ-44-gui`에만 있다. `develop`의 `go.mod`에는 Wails 의존성이 없다. 따라서
 > "Wails 바인딩 최신성 검사"와 "GUI 모듈 빌드" 검증은 해당 브랜치가 병합된 뒤에야 가능하다.
 > PROJ-83 범위에서는 **Go 조회 계층까지** 구현하고 이 검증은 후속으로 이월한다.
@@ -123,7 +123,7 @@ internal/
   store/        SQLite 스키마·초기화·쓰기·보존 정책·read-only 열기
   dashboard/    화면별 조회 API                                                   (Wails 의존 없음)
   runtimeinfo/  runtime.json (비밀 없음: 주소·pid·데이터 경로)
-  autostart/    로그인 시 데몬 자동 실행 등록 (launchd LaunchAgent · systemd user unit)
+  autostart/    로그인 시 데몬 자동 실행 등록 (launchd · systemd user unit · Windows 작업 스케줄러)
   daemon/       위 패키지들을 잇는 배선 + 틱 루프 + graceful shutdown
 gui/            Wails v3 앱 (별도 go.mod, 아직 없음 — PROJ-35)
 ```
@@ -374,6 +374,7 @@ func (s *Service) Stop() error            // ServiceShutdown 자리
 | Insights MCP 카드 | `MCPUsage(n)` |
 | Settings 저장소·데몬 상태 | `Status()` |
 | Tray 스냅샷 (상태·마지막 갱신·활성/최근 세션·벤더 한도·가장 빠듯한 한도) | `GET /v1/tray` · `POST /v1/tray/refresh` |
+| Settings 데몬 업데이트 · CLI `status` 업데이트 상태 | `GET /v1/updates` |
 | 세션의 작업 폴더 열기 | `Service.OpenWorkspace(sessionID)` |
 
 ### 6.1.2 Activity 목록 (`Activity`, PROJ-90)
@@ -387,19 +388,22 @@ func (s *Service) Stop() error            // ServiceShutdown 자리
   그 JOIN 은 **`EXISTS` 안에 가둔다** — 바깥에 풀면 세션 한 줄이 자식 행 수만큼 복제돼 토큰·비용
   합계가 그 배수로 부풀어 오른다.
 - **원문 저장을 꺼도 제목·작업 폴더 경로·파일 경로 검색은 그대로 동작한다** (`--no-store-content`).
-- **페이지네이션은 `started_at DESC, sessions.id DESC` 의 keyset 커서다.** OFFSET 을 쓰지 않는
-  이유는 페이지 사이에 데몬이 세션을 하나 넣으면 뒤 페이지가 통째로 밀려 중복·누락이 생기기
-  때문이다. 2순위 `id` 는 같은 초에 시작한 세션들의 순서를 고정한다.
+- **진행 중인 세션을 먼저 보여준다** ([ADR 0027](adr/0027-액티비티에서-진행-중인-세션을-먼저-보여준다.md)).
+  진행 중은 시작 시각 오름차순, 종료는 시작 시각 내림차순이며 동률은 각 묶음의 방향을 따른다.
+  진행 여부·정렬 시각·ID를 keyset 커서로 사용한다. 기간 필터는 시작 시각 기준을 유지한다.
+  화면은 진행 중 세션을 날짜 그룹 밖의 목록 맨 위에 배치한다. 상태별 헤더와 스크롤 고정은
+  사용하지 않으며, 종료된 세션에만 시작 날짜 구분을 적용한다.
+  페이지 사이에 상태가 바뀌어 같은 ID가 다시 나오면 한 번만 표시한다. 커서 앞쪽으로 이동한
+  세션은 자동 갱신 또는 새로고침에서 첫 페이지부터 다시 조회해 반영한다.
 - **`HasMore` 가 "더 불러오기" 의 유일한 근거다.** `Limit+1` 개를 받아 한 개가 남는지로 판정한다 —
   줄 수가 `Limit` 에 딱 맞아떨어질 때 마지막 페이지를 구분하려면 이 방법뿐이다. `NextCursor` 는
   마지막 페이지에서도 마지막 줄을 가리킨다(0 으로 비우면 처음부터 다시 받는 호출자가 생긴다).
 - **`ActivityRow.WorkType` 은 아직 항상 빈 문자열이다.** 작업 유형은 턴 분류(PROJ-92)의 결과이고
   v1 `turns` 에는 그 값을 담을 컬럼이 없다. 그 전까지 추측해 채우지 않는다.
 
-정렬·커서 비교는 `COALESCE(started_at, 0)` 을 **양쪽에 똑같이** 쓴다. `sessions.started_at` 이
-NULL 일 수 있어서 한쪽만 COALESCE 하면 그런 세션이 첫 페이지에는 보이고 다음 페이지부터 조용히
-사라진다. 대가로 `ix_sessions_started` 를 못 쓰지만, 로컬 규모에서는 한 줄마다 도는 상관
-서브쿼리가 비용의 대부분이다.
+정렬·커서 비교는 진행 여부와 상태별 정렬 시각을 **양쪽에 똑같이** 쓴다. 미관측 시각은 0으로
+처리해 NULL인 세션도 페이지에서 누락되지 않게 한다. 식 정렬은 기존 시작 시각 인덱스를 그대로
+활용하지 못하지만, 로컬 규모에서는 한 줄마다 도는 상관 서브쿼리가 비용의 대부분이다.
 
 `Today` 의 `Cards` 는 `cost_usd`·`tokens`·`sessions_started`·`active_seconds` 네 장이다
 (`dashboard.MetricCostUSD` 등 상수). `Breakdown` 은 `Dim` 다섯 가지 × `BucketBy` 세 가지
@@ -547,7 +551,7 @@ Windows 에서 데몬의 prune 이 막힌다.
 - `product-build` — 3개 OS 매트릭스. `task build` 로 실제 배포 산출물을 만든다. 리눅스 러너에는
   `libgtk-4-dev`·`libwebkitgtk-6.0-dev` 를 먼저 설치한다. **GUI 가 그 OS 에서 빌드되는지 아는
   곳은 이 잡뿐이다.**
-- `static-checks` — 실행하지 않고 읽기만 하는 검사. gofmt, `go mod tidy -diff`, svelte-check.
+- `static-checks` — 실행하지 않고 읽기만 하는 검사. gofmt, `go mod tidy -diff`, tsc --noEmit.
   결과가 OS 에 의존하지 않아 리눅스 하나에서만 돈다.
 
 > **주의 1 — embed.** `//go:embed all:frontend/dist` 는 컴파일 시점에 그 디렉터리를 읽는데
@@ -734,10 +738,9 @@ UTC 정시 버킷**이다. UTC+5:30·+5:45 같은 오프셋에서는 정시 버�
 
 `tokens` 는 §6.8 과 같이 **입력+출력**뿐이다. 캐시 토큰은 따로 보이되 총량에 더하지 않는다.
 
-**`reasoning_tokens` 필드는 두지 않았다.** v1 쓰기 경로에 출처가 없어(`store/promote.go` 가 이 컬럼에
-`NULL` 을 넣는다) 항상 0 이 되기 때문이다. 항상 0 인 필드를 새 표면에 두면 화면이 "reasoning 0 토큰"
-이라는 잘못된 사실을 그린다. `Totals` 의 `api_errors` 와 같은 판단이고, 그쪽은 이미 나간 TS 바인딩
-때문에 지우지 못했을 뿐이다. 출처가 생기면 그때 필드를 더한다.
+이 조회 표면에는 **`reasoning_tokens` 필드를 두지 않았다.** 저장 경로는 Codex의
+`reasoning_token_count`를 `llm_calls.reasoning_tokens`에 기록한다. 미전송 값은 `NULL`로
+남기며, 추론 토큰은 출력에 포함되므로 토큰 총량에 다시 더하지 않는다.
 
 #### 질의 비용
 
@@ -780,6 +783,63 @@ SQLite에서 조립한 트레이 스냅샷을 받는다. 사용자가 새로고�
 트레이 스냅샷을 `200`으로 반환한다. 두 요청 모두 기존 local ingest token과
 `X-Pulsemetry-Local: 1`을 재사용한다. GUI 프로세스는 SQLite를 직접 열지 않는다(ADR 0013).
 
+#### 데몬 업데이트 확인 (PROJ-162)
+
+`internal/updatecheck`는 enroll 서버의 업데이트 정보를 조회하고 마지막 성공 결과를 메모리에
+보관한다. 데몬 시작 직후와 24시간마다 독립 워커가 순차 조회하며, 요청 제한은 10초다.
+종료 신호는 진행 중인 요청도 취소한다. 서버 주소가 없으면 확인을 비활성화한다.
+
+외부 요청은 `state.ServerURL`에 실행 바이너리의 `installer.Version`과 OS·아키텍처를 보낸다.
+설치 당시의 `state.InstallerVersion`이나 GUI 버전을 사용하지 않는다. 경로·요청·응답의 정본은
+[문서 허브의 업데이트 계약](https://github.com/soma-376/docs/blob/main/contracts/daemon-updates.md)이다.
+계약은 `Proposed`이며 backend의 최신 버전 선정 원천과 판정 규칙은 합의 전이다.
+클라이언트는 서버의 업데이트 여부를 사용하고 버전 문자열을 다시 비교하지 않는다.
+
+`GET /v1/updates`는 기존 로컬 인증을 거쳐 저장된 결과만 반환한다. 외부 요청과 SQLite 접근을
+일으키지 않는다. GUI는 Wails의 `Dashboard.Updates`를 통해 설정을 열 때와 열린 동안 60초마다
+읽고, CLI는 `pulsemetry status`에서 DB 상태와 독립적으로 읽는다. 다운로드·설치나 수동 외부
+확인 경로는 제공하지 않는다.
+
+| 로컬 응답 필드 | 의미 |
+|---|---|
+| `status` | `disabled`(서버 없음), `checking`, `ready`, `unsupported`(서버 404), `error` |
+| `current_version` | 실행 중인 데몬 버전 |
+| `latest_version` | 마지막 성공 응답의 서버 지정 버전. 첫 성공 전에는 빈 문자열 |
+| `update_available` | 마지막 성공 응답의 판정. 첫 성공 전에는 `null` |
+| `last_attempt_at` · `last_success_at` | 마지막 요청 시작·성공 시각. UTC RFC3339이며 해당 기록이 없으면 빈 문자열 |
+
+모든 필드는 응답에 포함한다. 실패하면 마지막 성공값과 시각을 보존하고 실패 상태를 함께
+표시한다. 첫 확인 전·실패·미지원을 최신 상태로 표시하지 않는다. 재시도는 다음 정규 주기에
+수행하며 재시작하면 메모리 결과가 초기화된다. GUI가 데몬에 연결하지 못해도 마지막 화면
+캐시를 유지하되 연결 실패를 표시한다.
+
+#### 절전 복귀 시 트레이 표시 상태를 이벤트만으로 복구하지 않는다
+
+Windows에서 트레이 퀵뷰를 연 채 절전했다가 복귀하면 네이티브 창과 WebView의 생명주기가
+갈릴 수 있다. 확인한 사례에서는 네이티브 `WebviewWindow.IsVisible()`은 계속 `true`였지만
+WebView2 문서와 React 컴포넌트가 다시 만들어져 프런트의 `visible`은 초깃값 `false`로
+돌아갔다. 네이티브 창은 숨김에서 표시로 전이하지 않았으므로 `WindowShow`와
+`tray:shown` 이벤트도 새로 발생하지 않았다.
+
+핵심은 **이벤트는 상태 전이를 알릴 뿐 현재 상태의 원본이 아니라는 것**이다. 이벤트 소비자가
+독립적으로 재시작되거나 다시 마운트될 수 있다면, 구독만으로는 이미 일어난 전이를 복원할 수 없다.
+
+따라서 트레이 표시 상태는 다음 두 경로를 함께 쓴다.
+
+- 평상시에는 `WindowShow`·`WindowHide`가 보낸 `tray:shown`·`tray:hidden` 이벤트로 변경을 감지한다.
+- React 컴포넌트가 마운트되면 Wails 바인딩 `App.IsTrayVisible()`을 호출해 네이티브 창의 현재
+  상태를 다시 읽는다. 동시에 여러 조회가 끝나면 가장 최근에 시작한 조회만 반영해 과거 응답이
+  최신 상태를 덮지 않게 한다.
+
+진단할 때 `document.visibilityState`나 `pageshow.persisted`만으로 네이티브 창 표시 여부를
+판정하지 않는다. 이번 재현에서 `pageshow`는 `{ persisted: false }`였고 프런트 상태는
+`visible=false`였지만, 같은 시점의 네이티브 창은 `IsVisible()==true`였다. WebView 문서의
+가시성과 OS 창의 표시 상태는 같은 계약이 아니다(ADR 0015).
+
+재현 검증은 트레이 퀵뷰를 연 상태에서 절전·복귀한 뒤 `visible`이 네이티브 상태인 `true`로
+복구되고, 60초 로컬 스냅샷 폴링이 다시 활성화되는지 확인한다. 원인 확인용 power/tray 로그와
+프런트 콘솔 로그는 검증 후 제품 코드에서 제거한다.
+
 - 벤더 한도는 남의 비공개 API 다. 초 단위로 두드리면 차단이 **사용자 계정**에 걸린다.
 - 한도 창은 5시간·7일 단위로 움직인다. 1분 사이에 의미 있게 변하지 않는다.
 - 트레이는 계속 보고 있는 화면이 아니다. 1분 지연은 인지되지 않는다.
@@ -802,6 +862,21 @@ GUI의 `tray.Cache`는 주기 안이면 직전 값을 그대로 준다. 단 **�
 오류가 아니라 상태다.
 
 #### 부분 장애가 다른 벤더와 최근 세션을 지우지 않는다
+
+Claude 한도 조회는 통신 실패와 HTTP 응답 오류를 분리한다. `401`은 `auth_rejected`,
+`403`은 `access_denied`, `429`는 `rate_limited`이며, `token_expired`는 자격증명에 기록된
+만료 시각이 지났을 때만 사용한다. DNS·TLS·타임아웃은 각각 `dns_error`·`tls_error`·
+`request_timeout`, 그 밖의 연결·수신 실패는 `network_error`다.
+
+HTTP 2xx 이후에도 본문을 끝까지 제한 크기 안에서 읽은 뒤 JSON을 해석한다. 수신 중 시간
+초과나 연결 끊김을 `response_unrecognized`로 처리하지 않는다. 잘못된 JSON과 크기 초과는
+응답 오류다. 오류 원문을 문자열로 바꾸기 전에 타입으로 분류하며, 로그의 `detail`에는 고정된
+`kind`·`phase`와 HTTP 상태 코드만 남긴다. URL·본문·원본 오류는 보존하지 않는다.
+
+조회 실패 시 이전 사용량과 마지막 성공 시각은 유지하며, 트레이는 해당 벤더 카드에 실패 사유와
+그 값의 기준 시각을 함께 표시한다. 통신 실패를 재로그인 안내로 바꾸지 않는다. 작업 취소는
+`request_canceled`로 구분하고 저장된 상태를 덮지 않으며 수동 연타 제한도 시작하지 않는다.
+시간 초과는 취소와 달리 조회 실패로 저장한다. 다음 조회는 기존 데몬 주기와 수동 요청을 따른다.
 
 `vendorlimit.Collector`는 error를 반환하지 않고 벤더마다 `state`·`reason`을 만든다. 데몬은 결과를
 벤더 기본 키로 upsert하고 GUI는 이를 **손대지 않고 그대로** 실어 보낸다 — 실패한 벤더도 `unavailable` 로 자리를 지켜야 화면이
@@ -1175,7 +1250,7 @@ telemetryctl autostart status  [--data-dir <경로>] [--state <경로>]
 |---|---|---|
 | macOS | LaunchAgent (`launchctl bootstrap gui/<uid>`) | `~/Library/LaunchAgents/com.your-org.pulsemetry.daemon.plist` |
 | 리눅스 | systemd user unit (`systemctl --user enable --now`) | `$XDG_CONFIG_HOME/systemd/user/pulsemetry-daemon.service` (기본 `~/.config/…`) |
-| Windows | 없음 — `ErrUnsupportedPlatform` | PROJ-56 |
+| Windows | 작업 스케줄러 사용자 작업 `Pulsemetry Daemon` | 로그인 시 시작, 실패 시 30초 간격 최대 5회 재시작 |
 
 **둘 다 사용자 수준이다.** LaunchDaemon·시스템 유닛은 root 로 **로그인 전에** 돌아 사용자 로그인
 키체인을 읽지 못하고, 그러면 `receiver.EnsureToken()` 이 실패해 데몬 전체가 뜨지 못한다.
@@ -1232,7 +1307,7 @@ systemd `TimeoutStopSec=20` 은 `daemon.DefaultShutdownTimeout`(15초)보다 커
 계획서 「검증」을 실제 명령으로 고친 것이다. 4.3절의 정정이 5번에 반영돼 있다.
 
 ```sh
-# 0. 자동 검증 (task test 는 CI 가 보는 전부를 돈다 — 빌드·vet·race 테스트·gofmt·tidy·svelte-check)
+# 0. 자동 검증 (task test 는 CI 가 보는 전부를 돈다 — 빌드·vet·race 테스트·gofmt·tidy·tsc --noEmit)
 task build && task test
 
 # 1. 상위 Collector 대역 — 받은 본문을 덤프하는 간이 서버를 띄운다.
@@ -1370,7 +1445,7 @@ uninstall은 이 후보 판정만으로 삭제하지 않고 `managed-settings.js
 
 **PROJ-55 가 이 한계를 좁혔다.** `enroll` 이 배선 직후 자동 실행을 best-effort 로 등록하고
 (macOS LaunchAgent · 리눅스 systemd user unit, 7.7절), 등록 후 데몬 생존까지 확인한다. 남은 노출은
-셋이다 — **등록할 수 없는 환경**(Windows·systemd 없는 리눅스·`go run`), **재시작으로 낫지 않는
+셋이다 — **등록할 수 없는 환경**(systemd 없는 리눅스·`go run`), **재시작으로 낫지 않는
 영구 실패**(미enroll·잠긴 키링·바이너리 이동, ADR 0007 Negative), 그리고 **로그아웃 중**(사용자
 수준 서비스라 로그아웃하면 함께 종료된다). 세 경우 모두 `enroll`·`local enable`·`status` 가
 서로 다른 조언과 함께 알린다.
@@ -1381,7 +1456,7 @@ uninstall은 이 후보 판정만으로 삭제하지 않고 `managed-settings.js
 | **제목 품질** | `sessions.title`은 **벤더가 만든 제목만** 담는다(ADR 0018). Codex는 App Server의 `thread.name`(ADR 0017), Claude Code는 트랜스크립트의 `ai-title`이다. 조립기는 제목을 만들지 않으므로 그 경로가 없는 벤더는 NULL 이고, 화면은 제목이 없으면 벤더명으로 표시한다 |
 | **`abandoned` 오판 가능** | "마지막 툴 이벤트가 실패이고 이후 성공 없음" 이라는 휴리스틱이다. **화면 필터로만 쓰고 지표로 쓰지 않는다.** 판정 근거는 세션 마감 로그(`s.Diag.StatusReason`)에 남는다 |
 | **데몬 미실행 중 유실** | 위 첫 문단. PROJ-55 의 자동 실행 등록이 대부분을 막지만, 등록할 수 없는 환경과 영구 실패는 남는다 |
-| **Windows 는 자동 실행 등록이 없다** | `autostart` 명령이 `ErrUnsupportedPlatform` 으로 알리고 `telemetryctl daemon` 직접 실행을 안내한다. 작업 스케줄러 등록은 PROJ-56 이다. **경고가 아니라 정보로 출력한다** — 실패한 것이 없기 때문이다 |
+| **Windows 작업 스케줄러 재시작 한도 소진** | 실패 시 30초 간격으로 최대 5회만 재시작한다. 원인을 고친 뒤 `telemetryctl autostart enable`로 다시 등록·실행한다 |
 | **로그아웃하면 데몬도 종료된다** | 사용자 수준 서비스(LaunchAgent / `systemctl --user`)를 쓰고 `loginctl enable-linger` 를 켜지 않기 때문이다. 두 플랫폼이 같은 의미론을 갖게 하려는 의도적 선택이고, linger 는 "로그인한 사용자 없이 수집" 이라는 **프라이버시 의미론 변경**인 데다 세션이 없으면 Secret Service 도 없어 `EnsureToken` 이 실패한다. 필요한 사용자는 `loginctl enable-linger $USER` 를 직접 실행한다 |
 | **macOS 로그인 항목 토글을 읽을 수 없다** | macOS 13+ 는 시스템 설정 → 일반 → 로그인 항목에서 사용자가 이 항목을 끌 수 있는데, 그 상태는 `SMAppService`(Objective-C → cgo → ADR 0002 위반) 없이는 조회할 수 없다. `autostart status` 는 `등록됨` 으로 보이지만 실제로는 실행되지 않는 상태가 가능하다. 완화는 `enable` 출력의 안내 한 줄과, 데몬 생존을 `runtime.json` + `/healthz` 로 따로 확인하는 것이다 |
 | **재enroll 없는 업그레이드는 경로 드리프트가 남는다** | 유닛 파일에는 `os.Executable()` 결과를 **해석하지 않고** 적는다. macOS 에서는 Homebrew 심볼릭 링크가 보존돼 업그레이드를 견디지만, **리눅스는 `os.Executable()` 이 `/proc/self/exe` 라 이미 완전히 해석돼 있어** 심볼릭 링크를 보존할 수 없다. 바이너리만 갈고 재enroll 하지 않으면 등록된 경로가 낡은 채로 남는다. `autostart status` 의 `ExecPathDrift`·`ExecPathMissing` 이 보고하지만 **자동 복구하지 않는다** — 고치는 방법은 `autostart enable` 재실행이다 |
@@ -1434,7 +1509,7 @@ PowerShell은 `& '실행 경로' hook codex`를 사용하고, Linux·macOS의 PO
 
 ## 10. 범위 밖 · 후속 티켓
 
-1. **데몬 자동 실행 등록 — Windows** (PROJ-56, 작업 스케줄러). macOS·리눅스는 PROJ-55 에서 끝났다
+1. **완료 — 데몬 자동 실행 등록, Windows** (PROJ-56, ADR 0031). 작업 스케줄러 사용자 작업으로 등록한다
    (7.7절, ADR 0007). Settings 「시작 프로그램」 토글은 `autostart.Manager` 를 감싸면 되고,
    등록 상태를 `state.json` 에 두지 않으므로 토글의 진실원은 OS 서비스 관리자 하나다
 2. **Insights 경고 카드·제안** — 반복 실패 감지, 유사 프롬프트 탐지, 벤더 전환 분석

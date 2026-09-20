@@ -40,8 +40,10 @@ func (codexAdapter) probe(ctx context.Context, env probeEnv) Result {
 
 func codexReason(err error) Reason {
 	switch {
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		return ReasonNetwork
+	case errors.Is(err, context.Canceled):
+		return ReasonCanceled
+	case errors.Is(err, context.DeadlineExceeded):
+		return ReasonTimeout
 	case errors.Is(err, codexapp.ErrProtocol):
 		return ReasonResponseUnrecognized
 	default:

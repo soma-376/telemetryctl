@@ -20,6 +20,9 @@ const (
 	// UnitName 은 systemd user unit 파일 이름이다.
 	UnitName = "pulsemetry-daemon.service"
 
+	// TaskName 은 Windows 작업 스케줄러에 등록하는 사용자 작업 이름이다.
+	TaskName = "Pulsemetry Daemon"
+
 	// logFileName·errLogFileName 은 launchd 가 리다이렉트할 파일이다.
 	//
 	// 데몬 로거는 stdout 으로만 쓰고(cmd/telemetryctl/main.go 의 log.New(os.Stdout,…)),
@@ -51,8 +54,11 @@ func UnitPath(env hostenv.Env) string {
 	return filepath.Join(env.HomeDir, ".config", "systemd", "user", UnitName)
 }
 
+// TaskPath 는 Windows 작업 스케줄러 UI와 schtasks가 표시하는 작업 경로다.
+func TaskPath() string { return `\` + TaskName }
+
 // LogDir 는 자동 실행 로그 디렉터리다. **빈 문자열은 "로그 파일을 우리가 관리하지
-// 않는다"** 는 뜻이다 — 리눅스는 journald 가, windows 는 아직 아무도 관리하지 않는다.
+// 않는다"** 는 뜻이다 — 리눅스는 journald가, Windows는 작업 스케줄러가 프로세스만 관리한다.
 //
 // installer.BackupDir 와 같은 모양의 런타임 switch 다. darwin 에서 ~/Library/Logs 를
 // 쓰는 것은 Mac 사용자와 Console.app 이 보는 곳이기 때문이고, installer.BackupDir 가

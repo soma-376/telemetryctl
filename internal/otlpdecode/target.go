@@ -34,6 +34,12 @@ type Target struct {
 	Path event.Path
 	// RawPath 는 정규화하지 않은 원경로다. 로컬 저장(file_changes.file_path)만 쓴다.
 	RawPath string
+	// Operation과 RenamedFrom은 Codex 패치의 관측된 변경이다. 이전 경로도 로컬 전용이다 (ADR 0023).
+	Operation   string
+	RenamedFrom string
+	// Additions·Deletions 는 관측된 줄 수다. 세지 못한 편집은 0 이 아니라 미관측이다.
+	Additions event.Opt[int64]
+	Deletions event.Opt[int64]
 }
 
 // filePathKeys 는 tool_input 안에서 대상 파일 경로를 담고 오는 키다.

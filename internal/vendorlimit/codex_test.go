@@ -69,7 +69,8 @@ func TestCodexAdapter실패경로는벤더만Unavailable로만든다(t *testing.
 	}{
 		{"프로세스 실행 실패", codexapp.ErrUnavailable, ReasonInternal},
 		{"프로토콜 불일치", codexapp.ErrProtocol, ReasonResponseUnrecognized},
-		{"컨텍스트 취소", context.Canceled, ReasonNetwork},
+		{"컨텍스트 취소", context.Canceled, ReasonCanceled},
+		{"조회 시간 초과", context.DeadlineExceeded, ReasonTimeout},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := (codexAdapter{}).probe(context.Background(), probeEnv{codex: stubCodexReader{err: tc.err}, now: fixedNow})

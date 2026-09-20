@@ -121,7 +121,7 @@ func (r *Reader) WorkspaceFolder(ctx context.Context, sessionID int64) (Workspac
 	case errors.Is(err, sql.ErrNoRows):
 		return rejectFolder(sessionID, OpenReasonSessionNotFound, "해당 세션이 없다"), nil
 	case err != nil:
-		return WorkspaceFolder{}, queryErr("작업 폴더 경로 조회", err)
+		return WorkspaceFolder{}, QueryErr("작업 폴더 경로 조회", err)
 	}
 	return validateWorkspacePath(sessionID, raw), nil
 }

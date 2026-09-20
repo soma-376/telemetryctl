@@ -18,9 +18,8 @@ var metricsAt = testNow.Add(-2 * time.Hour)
 
 // execSQL 은 픽스처를 손보는 SQL 을 실행한다.
 //
-// 쓰기 경로가 채우지 않는 컬럼(events.payload · llm_calls.reasoning_tokens ·
-// turns.ended_at)을 심을 때만 쓴다. 그 컬럼들을 "지금 안 채워지니까" 하고 테스트에서
-// 빼 두면, 쓰기 쪽이 채우기 시작하는 순간 조회가 조용히 틀린다.
+// 쓰기 경로가 채우지 않는 컬럼(events.payload · turns.ended_at)과
+// NULL·추론 토큰 등 조회 경계 조건을 직접 구성할 때 쓴다.
 func execSQL(t *testing.T, f *fixture, query string, args ...any) {
 	t.Helper()
 	if _, err := f.db.SQL().ExecContext(context.Background(), query, args...); err != nil {

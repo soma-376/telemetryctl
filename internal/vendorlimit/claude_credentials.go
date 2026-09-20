@@ -1,14 +1,19 @@
 package vendorlimit
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -98,15 +103,17 @@ type claudeCredential struct {
 	plan string
 }
 
-// claudeCredentialFile 은 자격증명 파일의 **관측된** 모양이다.
+// claudeCredentialFile 은 자격증명 원문의 **관측된** 모양이다. 파일과 키체인 항목이
+// 같은 모양이라 파서를 공유한다.
 //
 // # 가정과 확인 방법
 //
 // Claude Code 는 OAuth 자격증명을 `{"claudeAiOauth": {...}}` 아래에 둔다. accessToken 은
-// 문자열이고 expiresAt 은 **unix 밀리초** 정수다. macOS 에서는 Keychain 에 저장되어 이
-// 파일이 없을 수 있고, 그때는 ReasonCredentialMissing 으로 떨어진다 (아래 주석 참고).
+// 문자열이고 expiresAt 은 **unix 밀리초** 정수다. macOS 에서는 이 파일 대신 키체인에
+// 저장된다 (ADR 0030).
 // 사람이 확인하려면 로그인된 장비에서 `cat ~/.claude/.credentials.json | jq 'keys'` 와
-// `jq '.claudeAiOauth | keys'` 를 본다.
+// `jq '.claudeAiOauth | keys'` 를 본다. 맥이라면 파일 대신
+// `security find-generic-password -s "Claude Code-credentials" -w` 의 출력을 본다.
 //
 // **DisallowUnknownFields 를 쓰지 않는다.** enroll 응답 파싱과 정반대의 선택이다
 // (AGENTS.md). 저기서는 서버가 우리와 계약을 맺은 상대라 필드가 늘면 즉시 알아야 하지만,
@@ -120,25 +127,133 @@ type claudeCredentialFile struct {
 	} `json:"claudeAiOauth"`
 }
 
+// # 왜 Security 프레임워크가 아니라 security 바이너리인가 (ADR 0030)
+//
+// Claude Code 가 이 항목을 /usr/bin/security 로 만든다. 그래서 항목의 파티션 목록이
+// apple-tool: 이고, 같은 도구를 거친 접근은 이미 허용돼 승인 대화상자가 뜨지 않는다.
+// 프레임워크로 우리 바이너리 신원을 들고 가면 목록에 없어 대화상자가 뜨는데, 데몬이
+// 백그라운드에서 대화상자를 띄우는 것은 받아들일 수 없다. CGO 를 끌어들이지 않는다는
+// 점도 같이 만족한다 (ADR 0002).
+const (
+	claudeKeychainItem = "Claude Code-credentials"
+	securityBinary     = "/usr/bin/security"
+	// claudeKeychainShown 은 화면 표기다. 홈 경로와 달리 사용자 식별 정보가 없어 그대로
+	// 내보낸다.
+	claudeKeychainShown = `키체인 항목 "` + claudeKeychainItem + `"`
+	keychainReadTimeout = 2 * time.Second
+)
+
+// errKeychainUnavailable 은 키체인에서 자격증명을 얻지 못했다는 뜻이다. 이 경로가 없는
+// OS 와 항목이 없는 경우를 같이 덮는다 — 둘 다 파일 쪽 실패 사유를 그대로 쓰면 된다.
+var errKeychainUnavailable = errors.New("claude keychain credential unavailable")
+
 // loadClaudeCredential 은 Claude 액세스 토큰을 메모리로만 읽는다.
 //
-// # macOS Keychain 에 대하여
-//
-// macOS 의 Claude Code 는 자격증명을 Keychain 에 두는 경우가 있어 이 파일이 없을 수 있다.
-// 그래도 Keychain 을 뒤지지 않는다 — 남의 도구의 Keychain 항목을 읽으면 사용자에게 승인
-// 대화상자가 뜨고, 데몬이 백그라운드에서 그 대화상자를 띄우는 것은 받아들일 수 없다.
-// 파일이 없으면 조용히 unavailable 이다.
+// 파일이 없으면 맥에서는 키체인을 본다 (ADR 0030). 어느 경로로도 쓰지 않는다 — 이 항목에
+// 쓰면 파티션 목록이 우리 신원으로 바뀌어 Claude Code 본체가 매 실행마다 암호를 묻는다.
 func loadClaudeCredential(home string) (claudeCredential, error) {
 	path := claudeCredentialPath(home)
-	b, err := readCredentialFile(home, path)
+	b, fileErr := readCredentialFile(home, path)
+	if fileErr == nil {
+		return parseClaudeCredential(b, displayPath(home, path))
+	}
+	if reasonOf(fileErr, ReasonCredentialUnreadable) != ReasonCredentialMissing {
+		return claudeCredential{}, fileErr
+	}
+
+	cred, err := loadClaudeKeychainCredential()
+	if errors.Is(err, errKeychainUnavailable) {
+		return claudeCredential{}, fileErr
+	}
+	return cred, err
+}
+
+// loadClaudeKeychainCredential 은 키체인 읽기에 캐시를 씌운다. 토큰이 살아 있는 동안은
+// 다시 부르지 않아 조회 주기마다 프로세스를 띄우지 않는다.
+func loadClaudeKeychainCredential() (claudeCredential, error) {
+	if cred, ok := claudeKeychainCache.get(time.Now()); ok {
+		return cred, nil
+	}
+	b, err := readClaudeKeychain()
 	if err != nil {
 		return claudeCredential{}, err
 	}
-	shown := displayPath(home, path)
+	cred, err := parseClaudeCredential(b, claudeKeychainShown)
+	if err != nil {
+		return claudeCredential{}, err
+	}
+	claudeKeychainCache.put(cred)
+	return cred, nil
+}
 
+// readClaudeKeychain 은 키체인 항목 원문을 읽는다. 맥이 아니면 읽을 항목이 없다 —
+// 다른 OS 의 Claude Code 는 평문 파일을 쓴다.
+func readClaudeKeychain() ([]byte, error) {
+	if runtime.GOOS != "darwin" {
+		return nil, errKeychainUnavailable
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), keychainReadTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, securityBinary, "find-generic-password", "-s", claudeKeychainItem, "-w")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+
+	// stderr 를 버리고 실패 원인도 싣지 않는다. 무엇이 섞여 오는지 보장할 수 없는데
+	// 이 명령의 출력은 곧 토큰이다.
+	err := cmd.Run()
+	if ctx.Err() != nil {
+		return nil, credErr(ReasonCredentialUnreadable, "%s 읽기가 시간 안에 끝나지 않았다", claudeKeychainShown)
+	}
+	if err != nil {
+		// 항목 없음과 그 밖의 실패를 가르지 않는다. 둘 다 파일 쪽 사유를 그대로 쓴다.
+		return nil, errKeychainUnavailable
+	}
+
+	b := bytes.TrimSpace(out.Bytes())
+	switch {
+	case len(b) == 0:
+		return nil, errKeychainUnavailable
+	case len(b) > maxCredentialBytes:
+		return nil, credErr(ReasonCredentialMalformed, "%s 가 너무 크다", claudeKeychainShown)
+	}
+	return b, nil
+}
+
+// claudeKeychainCache 는 만료 시각을 아는 자격증명만 담는다. 만료를 모르면 담지 않는다 —
+// 언제 버려야 할지 모르는 토큰을 들고 있는 것이 다시 읽는 비용보다 나쁘다.
+var claudeKeychainCache credentialCache
+
+type credentialCache struct {
+	mu   sync.Mutex
+	cred claudeCredential
+	ok   bool
+}
+
+func (c *credentialCache) get(now time.Time) (claudeCredential, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.ok || !c.cred.expiresAt.After(now) {
+		c.cred, c.ok = claudeCredential{}, false
+		return claudeCredential{}, false
+	}
+	return c.cred, true
+}
+
+func (c *credentialCache) put(cred claudeCredential) {
+	if cred.expiresAt.IsZero() {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cred, c.ok = cred, true
+}
+
+func parseClaudeCredential(b []byte, shown string) (claudeCredential, error) {
 	var file claudeCredentialFile
 	if err := json.Unmarshal(b, &file); err != nil {
-		// 파싱 오류 메시지에는 실패 지점의 원문 조각이 섞일 수 있다. 토큰 파일에서 그
+		// 파싱 오류 메시지에는 실패 지점의 원문 조각이 섞일 수 있다. 자격증명에서 그
 		// 조각은 곧 토큰이므로 원인을 싣지 않는다.
 		return claudeCredential{}, credErr(ReasonCredentialMalformed, "%s 가 JSON 이 아니다", shown)
 	}
