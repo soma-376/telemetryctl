@@ -515,7 +515,7 @@ func (d *daemon) startReceiver() error {
 		Logger:     d.log,
 		Decode:     otlpdecode.Options{InstallationID: d.state.InstallationID, SkipPayload: !d.state.Local.StoreContent || d.opts.NoStoreContent},
 		Now:        d.opts.Now,
-		LocalAPI:   localapi.WithUpdates(localapi.WithActivity(localapi.NewServer(d.limits, tray.NewBuilder(d.query), d.pipe), d.query), d.updates),
+		LocalAPI:   localapi.WithHome(localapi.WithUpdates(localapi.WithActivity(localapi.NewServer(d.limits, tray.NewBuilder(d.query), d.pipe), d.query), d.updates), d.query),
 	})
 	if err != nil {
 		return fmt.Errorf("로컬 수신기 기동: %w", err)

@@ -53,7 +53,8 @@ export function createUsageChartLayout(
   const plotWidth = width - MARGIN.left - MARGIN.right;
   const plotHeight = HEIGHT - MARGIN.top - MARGIN.bottom;
   const maxValue = Math.max(1, ...source.map((bar) => bar.totalValue));
-  const niceMax = Math.max(10, Math.ceil(maxValue / 10) * 10);
+  const tickSize = 10 ** Math.floor(Math.log10(maxValue));
+  const niceMax = Math.ceil(maxValue / tickSize) * tickSize;
   const slotWidth = plotWidth / Math.max(source.length, 1);
   const barWidth = Math.max(3, slotWidth * (source.length > 18 ? 0.68 : 0.58));
   const xAt = (index: number) => MARGIN.left + slotWidth * (index + 0.5);

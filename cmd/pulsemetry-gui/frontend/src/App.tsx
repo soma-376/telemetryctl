@@ -81,8 +81,6 @@ export default function App() {
           <>
             <div className="flex h-screen min-w-(--page-min-width) flex-col overflow-hidden bg-bg">
               <Header
-                activeAgents={3}
-                tokensToday="148k"
                 onOpenSettings={() => setSettingsOpen(true)}
                 onQuit={() => setQuitOpen(true)}
               />

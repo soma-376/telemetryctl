@@ -172,8 +172,8 @@ func TestLocalAPIRequiresAuthBeforeDelegating(t *testing.T) {
 	assertNoCORS(t, authorized)
 }
 
-func TestActivityAPIRequiresAuthBeforeDelegating(t *testing.T) {
-	for _, path := range []string{"/v1/activity", "/v1/activity/42"} {
+func TestDashboardAPIRequiresAuthBeforeDelegating(t *testing.T) {
+	for _, path := range []string{"/v1/home", "/v1/activity", "/v1/activity/42"} {
 		t.Run(path, func(t *testing.T) {
 			calls := 0
 			rc, _, _ := newTestReceiver(t, func(opt *Options) {

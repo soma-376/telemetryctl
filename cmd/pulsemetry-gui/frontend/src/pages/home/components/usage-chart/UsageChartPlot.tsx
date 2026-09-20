@@ -1,4 +1,5 @@
 import { Fragment } from "react";
+import { formatTokens } from "$lib/utils/format";
 import type { HeroData } from "../../types";
 import type { ChartBar, UsageChartLayout } from "./layout";
 import "./UsageChartPlot.css";
@@ -49,7 +50,7 @@ export default function UsageChartPlot({
                     fontSize="10"
                     className="scope-ec91ct"
                   >
-                    {Math.round(value)}k
+                    {formatTokens(value)}
                   </text>
                 </>
               );

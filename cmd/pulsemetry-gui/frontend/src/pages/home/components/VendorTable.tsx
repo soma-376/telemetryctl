@@ -12,7 +12,7 @@ export default function VendorTable({ vendors }: { vendors: VendorRow[] }) {
         {vendors.map((v, i) => (
           <Fragment key={v.id}>
             {(() => {
-              const style = AGENT_STYLE[v.id];
+              const style = AGENT_STYLE[v.agent];
 
               return (
                 <>
@@ -25,10 +25,10 @@ export default function VendorTable({ vendors }: { vendors: VendorRow[] }) {
                     )}
                     className="grid items-center grid-cols-[30px_128px_74px_62px_minmax(0,1fr)_168px] gap-[16px] p-[12px_0]"
                   >
-                    <AgentBadge agent={v.id} size={30} />
+                    <AgentBadge agent={v.agent} size={30} />
                     <span className="min-w-0">
                       <span className="text-text block truncate font-semibold text-[13.5px] mb-[3px]">
-                        {style.name}
+                        {v.name}
                       </span>
                       <span className="text-text-muted block truncate text-[11px]">
                         {v.plan}

@@ -1,5 +1,6 @@
 import { cssStyle } from "$lib/react-utils";
 import { Fragment } from "react";
+import { formatTokens } from "$lib/utils/format";
 import type { HeroData } from "../../types";
 import type { ChartBar } from "./layout";
 import "./UsageChartTooltip.css";
@@ -24,7 +25,7 @@ export default function UsageChartTooltip({
         className="usage-tooltip pointer-events-none absolute z-10 bg-surface border-border border shadow-sm scope-1n5dj3j [transform:translate(-50%,-100%)] w-[184px] rounded-[9px] p-[9px_11px]"
       >
         <div className="text-text font-semibold scope-1n5dj3j text-[12px] mb-[7px]">
-          {bar.label}
+          {bar.tooltipLabel ?? bar.label}
         </div>
         <div className="grid scope-1n5dj3j grid-cols-[1fr_auto] gap-[5px_10px] text-[11.5px]">
           {hero.legend.map((legend, index) => (
@@ -37,7 +38,7 @@ export default function UsageChartTooltip({
                 {legend.name}
               </span>
               <span className="font-semibold scope-1n5dj3j tabular-nums">
-                {bar.values[index]}k
+                {formatTokens(bar.values[index] ?? 0)}
               </span>
             </Fragment>
           ))}
@@ -45,7 +46,7 @@ export default function UsageChartTooltip({
             합계
           </span>
           <span className="text-text text-right font-bold scope-1n5dj3j pt-[3px] [border-top:1px_solid_#f1ece4] tabular-nums">
-            {bar.totalValue}k
+            {formatTokens(bar.totalValue)}
           </span>
         </div>
       </div>

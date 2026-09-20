@@ -10,6 +10,9 @@ export type {
     CostTotals,
     Evidence,
     FileRow,
+    HomeBreakdown,
+    ModelUsage,
+    PeakWindow,
     Phase,
     RecentSession,
     SavingsTotals,
@@ -21,7 +24,11 @@ export type {
     SessionTotals,
     TokenTotals,
     ToolRow,
+    Totals,
     TurnClass,
     TurnMetrics,
+    UsageWindow,
+    VendorUsage,
+    VendorWindow,
     WorkTypeShare
 } from "./models.js";
