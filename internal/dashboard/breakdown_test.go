@@ -90,9 +90,9 @@ func TestBreakdownLabelsProjectByBaseName(t *testing.T) {
 	f.write(store.Batch{
 		Sessions: []session.Session{
 			newSession("s-a", at),
-			newSession("s-b", at, func(s *session.Session) { s.WorkspacePath = workspaceB }),
+			newSession("s-b", at, func(s *session.Session) { workspace(workspaceB)(s) }),
 			// 워크스페이스를 관측하지 못한 세션. 키가 빈 문자열로 남는다.
-			newSession("s-none", at, func(s *session.Session) { s.WorkspacePath = "" }),
+			newSession("s-none", at, func(s *session.Session) { workspace("")(s) }),
 		},
 		Events: []store.EventRecord{
 			llmRecord("s-a", "t-a", at, 1, llmSpec{Cost: 2}),

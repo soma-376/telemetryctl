@@ -32,11 +32,15 @@ CREATE TABLE sessions (
   terminal_type TEXT,
   started_at INTEGER,
   ended_at INTEGER,
+  last_activity_at INTEGER,
   active_time_sec INTEGER CHECK (active_time_sec >= 0),
   UNIQUE (vendor_id, session_key),
   CHECK (ended_at >= started_at)
 );
 CREATE INDEX ix_sessions_started ON sessions (started_at);
+
+-- 유휴 마감 스윕용. 부분 인덱스여야 400일치 마감 세션이 딸려 들어오지 않는다.
+CREATE INDEX ix_sessions_open_activity ON sessions (last_activity_at) WHERE ended_at IS NULL;
 
 CREATE TABLE turns (
   id INTEGER PRIMARY KEY,

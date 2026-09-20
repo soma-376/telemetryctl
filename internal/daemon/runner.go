@@ -85,9 +85,11 @@ const (
 	DefaultShutdownTimeout = 15 * time.Second
 
 	// sessionMemoryTTL 은 마감된 세션을 조립기 메모리에 남겨 두는 기간이다.
-	// 유휴 임계값(10분)의 12배 — 늦게 도착한 이벤트가 세션을 되살릴 여유는 주되,
+	// 유휴 임계값의 2배 — 늦게 도착한 이벤트가 세션을 되살릴 여유는 주되,
 	// 보존 정책이 지운 타임라인을 스냅샷이 되살릴 여지는 남기지 않는 크기다.
-	sessionMemoryTTL = 2 * time.Hour
+	// **반드시 session.DefaultIdleThreshold 보다 커야 한다.** 작으면 마감되자마자
+	// 메모리에서 지워져 낙오 이벤트가 세션을 새로 시작한다.
+	sessionMemoryTTL = 8 * time.Hour
 
 	// storeWriteTimeout·storePruneTimeout 은 SQLite 호출 하나의 상한이다.
 	storeWriteTimeout = 5 * time.Second
@@ -230,6 +232,10 @@ type daemon struct {
 	// query 는 GUI 조회에 쓰는 read-only 핸들이다. 쓰기 커넥션(db)과 별개다 —
 	// dashboard 는 mode=ro 를 강제하고, 조회가 쓰기를 할 수 없다는 것이 그 계약이다.
 	query *dashboard.Service
+
+	// receiverToken 은 수신기가 실제로 쓰는 loopback ingest 토큰이다. 포트 폴백
+	// 재병합이 벤더 설정에 같은 값을 다시 써야 해서 들고 있는다.
+	receiverToken string
 
 	dataDir     string
 	runtimePath string
@@ -451,30 +457,62 @@ func (d *daemon) startReceiver() error {
 		Logger:    d.log,
 		Decode:    otlpdecode.Options{InstallationID: d.state.InstallationID},
 		Now:       d.opts.Now,
-		LocalAPI:  localapi.NewServer(d.limits, tray.NewBuilder(d.query)),
+		LocalAPI:  localapi.NewServer(d.limits, tray.NewBuilder(d.query), d.pipe),
 	})
 	if err != nil {
 		return fmt.Errorf("로컬 수신기 기동: %w", err)
 	}
 	d.srv = srv
+	d.receiverToken = token
 
 	if srv.Port() != requested {
-		// 재병합이 필요하다는 **사실만** 남긴다. 벤더 설정을 실제로 고치는 것은
-		// 12단계 `local enable` 의 몫이다 (계획서: 12 전까지 사용자 설정 불변).
-		//
-		// state.Local.ListenPort 는 덮어쓰지 않는다. 그 값은 "설정된 의도" 이고
-		// 벤더 설정에 적힌 주소가 거기서 나왔다. 실제 포트로 덮는 순간 "설정과
-		// 현실이 어긋났다"는 신호가 사라져 재병합 판단의 근거가 없어진다.
-		d.log.Printf("경고: 요청 포트 %d 를 잡지 못해 %d 로 폴백했다. 벤더 설정은 여전히 %d 를 "+
-			"가리키므로 재병합이 필요하다 — telemetryctl local enable 을 다시 실행하라 "+
-			"(실제 포트는 runtime.json 의 listen_port 에 있다)",
-			requested, srv.Port(), requested)
+		d.rewireAfterPortFallback(requested, srv.Port())
 	}
 	if !srv.HasIPv6() {
 		d.log.Printf("경고: IPv6 loopback([::1]) 리스너가 없다. localhost 가 ::1 로 풀리는 " +
 			"클라이언트는 연결하지 못한다")
 	}
 	return nil
+}
+
+// rewireAfterPortFallback 은 폴백한 실제 포트로 벤더 설정을 다시 쓴다.
+//
+// 재병합하지 않으면 벤더는 잡히지 않은 옛 포트로 계속 쏘고, 그 배치는 아무 데도 닿지
+// 않는다. 로컬 배선은 평상시 경로이므로(ADR 0006) 데몬이 스스로 고치는 것이 맞다 —
+// 사용자에게 명령을 안내하고 마는 것은 수집이 조용히 멈춘 상태를 방치하는 것이다.
+//
+// 훅 URL 도 같은 포트에서 파생하므로 함께 고쳐진다.
+//
+// 로컬 배선이 꺼져 있으면 아무것도 하지 않는다. 그때 벤더 설정은 회사를 가리키고
+// 있어 우리 포트와 무관하다.
+//
+// 실패는 치명적이지 않다. EnableLocal 은 벤더 설정을 다 쓰거나 하나도 안 쓴다 —
+// 실패하면 폴백 전과 같은 상태이고, 예전처럼 수동 재병합을 안내한다.
+func (d *daemon) rewireAfterPortFallback(requested, actual int) {
+	if !d.state.Local.Enabled {
+		d.log.Printf("요청 포트 %d 를 잡지 못해 %d 로 폴백했다 (로컬 배선이 꺼져 있어 벤더 설정은 그대로 둔다)",
+			requested, actual)
+		return
+	}
+
+	report, err := installer.EnableLocal(installer.LocalOptions{
+		StatePath:          d.opts.StatePath,
+		Port:               actual,
+		IngestToken:        d.receiverToken,
+		PreserveCodexHooks: true,
+	})
+	if err != nil {
+		d.log.Printf("경고: 요청 포트 %d 를 잡지 못해 %d 로 폴백했으나 벤더 설정 재병합에 실패했다. "+
+			"벤더는 여전히 %d 를 가리켜 수집이 멈춘다 — telemetryctl local enable 을 다시 실행하라: %v",
+			requested, actual, requested, err)
+		return
+	}
+	// 상태의 의도 포트도 실제 포트로 옮는다. EnableLocal 이 이미 저장했으므로 메모리
+	// 사본만 맞춘다 — 어긋나면 다음 기동이 잡히지 않는 포트를 다시 요청한다.
+	d.state.Local.Enabled = true
+	d.state.Local.ListenPort = actual
+	d.log.Printf("요청 포트 %d 를 잡지 못해 %d 로 폴백했다. 벤더 설정 %d개를 새 포트로 다시 썼다 (endpoint=%s)",
+		requested, actual, len(report.Targets), report.Endpoint)
 }
 
 func (d *daemon) runtimeInfo() runtimeinfo.Info {

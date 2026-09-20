@@ -32,6 +32,14 @@ var ErrDaemonNotRunning = errors.New("localapi: 데몬이 실행 중이 아니�
 type Client struct {
 	dataDir string
 	http    *http.Client
+	// HookTrace 는 선택적인 로컬 진단 콜백이다. 본문·토큰·원본 오류는 전달하지 않는다.
+	HookTrace func(stage, detail string)
+}
+
+func (c *Client) traceHook(stage, detail string) {
+	if c.HookTrace != nil {
+		c.HookTrace(stage, detail)
+	}
 }
 
 func NewClient(dataDir string) *Client {
@@ -89,19 +97,26 @@ func (c *Client) requestSnapshot(ctx context.Context, timeout time.Duration, met
 func (c *Client) newRequest(ctx context.Context, method, path string) (*http.Request, error) {
 	info, found, err := runtimeinfo.Read(runtimeinfo.PathIn(c.dataDir))
 	if err != nil || !found {
+		c.traceHook("runtime", "missing_or_unreadable")
 		return nil, ErrDaemonNotRunning
 	}
 	endpoint, err := url.Parse(info.Endpoint)
 	if err != nil || endpoint.Scheme != "http" || endpoint.Hostname() != "localhost" {
+		c.traceHook("endpoint", "invalid")
 		return nil, errors.New("localapi: 데몬 endpoint가 loopback HTTP가 아님")
 	}
+	c.traceHook("endpoint", endpoint.Host)
+	c.traceHook("credential", "begin")
 	token, found, err := credential.Get(credential.AccountLocalIngest)
 	if err != nil {
+		c.traceHook("credential", "lookup_failed")
 		return nil, fmt.Errorf("localapi: 로컬 제어 토큰 조회: %w", err)
 	}
 	if !found || token == "" {
+		c.traceHook("credential", "missing")
 		return nil, errors.New("localapi: 로컬 제어 토큰이 없음")
 	}
+	c.traceHook("credential", "ok")
 
 	req, err := http.NewRequestWithContext(ctx, method, endpoint.String()+path, nil)
 	if err != nil {

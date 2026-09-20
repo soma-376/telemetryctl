@@ -38,6 +38,7 @@ func newCodexTitleRefresherWithPolicy(parent context.Context, reader codexapp.Th
 			logger.Printf("경고: Codex 세션 제목 저장 실패 (%s): %v", key, err)
 			return false
 		}
+		logger.Printf("Codex 세션 제목 확인: session_id=%s title=%q", key, title)
 		return true
 	}, policy)
 }

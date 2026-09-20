@@ -60,7 +60,11 @@ func localSnapshot(ctx context.Context, svc *dashboard.Service, q Query) (Snapsh
 	if err != nil {
 		return Snapshot{}, err
 	}
-	recent, err := svc.RecentActivity(ctx, dashboard.RecentQuery{TZ: q.TZ, Limit: q.RecentLimit})
+	// 트레이는 날짜로 자르지 않는다. 하루의 기록이 아니라 가장 최근 세션을 보여주는
+	// 자리라, 자정을 넘긴 직후 목록이 비거나 어제부터 도는 세션이 빠지면 안 된다.
+	recent, err := svc.RecentActivity(ctx, dashboard.RecentQuery{
+		TZ: q.TZ, Limit: q.RecentLimit, AnyDate: true,
+	})
 	if err != nil {
 		return Snapshot{}, err
 	}

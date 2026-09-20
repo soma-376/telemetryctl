@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -643,6 +644,76 @@ func TestEnableUpdatesManagedKeys(t *testing.T) {
 // TestEnableIsIdempotentAndRemergesPort 는 포트 폴백 재병합 경로를 검증한다.
 // 이미 켜진 상태에서 다른 포트로 다시 부르면 그 포트로 다시 쓰고, 회사 토큰 대피본은
 // 로컬 ingest 토큰으로 덮이지 않아야 한다.
+func TestPortFallbackPreservesCodexHooks(t *testing.T) {
+	f := newLocalFixture(t, httpManifest())
+	opts := f.options()
+	opts.HookExecutable = filepath.Join(t.TempDir(), "installed", "pulsemetry.exe")
+	if _, err := EnableLocal(opts); err != nil {
+		t.Fatal(err)
+	}
+	var before map[string]any
+	if err := toml.Unmarshal(mustRead(t, f.codexPath), &before); err != nil {
+		t.Fatal(err)
+	}
+	before["hooks"].(map[string]any)["state"] = map[string]any{"approval": map[string]any{"trusted_hash": "sha256:preserve"}}
+	var encoded bytes.Buffer
+	if err := toml.NewEncoder(&encoded).Encode(before); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, f.codexPath, encoded.String())
+	stateBefore, err := LoadState(f.statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.Port = 51999
+	opts.PreserveCodexHooks = true
+	// 훅 설치 경로로는 쓸 수 없는 입력이다. 포트 재배선이 이를 해석하면 실패해야 한다.
+	opts.HookExecutable = "invalid-relative-executable"
+	if _, err := EnableLocal(opts); err != nil {
+		t.Fatal(err)
+	}
+	var after map[string]any
+	if err := toml.Unmarshal(mustRead(t, f.codexPath), &after); err != nil {
+		t.Fatal(err)
+	}
+	delete(before, "otel")
+	delete(after, "otel")
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("OTel 외 설정이 바뀜: before=%v after=%v", before, after)
+	}
+	for _, signal := range []string{"logs", "metrics", "traces"} {
+		if !strings.Contains(string(mustRead(t, f.codexPath)), "localhost:51999/v1/"+signal) {
+			t.Fatalf("%s 포트 미갱신", signal)
+		}
+	}
+	if !strings.Contains(string(mustRead(t, f.claudePath)), "localhost:51999") {
+		t.Fatal("Claude 포트 미갱신")
+	}
+	stateAfter, err := LoadState(f.statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, target := range stateBefore.Targets {
+		if target.Tool != "codex" {
+			continue
+		}
+		if !reflect.DeepEqual(target.ManagedKeys, stateAfter.Targets[i].ManagedKeys) {
+			// 순서는 계약이 아니므로 집합으로 비교한다.
+			for _, key := range target.ManagedKeys {
+				found := false
+				for _, got := range stateAfter.Targets[i].ManagedKeys {
+					if got == key {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("관리 키 유실: %s", key)
+				}
+			}
+		}
+	}
+}
+
 func TestEnableIsIdempotentAndRemergesPort(t *testing.T) {
 	f := newLocalFixture(t, httpManifest())
 	beforeClaude, beforeCodex := f.snapshot(t)

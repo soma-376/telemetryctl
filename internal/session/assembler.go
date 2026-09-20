@@ -1,7 +1,6 @@
 package session
 
 import (
-	"fmt"
 	"sort"
 	"time"
 
@@ -10,9 +9,17 @@ import (
 
 // 임계값은 관측 후 조정할 값이라 상수로 두되 Option 으로 바꿀 수 있게 한다 (ADR 0005 Follow-up).
 const (
-	// DefaultIdleThreshold 는 세션 마감 기준이다. Claude Code 의 로그 내보내기 주기가 5초,
-	// 메트릭이 60초이므로 10분이면 충분히 여유롭다.
-	DefaultIdleThreshold = 10 * time.Minute
+	// DefaultIdleThreshold 는 세션 마감 기준이다.
+	//
+	// 벤더 lifecycle 훅이 생기기 전에는 이것이 유일한 마감 수단이라 exporter 주기(로그
+	// 5초·메트릭 60초) 대비 여유만 보고 10분을 썼다. 지금은 훅이 정확한 종료 시각을
+	// 주므로 이 값은 **훅이 유실됐을 때만 쓰는 바닥**이다 — 크래시·강제 종료·OS 종료.
+	//
+	// 그래서 기준이 "exporter 주기" 에서 "사람이 자리를 비우는 시간" 으로 바뀐다. 점심과
+	// 긴 회의를 덮되, 훅을 놓친 세션이 진행 중으로 잘못 보이는 시간은 반나절 안쪽으로
+	// 묶는다. 유휴로 닫힌 세션은 이벤트가 다시 오면 되살아나므로(state.observe) 살아 있는
+	// 세션을 자르는 쪽의 대가가 더 작다.
+	DefaultIdleThreshold = 4 * time.Hour
 	// DefaultHandoffWindow 는 같은 프로젝트에서 다른 벤더로 넘어갔다고 볼 시간 창이다.
 	DefaultHandoffWindow = 30 * time.Minute
 )
@@ -77,6 +84,10 @@ func New(opts ...Option) *Assembler {
 	return a
 }
 
+// IdleThreshold 는 Advance 가 쓰는 유휴 마감 임계값이다. DB 유휴 스윕이 조립기보다
+// 공격적으로 닫지 않도록 같은 값을 보고 컷오프를 잡는다.
+func (a *Assembler) IdleThreshold() time.Duration { return a.idle }
+
 // Add 는 이벤트 하나를 반영한다.
 //
 // session.id 가 없거나 events 의 NOT NULL 계약을 못 지키는 이벤트는 무시하고 false 를
@@ -112,25 +123,6 @@ func (a *Assembler) Add(in Input) bool {
 // 도구 호출 순번이 그만큼 밀린다. 배선 단계의 중복 제거 창이 그 앞에 있다.
 func (a *Assembler) TurnOf(in Input) Turn { return a.turns.Assign(in) }
 
-// Advance 는 now 기준으로 유휴 임계값을 넘긴 세션을 마감하고 마감된 세션을 돌려준다.
-//
-// now 는 인자다 — 조립기가 시계를 읽으면 10분 경계 테스트가 벽시계에 의존하게 된다.
-// 데몬은 마감 틱에서, 테스트는 원하는 시각으로 부른다.
-func (a *Assembler) Advance(now event.UnixSec) []Session {
-	limit := event.UnixSec(a.idle / time.Second)
-
-	var closed []Session
-	for _, s := range a.sessions {
-		if s.ended.Valid() || now-s.last < limit {
-			continue
-		}
-		a.close(s)
-		closed = append(closed, s.session())
-	}
-	sortSessions(closed)
-	return closed
-}
-
 // Snapshot 은 진행 중·마감된 세션을 모두 돌려준다. store 가 기본키로 upsert 한다.
 func (a *Assembler) Snapshot() []Session {
 	out := make([]Session, 0, len(a.sessions))
@@ -150,9 +142,36 @@ func (a *Assembler) Session(id string) (Session, bool) {
 	return s.session(), true
 }
 
-// Prune 은 before 이전에 마감된 세션을 조립기 메모리에서 지우고 지운 개수를 돌려준다.
-// 데몬은 오래 살고 세션은 계속 쌓이므로 이 호출이 없으면 맵이 무한히 자란다.
+// StartLifecycle 는 명시적 시작·재개 훅을 **이미 관측 중인** 세션에 반영한다.
+//
+// 조립기가 모르는 세션에는 상태를 만들지 않는다 — EndLifecycle 과 같은 원칙이다.
+// 행은 store 가 직접 만들고(startLifecycleSQL), 활동 관측이 없는 세션을 조립기가
+// 소유하면 그 스냅샷이 생명주기 정본 행세를 하며 스윕이 닫은 세션을 매 틱 되살린다.
+func (a *Assembler) StartLifecycle(sessionID string, at event.UnixSec) {
+	s := a.sessions[sessionID]
+	if s == nil {
+		return
+	}
+	if s.started == 0 || at < s.started {
+		s.started = at
+	}
+	// 재개도 활동이다. last 를 밀지 않으면 유휴로 닫혔던 세션을 재개한 직후 Advance 가
+	// 즉시 도로 닫는다 — startLifecycleSQL 이 last_activity_at 을 MAX 로 미는 것과 짝.
+	if at > s.last {
+		s.last = at
+	}
+	s.ended = event.Opt[event.UnixSec]{}
+	s.hookEnded = false
+	s.status = StatusRunning
+	s.statusReason = ""
+}
+
+// Prune 은 before 이전이 마지막 활동인 세션을 조립기 메모리에서 지우고 지운 개수를
+// 돌려준다. 데몬은 오래 살고 세션은 계속 쌓이므로 이 호출이 없으면 맵이 무한히 자란다.
 // 지워진 session.id 가 다시 등장하면 새 세션으로 시작한다.
+//
+// 마감이 아니라 **활동**을 기준으로 한다. 메모리 관리는 생명주기와 무관해야 한다 —
+// 마감은 DB 가 소유하므로(ADR 0021) 조립기는 자기가 마지막으로 본 시각만 안다.
 func (a *Assembler) Prune(before event.UnixSec) int {
 	return a.PruneIf(before, nil)
 }
@@ -162,7 +181,7 @@ func (a *Assembler) Prune(before event.UnixSec) int {
 func (a *Assembler) PruneIf(before event.UnixSec, allow func(Session) bool) int {
 	n := 0
 	for id, s := range a.sessions {
-		if v, ok := s.ended.Get(); ok && v < before {
+		if s.last < before {
 			if allow != nil && !allow(s.session()) {
 				continue
 			}
@@ -172,76 +191,6 @@ func (a *Assembler) PruneIf(before event.UnixSec, allow func(Session) bool) int 
 		}
 	}
 	return n
-}
-
-// close 는 세션을 마감하고 상태를 확정한다.
-//
-// ended_at 은 **마지막 이벤트 시각**이다. 마감을 감지한 시각(마지막 이벤트 + 10분)으로
-// 두면 모든 세션의 소요 시간에 유휴 10분이 유령처럼 붙는다.
-//
-// 우선순위는 handoff > abandoned > completed 다. handoff 는 "다른 벤더 세션이 시작됐다"는
-// 관측된 사건이고 abandoned 는 마지막 툴 실패에서 끌어낸 추측이라 근거가 더 강하다.
-// 두 판정이 겹치면 근거 문장에 둘 다 남긴다.
-func (a *Assembler) close(s *state) {
-	s.ended = event.Some(s.last)
-
-	abandonedReason := ""
-	if s.lastOutcomeSeen && !s.lastOutcomeOK {
-		abandonedReason = fmt.Sprintf("마지막 툴 이벤트 %s 가 실패(ts=%d)하고 이후 성공 없음",
-			s.lastOutcomeTool, int64(s.lastOutcomeTS))
-	}
-
-	if to, at, ok := a.handedOff(s); ok {
-		s.status = StatusHandoff
-		s.statusReason = fmt.Sprintf("같은 프로젝트에서 %s 세션이 마지막 이벤트 %d초 뒤에 시작(vendor=%s → %s)",
-			to, int64(at-s.last), s.vendor, to)
-		if abandonedReason != "" {
-			s.statusReason += "; " + abandonedReason
-		}
-		return
-	}
-	if abandonedReason != "" {
-		s.status = StatusAbandoned
-		s.statusReason = abandonedReason
-		return
-	}
-	s.status = StatusCompleted
-	s.statusReason = fmt.Sprintf("마지막 이벤트 후 %s 유휴", a.idle)
-}
-
-// handedOff 는 같은 project_hash 에서 벤더가 다른 세션이 이 세션의 마지막 이벤트로부터
-// 시간 창 안에 시작했는지 본다.
-//
-// 기준점을 started_at 이 아니라 last_event_at 으로 잡았다. 계획서는 "30분 내에 다른 벤더
-// 세션이 시작"이라고만 했는데, 알고 싶은 것은 "작업을 넘겼는가"이므로 이 세션이 멈춘
-// 시점부터 재는 것이 맞다. 시작 시각 기준이면 30분 넘게 이어진 세션은 어떤 후속 세션도
-// 잡지 못한다.
-//
-// project_hash 가 없으면(게이트·속성 부재) 판정하지 않는다 — 프로젝트를 모르는 세션끼리
-// 묶으면 무관한 세션이 전부 handoff 가 된다.
-func (a *Assembler) handedOff(s *state) (vendor string, at event.UnixSec, ok bool) {
-	if s.projectHash == "" {
-		return "", 0, false
-	}
-	window := event.UnixSec(a.handoff / time.Second)
-
-	best := (*state)(nil)
-	for _, t := range a.sessions {
-		switch {
-		case t.id == s.id, t.vendor == s.vendor,
-			t.projectHash != s.projectHash,
-			t.started < s.last, t.started > s.last+window:
-			continue
-		}
-		// 가장 먼저 시작한 세션이 넘겨받은 세션이다. 동시 시작은 id 로 갈라 결정론을 유지한다.
-		if best == nil || t.started < best.started || (t.started == best.started && t.id < best.id) {
-			best = t
-		}
-	}
-	if best == nil {
-		return "", 0, false
-	}
-	return best.vendor, best.started, true
 }
 
 func sortSessions(s []Session) {
@@ -254,11 +203,11 @@ func sortSessions(s []Session) {
 }
 
 // Assemble 은 이벤트 묶음을 한 번에 조립한다. 일괄 재처리와 테스트용 편의 함수다.
-func Assemble(in []Input, now event.UnixSec, opts ...Option) []Session {
+// 마감은 담지 않는다 — 생명주기는 DB 가 소유한다 (ADR 0021).
+func Assemble(in []Input, opts ...Option) []Session {
 	a := New(opts...)
 	for _, i := range in {
 		a.Add(i)
 	}
-	a.Advance(now)
 	return a.Snapshot()
 }

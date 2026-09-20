@@ -78,6 +78,11 @@ func runLocalEnable(stdout, stderr io.Writer, target localTarget, portFlag int) 
 		fmt.Fprintln(stderr, "오류:", installer.ErrGRPCUnsupported)
 		return 1
 	}
+	hookExecutable, err := currentHookExecutable()
+	if err != nil {
+		fmt.Fprintln(stderr, "오류:", err)
+		return 1
+	}
 
 	port, note := resolveEnablePort(target, portFlag)
 	if note != "" {
@@ -91,9 +96,11 @@ func runLocalEnable(stdout, stderr io.Writer, target localTarget, portFlag int) 
 	}
 
 	report, err := installer.EnableLocal(installer.LocalOptions{
-		StatePath:   target.StatePath,
-		Port:        port,
-		IngestToken: token,
+		StatePath:      target.StatePath,
+		Port:           port,
+		IngestToken:    token,
+		HookExecutable: hookExecutable,
+		DataDir:        target.DataDir,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, "로컬 재배선 실패:", err)

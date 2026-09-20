@@ -33,16 +33,13 @@ const statusExpr = `CASE WHEN s.ended_at IS NULL THEN '` + StatusRunning + `' EL
 
 // lastActivityExpr 은 "마지막으로 알려진 활동" 시각이다.
 //
-// v3 에는 last_event_at 이 없고 started_at·ended_at 은 둘 다 선택이다. 그래서 하나를
-// 고르는 것이 아니라 알고 있는 값 중 **가장 늦은 것**을 쓴다 — store/retention.go 의
-// 보존 판정과 같은 식이다. 두 곳이 다른 시각을 "마지막 활동" 이라 부르면 화면에 보이는
-// 세션이 그 값과 무관하게 사라진다.
+// 세 시각이 전부 선택이라 하나를 고르지 않고 아는 값 중 **가장 늦은 것**을 쓴다 —
+// store/retention.go 의 보존 판정과 같은 식이다. 두 곳이 다른 시각을 "마지막 활동" 이라
+// 부르면 화면에 보이는 세션이 그 값과 무관하게 사라진다.
 const lastActivityExpr = `MAX(
   COALESCE(s.ended_at, 0),
   COALESCE(s.started_at, 0),
-  COALESCE((SELECT MAX(COALESCE(e.occurred_at, t.ended_at, t.started_at))
-              FROM turns t LEFT JOIN events e ON e.turn_id = t.id
-             WHERE t.session_id = s.id), 0))`
+  COALESCE(s.last_activity_at, 0))`
 
 // SessionQuery 는 세션 목록 조회 조건이다 (계획서 「오늘의 활동 / 세션 리스트」).
 type SessionQuery struct {

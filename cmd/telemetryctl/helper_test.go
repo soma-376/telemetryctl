@@ -57,14 +57,12 @@ func seed(t *testing.T, dataDir string, at time.Time) {
 				StartedAt: sec, LastEventAt: sec + 600, EndedAt: event.Some(sec + 600),
 				Status: session.StatusCompleted,
 				// 프로젝트 이름은 워크스페이스 경로의 basename 이다 (ADR 0010).
-				WorkspacePath: workspaceClaude,
 				ActiveSeconds: 300,
 			},
 			{
 				SessionID: "sess-codex", Vendor: "codex",
 				StartedAt: sec + 60, LastEventAt: sec + 120,
 				Status:        session.StatusRunning,
-				WorkspacePath: workspaceCodex,
 				ActiveSeconds: 60,
 			},
 		},
@@ -72,6 +70,24 @@ func seed(t *testing.T, dataDir string, at time.Time) {
 	}
 	if _, err := db.Write(context.Background(), batch); err != nil {
 		t.Fatalf("store.Write: %v", err)
+	}
+	// 스냅샷은 ended_at 을 쓰지 않는다 (ADR 0021). 마감은 훅과 유휴 스윕만 쓰므로
+	// 픽스처도 실제 경로를 타야 화면이 보는 것과 같은 상태가 된다.
+	for _, s := range batch.Sessions {
+		path := workspaceClaude
+		if s.Vendor == "codex" {
+			path = workspaceCodex
+		}
+		if err := db.ApplyLifecycle(context.Background(), s.Vendor, s.SessionID, s.StartedAt, false, path); err != nil {
+			t.Fatal(err)
+		}
+		at, ok := s.EndedAt.Get()
+		if !ok {
+			continue
+		}
+		if err := db.ApplyLifecycle(context.Background(), s.Vendor, s.SessionID, at, true, ""); err != nil {
+			t.Fatalf("ApplyLifecycle(%s): %v", s.SessionID, err)
+		}
 	}
 
 	// 제목은 벤더가 준 것만 저장하므로 스냅샷으로는 넣을 수 없다 (PROJ-124).
