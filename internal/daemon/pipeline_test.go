@@ -308,11 +308,13 @@ func TestSweepDoesNotCloseSessionsAssemblerStillOwns(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	base := time.Unix(fixtureUnix, 0).UTC()
-	now := base
-	p := newTestPipeline(t, db, &syncBuffer{}, func() time.Time { return now })
+	// 세션 저장이 보여도 파이프라인은 flush 시각을 읽을 수 있어 시계 갱신을 동기화한다.
+	var nowNano atomic.Int64
+	nowNano.Store(base.UnixNano())
+	p := newTestPipeline(t, db, &syncBuffer{}, func() time.Time { return time.Unix(0, nowNano.Load()).UTC() })
 	feedSession(t, p, "sess-live", base)
 
-	now = base.Add(p.asm.IdleThreshold() - time.Minute)
+	nowNano.Store(base.Add(p.asm.IdleThreshold() - time.Minute).UnixNano())
 	before := p.Stats().SessionsWritten
 	p.submit(cmdSessions)
 	waitFor(t, "세션 틱", func() bool { return p.Stats().SessionsWritten > before })
