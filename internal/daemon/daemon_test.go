@@ -18,8 +18,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zalando/go-keyring"
+
 	"github.com/your-org/pulsemetry/internal/autostart"
 	"github.com/your-org/pulsemetry/internal/contract"
+	"github.com/your-org/pulsemetry/internal/credential"
 	"github.com/your-org/pulsemetry/internal/event"
 	"github.com/your-org/pulsemetry/internal/forward"
 	"github.com/your-org/pulsemetry/internal/installer"
@@ -870,6 +873,14 @@ func listenBusy(t *testing.T) (int, error) {
 // 포트 폴백이 나면 벤더 설정이 잡히지 않은 옛 포트를 계속 가리켜 수집이 조용히 멈춘다.
 // 데몬이 실제 포트로 다시 써야 한다.
 func TestPortFallbackRewiresVendorConfigs(t *testing.T) {
+	// 로컬 배선이 켜진 설치에는 회사 토큰의 키링 대피본이 있다.
+	// OS 키링 대신 메모리 키링으로 이 전제만 준비하고 실제 재배선 경로를 검증한다.
+	keyring.MockInit()
+	t.Cleanup(keyring.MockInit)
+	if err := credential.Set(credential.AccountTelemetry, "company-telemetry-token-for-test"); err != nil {
+		t.Fatal(err)
+	}
+
 	claudePath := filepath.Join(t.TempDir(), "settings.json")
 	taken := freePort(t)
 	// 요청할 포트를 미리 점유해 폴백을 강제한다.
