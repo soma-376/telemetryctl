@@ -118,6 +118,8 @@ type Options struct {
 	// LocalAPI 는 인증을 통과한 LocalAPIPathPrefix 요청 전부를 받는다 (internal/localapi).
 	// 메서드·경로 판정은 그쪽 몫이다. nil이면 로컬 API를 열지 않는다.
 	LocalAPI http.Handler
+	// ControlAPI는 자체 제어 전용 인증을 수행한다. ingest 인증으로 우회하지 않는다.
+	ControlAPI http.Handler
 
 	// Decode 는 워커가 otlpdecode 에 넘길 옵션이다. InstallationID 가 비어 있으면
 	// 모든 이벤트가 검증에서 거부되므로 New 가 미리 막는다.
@@ -357,6 +359,10 @@ func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.URL.Path == HealthPath {
 		rc.serveHealth(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/v1/control/") && rc.opt.ControlAPI != nil {
+		rc.opt.ControlAPI.ServeHTTP(w, r)
 		return
 	}
 	if (strings.HasPrefix(r.URL.Path, LocalAPIPathPrefix) || strings.HasPrefix(r.URL.Path, HookAPIPathPrefix)) && rc.opt.LocalAPI != nil {

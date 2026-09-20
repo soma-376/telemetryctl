@@ -278,8 +278,13 @@ func newCLIFixtureWith(t *testing.T, m contract.Manifest) cliFixture {
 	keyring.MockInit()
 
 	home := t.TempDir()
+	home, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home) // Windows
+	t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
 
 	f := cliFixture{
 		claudePath: filepath.Join(home, ".claude", "settings.json"),

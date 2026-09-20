@@ -40,6 +40,8 @@ func main() {
 		os.Exit(2)
 	}
 	switch os.Args[1] {
+	case "uninstall":
+		os.Exit(cmdUninstall(os.Args[2:]))
 	case "hook":
 		os.Exit(cmdHook(os.Args[2:]))
 	case "enroll":
@@ -82,6 +84,7 @@ func writeUsage(w io.Writer) {
   pulsemetry enroll --invite <code> [--server <url>] [--force]   초대 코드로 등록 후 설정 적용 (로컬 파이프라인 자동 배선)
   pulsemetry reconnect [--server <url>]                          저장된 설치 자격증명으로 텔레메트리 토큰 재발급
   pulsemetry status                                              현재 설치·로컬 파이프라인 상태 표시
+  pulsemetry uninstall [--dry-run] [--yes] [--delete-data]         사용자 설정을 보존하며 설치 해제
   pulsemetry daemon [옵션]                                       foreground 데몬 실행
   pulsemetry stats [옵션]                                        로컬 집계 조회
   pulsemetry sessions [옵션]                                     로컬 세션 목록 조회
@@ -542,9 +545,16 @@ func runStatus(stdout, stderr io.Writer, args []string) int {
 		fmt.Fprintf(stdout, "installation_id=%s · config_revision=%d · installer=%s · installed_at=%s\n",
 			st.InstallationID, st.ConfigRevision, st.InstallerVersion, st.InstalledAt)
 		for _, t := range st.Targets {
-			fmt.Fprintf(stdout, "  - [%s] %s (관리 키 %d개)\n", t.Tool, t.Path, len(t.ManagedKeys))
+			fmt.Fprintf(stdout, "  - [%s] %s\n", t.Tool, t.Path)
 		}
 		printCredentialStatus(stdout)
+		if drift, err := installer.InspectManaged(target.StatePath, st); err != nil {
+			fmt.Fprintf(stdout, "설정 drift 검사 실패: %v\n", err)
+		} else {
+			for _, item := range drift {
+				fmt.Fprintf(stdout, "설정 drift: [%s] %s · %s=%s (%s) — %s로 명시적 복구\n", item.Tool, item.Path, item.Key, item.Status, installer.DriftImpact(item.Key), installer.DriftRepairCommand(st))
+			}
+		}
 	}
 	printLocalStatus(stdout, target)
 	return 0

@@ -209,11 +209,11 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 		report.Targets = append(report.Targets, result)
 		applied = append(applied, step)
 		state.Targets = append(state.Targets, Target{
+			pendingManaged: result.ManagedEntries,
 			Tool:           step.tool,
 			Path:           result.Path,
 			BackupPath:     result.BackupPath,
 			OriginalSHA256: result.OriginalSHA256,
-			ManagedKeys:    result.ManagedKeys,
 			Created:        result.Created,
 		})
 	}
@@ -226,6 +226,17 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 	//
 	// `local enable` 은 같은 일을 벤더 파일에서 되읽어서 한다 (stashTelemetryToken).
 	// 여기서는 enrollment 응답에 원본이 있으니 되읽을 이유가 없다.
+	// 재등록은 살아 있는 설치 위에서 일어난다. 실패 시 지우지 않고 되돌리려면 원래 값이 필요하다.
+	previousStash, hadStash, err := credential.Get(credential.AccountTelemetry)
+	if err != nil {
+		return report, fmt.Errorf("기존 회사 토큰 확인 실패: %w", err)
+	}
+	// 파싱하면 손상된 값이 재설치를 막는다. 되돌리는 데 해석은 필요 없다.
+	previousCred, hadCred, err := credential.Get(credential.AccountInstallation)
+	if err != nil {
+		return report, fmt.Errorf("기존 설치 자격증명 확인 실패: %w", err)
+	}
+
 	if report.LocalEnabled {
 		if err := credential.Set(credential.AccountTelemetry, enrollment.TelemetryToken); err != nil {
 			if rollbackErr := rollback(); rollbackErr != nil {
@@ -235,12 +246,25 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 		}
 	}
 
-	// 아래 단계가 실패하면 대피본도 함께 걷어낸다. 설치가 롤백된 뒤에도 키링에 남으면
+	// 아래 단계가 실패하면 대피본도 되돌린다. 이번에 쓴 값이 롤백 뒤에도 키링에 남으면
 	// 다음 설치의 stashTelemetryToken 이 남의 토큰을 회사 토큰으로 착각한다.
-	clearStash := func() {
-		if report.LocalEnabled {
-			_ = credential.Delete(credential.AccountTelemetry)
+	restoreStash := func() {
+		if !report.LocalEnabled {
+			return
 		}
+		if hadStash {
+			_ = credential.Set(credential.AccountTelemetry, previousStash)
+			return
+		}
+		_ = credential.Delete(credential.AccountTelemetry)
+	}
+
+	restoreCredential := func() {
+		if hadCred {
+			_ = credential.Set(credential.AccountInstallation, previousCred)
+			return
+		}
+		_ = credential.DeleteInstallation()
 	}
 
 	// 장기 설치 자격증명은 OS 키링에만 저장한다. 벤더 설정에는 enrollment 응답의
@@ -249,7 +273,7 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 		InstallationID:    enrollment.InstallationID,
 		InstallationToken: enrollment.InstallationToken,
 	}); err != nil {
-		clearStash()
+		restoreStash()
 		if rollbackErr := rollback(); rollbackErr != nil {
 			return report, fmt.Errorf("save credential: %v; rollback failed: %w", err, rollbackErr)
 		}
@@ -257,8 +281,8 @@ func Apply(enrollment *contract.Enrollment, opts Options) (*Report, error) {
 	}
 
 	if err := SaveState(opts.StatePath, state); err != nil {
-		clearStash()
-		_ = credential.DeleteInstallation()
+		restoreStash()
+		restoreCredential()
 		if rollbackErr := rollback(); rollbackErr != nil {
 			return report, fmt.Errorf("save state: %v; rollback failed: %w", err, rollbackErr)
 		}

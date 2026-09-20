@@ -288,7 +288,7 @@ func MergeCodexWithExecutable(path string, m *contract.Manifest, token string, _
 }
 
 // MergeCodexOTel 은 포트 재배선 전용이다. 훅·승인 상태·기능 토글은 그대로 보존한다.
-// 반환된 ManagedKeys는 이번에 갱신한 OTel 키뿐이므로 호출자가 기존 훅 소유권을 유지한다.
+// 반환된 ManagedEntries는 갱신한 OTel 항목뿐이므로 호출자가 기존 훅 지문을 보존한다.
 func MergeCodexOTel(path string, m *contract.Manifest, token string) (Result, error) {
 	return mergeCodexConfig(path, m, token, "", true)
 }
@@ -332,5 +332,5 @@ func mergeCodexConfig(path string, m *contract.Manifest, token, hookCommand stri
 	if err := AtomicWriteFile(path, out.Bytes(), 0o600); err != nil {
 		return Result{}, err
 	}
-	return Result{Path: path, ManagedKeys: managed, Created: !existed}, nil
+	return Result{Path: path, ManagedKeys: managed, ManagedEntries: captureManaged(root, managed), Created: !existed}, nil
 }

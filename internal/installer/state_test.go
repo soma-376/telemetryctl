@@ -56,14 +56,12 @@ func TestSaveLoadStateRoundTrip(t *testing.T) {
 						Path:           "/home/u/.claude/settings.json",
 						BackupPath:     "/home/u/.local/share/pulsemetry/backups/claude/settings.x.json",
 						OriginalSHA256: "abc123",
-						ManagedKeys:    []string{"env.OTEL_EXPORTER_OTLP_ENDPOINT", "env.OTEL_EXPORTER_OTLP_HEADERS"},
 						Created:        false,
 					},
 					{
-						Tool:        "codex",
-						Path:        "/home/u/.codex/config.toml",
-						ManagedKeys: []string{"otel.endpoint"},
-						Created:     true,
+						Tool:    "codex",
+						Path:    "/home/u/.codex/config.toml",
+						Created: true,
 					},
 				},
 			},
@@ -134,8 +132,8 @@ func TestSaveStateOverwritesPreviousContent(t *testing.T) {
 		InstallationID:     "inst_old",
 		Manifest:           testManifest(),
 		Targets: []Target{
-			{Tool: "claude", Path: "/a", ManagedKeys: []string{"k1", "k2", "k3"}},
-			{Tool: "codex", Path: "/b", ManagedKeys: []string{"k4", "k5", "k6"}},
+			{Tool: "claude", Path: "/a"},
+			{Tool: "codex", Path: "/b"},
 		},
 	}
 	if err := SaveState(path, &large); err != nil {
@@ -208,7 +206,7 @@ func TestMigrateV3AddsLocalDefaults(t *testing.T) {
   "config_revision": 5,
   "installer_version": "0.0.9",
   "installed_at": "2026-01-02T03:04:05Z",
-  "targets": [{"tool":"claude","path":"/x","managed_keys":["k"]}]
+  "targets": [{"tool":"claude","path":"/x"}]
 }`
 	if err := os.WriteFile(path, []byte(v3), 0o600); err != nil {
 		t.Fatal(err)

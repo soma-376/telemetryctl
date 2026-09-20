@@ -83,15 +83,15 @@ type State struct {
 	Local Local `json:"local"`
 }
 
-// Target 은 설정 파일 한 개에 대해 installer 가 한 일이다. ManagedKeys 로 uninstall 이
-// 우리가 넣은 키만 제거할 수 있다 (§5.2).
+// Target 은 설치한 설정 파일의 위치와 백업 정보를 담는다. 관리 항목은 별도 지문 파일에 저장한다.
 type Target struct {
-	Tool           string   `json:"tool"` // "claude" | "codex"
-	Path           string   `json:"path"`
-	BackupPath     string   `json:"backup_path,omitempty"`
-	OriginalSHA256 string   `json:"original_sha256,omitempty"`
-	ManagedKeys    []string `json:"managed_keys"`
-	Created        bool     `json:"created"`
+	pendingManaged       []config.ManagedEntry
+	preserveManagedHooks bool
+	Tool                 string `json:"tool"` // "claude" | "codex"
+	Path                 string `json:"path"`
+	BackupPath           string `json:"backup_path,omitempty"`
+	OriginalSHA256       string `json:"original_sha256,omitempty"`
+	Created              bool   `json:"created"`
 }
 
 // SaveState 는 상태를 path 에 0600 으로 기록한다. 상위 디렉터리는 0700 으로 생성한다.
@@ -100,12 +100,20 @@ type Target struct {
 // 자주 갱신하게 되므로, 중간에 죽어도 부분 기록된 state.json 이 남아 설치가 깨지는 일이
 // 없어야 한다. 상위 디렉터리 0700 생성도 AtomicWriteFile 이 함께 처리한다.
 func SaveState(path string, s *State) error {
+	undoManaged, err := saveManaged(path, s)
+	if err != nil {
+		return fmt.Errorf("관리 기록 저장 실패: %w", err)
+	}
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
+		_ = undoManaged()
 		return err
 	}
 	b = append(b, '\n')
 	if err := config.AtomicWriteFile(path, b, 0o600); err != nil {
+		if undoErr := undoManaged(); undoErr != nil {
+			return fmt.Errorf("상태 저장 실패: %v; 관리 기록 복구 실패: %w", err, undoErr)
+		}
 		return fmt.Errorf("상태 저장 실패 %s: %w", path, err)
 	}
 	return nil

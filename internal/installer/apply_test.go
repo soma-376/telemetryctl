@@ -29,6 +29,11 @@ func newEnrollFixture(t *testing.T, m contract.Manifest, ingestTok string) (loca
 	keyring.MockInit()
 
 	dir := t.TempDir()
+	// macOS의 /var 별칭을 해소해 링크 경로 거부 정책과 같은 실제 경로로 검사한다.
+	dir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	f := localFixture{
 		statePath:  filepath.Join(dir, "state.json"),
 		backupDir:  filepath.Join(dir, "backups"),
