@@ -30,6 +30,8 @@ const vendorLLMCallsInRangeSQL = `SELECT s.vendor_id, ` + llmCallColumns + llmCa
 type usageAcc struct {
 	day      timeRange
 	nWindows int
+	// 기간 조회는 화면이 정한 달력 경계에 배분한다.
+	indexWindow func(int64) int
 
 	// totals·cost 는 그 날 전체다. 각각 Home 의 Totals·Cost 와 같은 값이 된다.
 	totals Totals
@@ -120,7 +122,7 @@ func (a *usageAcc) collectAggregate(ctx context.Context, db SQLQuerier) error {
 		if a.nWindows == 0 {
 			continue
 		}
-		w := &a.windows[twoHourIndex(a.day, row.Hour, a.nWindows)]
+		w := &a.windows[a.windowIndex(row.Hour)]
 		w.totals.add(row.Totals)
 		// Active 의 정의는 Home 과 같다 — 비용·토큰만 보면 도구만 쓴 시간대가 빠진다.
 		w.active = w.active || hasActivity(row.Totals)
@@ -185,13 +187,20 @@ func (a *usageAcc) addCall(vendor string, c llmCall) {
 		return
 	}
 	// 비용만 호출 시각으로 창에 넣는다 (물려받은 규칙 — home_breakdown.go 머리말).
-	w := &a.windows[twoHourIndex(a.day, c.CalledAt, a.nWindows)]
+	w := &a.windows[a.windowIndex(c.CalledAt)]
 	w.cost += res.Cost.Total.NanoUSD
 	w.active = true
 	w.vendor(vendor).cost += res.Cost.Total.NanoUSD
 }
 
 // ── 결과 조립 ───────────────────────────────────────────────────────────────
+
+func (a *usageAcc) windowIndex(sec int64) int {
+	if a.indexWindow != nil {
+		return a.indexWindow(sec)
+	}
+	return twoHourIndex(a.day, sec, a.nWindows)
+}
 
 // apply 는 누적 상태를 응답으로 옮긴다. 벤더 순서를 먼저 확정하고, 창의 벤더 줄을 그
 // 순서에 맞춘다 — 창마다 순서가 다르면 화면이 창마다 벤더를 찾아 맞춰야 한다.

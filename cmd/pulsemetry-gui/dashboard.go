@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/your-org/pulsemetry/internal/dashboard/activity"
+	"github.com/your-org/pulsemetry/internal/dashboard/home"
 	"github.com/your-org/pulsemetry/internal/dashboard/tray"
 	"github.com/your-org/pulsemetry/internal/hostenv"
 	"github.com/your-org/pulsemetry/internal/localapi"
@@ -37,6 +38,10 @@ func NewDashboard() *Dashboard {
 
 // ServiceName 은 Wails 가 로그에 쓰는 이름이다. 없으면 타입 이름으로 짓는다.
 func (d *Dashboard) ServiceName() string { return "Dashboard" }
+
+func (d *Dashboard) Home(ctx context.Context, q home.Query) (home.Snapshot, error) {
+	return d.ipcClient.Home(ctx, q)
+}
 
 // Updates는 데몬이 마지막으로 확인한 업데이트 상태만 조회한다.
 func (d *Dashboard) Updates(ctx context.Context) (updatecheck.Snapshot, error) {

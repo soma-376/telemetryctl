@@ -122,6 +122,107 @@ export interface FileRow {
 }
 
 /**
+ * HomeBreakdown 은 선택 날짜의 시간대·벤더·모델 분해 한 장이다.
+ */
+export interface HomeBreakdown {
+    /**
+     * TZ 는 실제로 적용된 시간대 이름, Date 는 그 시간대의 선택 날짜다.
+     */
+    "tz": string;
+    "date": string;
+
+    /**
+     * StartAt·EndAt 은 선택 날짜 구간의 UTC unix 초 [시작, 끝) 이다. Home 의 같은 이름과
+     * 같은 값이다.
+     */
+    "start_at": number;
+    "end_at": number;
+
+    /**
+     * Windows 는 현지 자정부터 2시간씩 자른 시계열이다. 활동이 없는 창도 0 으로 들어 있다.
+     */
+    "windows": UsageWindow[] | null;
+
+    /**
+     * Peak 는 사용량이 가장 많았던 창이다.
+     */
+    "peak": PeakWindow;
+
+    /**
+     * Vendors 는 관측된 벤더의 합계다. 비용 내림차순이고 동률은 벤더 이름으로 가른다.
+     */
+    "vendors": VendorUsage[] | null;
+
+    /**
+     * Totals 는 그 날 전체 집계다. **HomeSummary.Totals 와 같은 값이다.**
+     */
+    "totals": Totals;
+
+    /**
+     * Cost 는 그 날 전체 예상 비용이다. **HomeSummary.Cost 와 같은 값이다.**
+     */
+    "cost": CostSummary;
+}
+
+/**
+ * ModelUsage 는 벤더 안의 모델 한 줄이다.
+ */
+export interface ModelUsage {
+    /**
+     * Model 은 pricing.Canonical 로 정규화한 이름이다. 같은 모델의 날짜·리전 표기가 여기서
+     * 한 줄로 모인다 — 정규화하지 않으면 화면의 같은 모델이 여러 줄로 쪼개진다.
+     * 빈 문자열은 모델 이름 자체가 없던 호출이다.
+     */
+    "model": string;
+
+    /**
+     * Cost 는 이 모델의 예상 비용이다. Unavailable 이 크면 이 줄의 금액은 과소 집계다.
+     */
+    "cost": CostSummary;
+    "input_tokens": number;
+    "output_tokens": number;
+    "cache_read_tokens": number;
+    "cache_write_tokens": number;
+
+    /**
+     * Tokens 는 입력+출력이다. 캐시는 더하지 않는다.
+     */
+    "tokens": number;
+}
+
+/**
+ * PeakWindow 는 「최고 사용 시간대」다.
+ * 
+ * # 무엇으로 고르는가
+ * 
+ * 토큰이 가장 많은 창이다. 토큰이 같으면 예상 비용(정수 nano-USD)이 큰 창, 그것도 같으면
+ * **이른 창**이 이긴다. 비용을 1순위로 두지 않은 이유는 비용을 정하지 못한 호출이 있기
+ * 때문이다 — 모르는 모델만 쓴 시간대가 "사용량 0" 으로 밀려나면 안 된다.
+ * 
+ * 토큰도 비용도 0 인 하루에는 Found 가 false 이고 Index 는 -1 이다. 아무 창이나 골라
+ * 돌려주면 화면이 "새벽 0시가 가장 바빴다" 를 그린다.
+ */
+export interface PeakWindow {
+    "found": boolean;
+
+    /**
+     * Index 는 Windows 안의 위치다. Found 가 false 면 -1 이다.
+     */
+    "index": number;
+    "start_at": number;
+    "end_at": number;
+    "local_hour": number;
+    "tokens": number;
+    "cost": pricing$0.Money;
+
+    /**
+     * Vendor 는 그 창에서 토큰이 가장 많았던 벤더다. 같은 규칙으로 비용·이름 순으로 가른다.
+     * 그 창에 사용량이 없으면 빈 문자열이다.
+     */
+    "vendor": string;
+}
+
+/**
  * Phase 는 연속된 같은 분류의 턴 묶음이다 — 화면 「세션 흐름」의 한 칸.
  */
 export interface Phase {
@@ -542,6 +643,54 @@ export interface ToolRow {
 }
 
 /**
+ * Totals 는 한 구간·한 축의 지표 합계다. Today 카드와 Breakdown 행이 함께 쓴다.
+ * 
+ * 컬럼을 골라 담지 않고 전부 담는 이유는 화면이 여러 장이고 각 장이 다른 조합을 쓰기
+ * 때문이다 — Today 는 비용·토큰·세션·활동 시간, Insights 는 툴 수락/거부, Activity 는
+ * 라인 수를 본다. 한 벌로 주고 화면이 고르게 두는 편이 조회 메서드를 화면마다 늘리는 것보다
+ * 낫다.
+ * 
+ * # v3 에 출처가 없는 필드
+ * 
+ * v3 는 rollup_hourly 를 두지 않고 승격 테이블(llm_calls · tool_calls · file_changes)을
+ * 조회 시점에 GROUP BY 한다 (ADR 0009). 그래서 아래 네 필드는 **어떤 행에서도 0 이 아닌
+ * 값을 받지 못한다.**
+ * 
+ * 	APIErrors    — v3 events 에 status_code · success 를 담는 자리가 없다
+ * 	Retries      — 같은 이유로 attempt 가 저장되지 않는다
+ * 	Commits      — 커밋 수를 실어 오는 이벤트가 승격 대상이 아니다
+ * 	PullRequests — 같은 이유
+ * 
+ * 필드를 지우지 않는 이유는 ADR 0009 가 abandoned·handoff 를 남긴 것과 같다 — 지우면
+ * GUI TypeScript 바인딩과 `stats --json` 출력이 깨진다. 산출하지 않는다는 사실을 여기
+ * 주석과 스키마 문서에 남긴다.
+ */
+export interface Totals {
+    "cost_usd": number;
+    "input_tokens": number;
+    "output_tokens": number;
+    "cache_read_tokens": number;
+    "cache_creation_tokens": number;
+    "api_requests": number;
+
+    /**
+     * APIErrors·Retries·Commits·PullRequests 는 v3 에 출처가 없어 항상 0 이다 (위 주석).
+     */
+    "api_errors": number;
+    "retries": number;
+    "lines_added": number;
+    "lines_removed": number;
+    "commits": number;
+    "pull_requests": number;
+    "prompts": number;
+    "tool_calls": number;
+    "tool_accepts": number;
+    "tool_rejects": number;
+    "active_seconds": number;
+    "sessions_started": number;
+}
+
+/**
  * TurnClass 는 턴 하나의 분류 결과다.
  */
 export interface TurnClass {
@@ -641,6 +790,150 @@ export interface TurnMetrics {
     "tokens": TokenTotals;
     "cost": CostTotals;
     "cache_savings": SavingsTotals;
+}
+
+/**
+ * UsageWindow 는 2시간 창 하나다. 경계와 Active 의 정의는 Home 의 TwoHourWindow 와 같고,
+ * 실제로 같은 함수가 만든다 (home.go 의 twoHourWindows).
+ */
+export interface UsageWindow {
+    /**
+     * StartAt·EndAt 은 이 창의 UTC unix 초 [시작, 끝) 이다. DST 전환일의 마지막 창은
+     * 2시간보다 짧거나 길다.
+     */
+    "start_at": number;
+    "end_at": number;
+
+    /**
+     * LocalHour 는 이 창이 시작하는 현지 시각(0~23)이다. 화면의 축 라벨이 쓴다.
+     */
+    "local_hour": number;
+
+    /**
+     * Active 는 이 창에 사실이 하나라도 있었는지다. Home 의 TwoHourWindow.Active 와 같다.
+     */
+    "active": boolean;
+    "cost": pricing$0.Money;
+
+    /**
+     * APIRequests 는 llm_calls 행 수다. 벤더 줄에서는 Cost.Calls 와 같은 값이어야 한다 —
+     * 하나는 집계, 하나는 행 스캔에서 오므로 어긋나면 둘 중 하나가 구간을 다르게 잘랐다.
+     */
+    "api_requests": number;
+    "input_tokens": number;
+    "output_tokens": number;
+    "cache_read_tokens": number;
+
+    /**
+     * CacheWriteTokens 는 Totals 의 cache_creation_tokens 와 같은 값이다. 이름을 llm_calls
+     * 컬럼(cache_write_tokens)과 pricing.Usage 쪽에 맞췄다.
+     */
+    "cache_write_tokens": number;
+
+    /**
+     * Tokens 는 입력+출력이다. 캐시·reasoning 은 더하지 않는다 (파일 머리말).
+     */
+    "tokens": number;
+    "tool_calls": number;
+    "prompts": number;
+    "sessions_started": number;
+    "active_seconds": number;
+
+    /**
+     * Vendors 는 **항상 HomeBreakdown.Vendors 와 같은 길이·같은 순서**다. 활동이 없는
+     * 벤더는 0 으로 들어 있다.
+     */
+    "vendors": VendorWindow[] | null;
+}
+
+/**
+ * VendorUsage 는 벤더 한 줄이다 (선택 날짜 전체).
+ */
+export interface VendorUsage {
+    "vendor": string;
+
+    /**
+     * Cost 는 이 벤더의 예상 비용이다 (가격표 기준, 보고값 우선).
+     */
+    "cost": CostSummary;
+
+    /**
+     * APIRequests 는 llm_calls 행 수다. 벤더 줄에서는 Cost.Calls 와 같은 값이어야 한다 —
+     * 하나는 집계, 하나는 행 스캔에서 오므로 어긋나면 둘 중 하나가 구간을 다르게 잘랐다.
+     */
+    "api_requests": number;
+    "input_tokens": number;
+    "output_tokens": number;
+    "cache_read_tokens": number;
+
+    /**
+     * CacheWriteTokens 는 Totals 의 cache_creation_tokens 와 같은 값이다. 이름을 llm_calls
+     * 컬럼(cache_write_tokens)과 pricing.Usage 쪽에 맞췄다.
+     */
+    "cache_write_tokens": number;
+
+    /**
+     * Tokens 는 입력+출력이다. 캐시·reasoning 은 더하지 않는다 (파일 머리말).
+     */
+    "tokens": number;
+    "tool_calls": number;
+    "prompts": number;
+    "sessions_started": number;
+    "active_seconds": number;
+
+    /**
+     * CostSharePermille·TokenSharePermille 은 정수 천분율 점유율이다. 각각의 합은
+     * 기준 합계가 0 보다 클 때 정확히 SharePermilleTotal(1000)이다 (share.go).
+     */
+    "cost_share_permille": number;
+    "token_share_permille": number;
+
+    /**
+     * Models 는 상위 모델이다. 비용·토큰 내림차순이고 동률은 모델 이름으로 가른다.
+     */
+    "models": ModelUsage[] | null;
+
+    /**
+     * ModelsTruncated 가 true 면 목록이 ModelLimit 에서 잘렸다는 뜻이다. 이때 모델 줄의
+     * 합은 이 벤더 줄보다 **작다.**
+     */
+    "models_truncated": boolean;
+}
+
+/**
+ * VendorWindow 는 창 하나 안의 벤더 한 줄이다.
+ */
+export interface VendorWindow {
+    "vendor": string;
+
+    /**
+     * Cost 는 이 창·이 벤더의 예상 비용이다.
+     */
+    "cost": pricing$0.Money;
+
+    /**
+     * APIRequests 는 llm_calls 행 수다. 벤더 줄에서는 Cost.Calls 와 같은 값이어야 한다 —
+     * 하나는 집계, 하나는 행 스캔에서 오므로 어긋나면 둘 중 하나가 구간을 다르게 잘랐다.
+     */
+    "api_requests": number;
+    "input_tokens": number;
+    "output_tokens": number;
+    "cache_read_tokens": number;
+
+    /**
+     * CacheWriteTokens 는 Totals 의 cache_creation_tokens 와 같은 값이다. 이름을 llm_calls
+     * 컬럼(cache_write_tokens)과 pricing.Usage 쪽에 맞췄다.
+     */
+    "cache_write_tokens": number;
+
+    /**
+     * Tokens 는 입력+출력이다. 캐시·reasoning 은 더하지 않는다 (파일 머리말).
+     */
+    "tokens": number;
+    "tool_calls": number;
+    "prompts": number;
+    "sessions_started": number;
+    "active_seconds": number;
 }
 
 /**

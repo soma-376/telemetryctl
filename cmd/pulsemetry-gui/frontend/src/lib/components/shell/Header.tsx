@@ -2,24 +2,29 @@ import Dot from "$lib/components/ui/Dot";
 import Mascot from "$lib/components/ui/Mascot";
 import { useWidth } from "$lib/react-utils";
 import { useState } from "react";
+import { todayRange } from "$lib/domain/period";
+import { useHomeQuery } from "$lib/query/home";
+import { localTimeZone } from "$lib/utils/timezone";
+import { formatTokens } from "$lib/utils/format";
 import BellIcon from "../../icons/BellIcon";
 import PowerIcon from "../../icons/PowerIcon";
 import SlidersIcon from "../../icons/SlidersIcon";
 import DateRangePicker from "../period/DateRangePicker";
 
 export default function Header({
-  online = true,
-  activeAgents,
-  tokensToday,
   onOpenSettings,
   onQuit,
 }: {
-  online?: boolean;
-  activeAgents: number;
-  tokensToday: string;
   onOpenSettings?: () => void;
   onQuit?: () => void;
 }) {
+  const query = useHomeQuery({ ...todayRange(), tz: localTimeZone() });
+  const online = !!query.data?.database_available && !query.isError;
+  const activeAgents = query.data?.active_agents?.length ?? "-";
+  const totals = query.data?.usage.totals;
+  const tokensToday = totals
+    ? formatTokens(totals.input_tokens + totals.output_tokens)
+    : "-";
   const [headerWidth, setHeaderWidth] = useState(0);
   const measureHeader = useWidth(setHeaderWidth);
   const compact = headerWidth > 0 && headerWidth < 950;
@@ -43,7 +48,13 @@ export default function Header({
                     online ? "var(--color-success)" : "var(--color-inactive)"
                   }
                 />
-                {online ? "모니터링 중" : "연결 끊김"}
+                {query.isPending
+                  ? "연결 확인 중"
+                  : query.isError
+                    ? "연결 끊김"
+                    : online
+                      ? "모니터링 중"
+                      : "사용 기록 없음"}
               </div>
             </div>
           </div>

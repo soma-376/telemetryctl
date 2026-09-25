@@ -18,8 +18,10 @@ import { useActivityQuery } from "../src/lib/query/activity";
 import { useTrayQuery, useTrayRefreshMutation } from "../src/lib/query/tray";
 import App from "../src/App";
 import TrayQuickView from "../src/pages/tray/TrayQuickView";
+import { homeFixture } from "./home-fixture";
 
 const api = vi.hoisted(() => ({
+  Home: vi.fn(),
   Activity: vi.fn(),
   ActivitySession: vi.fn(),
   Tray: vi.fn(),
@@ -112,6 +114,7 @@ beforeEach(() => {
   api.listeners.clear();
   api.GetAppInfo.mockResolvedValue({ name: "Pulsemetry", version: "test" });
   api.IsTrayVisible.mockResolvedValue(false);
+  api.Home.mockResolvedValue(homeFixture());
 
   api.Updates.mockResolvedValue({
     status: "disabled",

@@ -17,9 +17,6 @@ export default function UsageHero({ hero }: { hero: HeroData }) {
               <span className="text-text font-bold text-[38px] tracking-[-0.035em] leading-none tabular-nums">
                 {hero.totalTokens}
               </span>
-              <span className="text-text-secondary font-semibold text-[19px]">
-                k
-              </span>
             </div>
             <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-[7px_12px] text-[12.5px]">
               <span className="text-text-muted whitespace-nowrap">
@@ -80,6 +77,11 @@ export default function UsageHero({ hero }: { hero: HeroData }) {
             )}
           </div>
         </div>
+        {hero.costNote && (
+          <p className="text-text-muted text-[11.5px] mt-[10px]">
+            {hero.costNote}
+          </p>
+        )}
       </div>
     </>
   );

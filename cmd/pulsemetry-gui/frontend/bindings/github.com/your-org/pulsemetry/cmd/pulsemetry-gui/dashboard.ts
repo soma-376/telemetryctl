@@ -18,6 +18,9 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as activity$0 from "../../internal/dashboard/activity/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as home$0 from "../../internal/dashboard/home/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as tray$0 from "../../internal/dashboard/tray/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -29,6 +32,10 @@ export function Activity(q: activity$0.Query): $CancellablePromise<activity$0.Pa
 
 export function ActivitySession(id: number): $CancellablePromise<activity$0.Detail> {
     return $Call.ByID(3638835675, id);
+}
+
+export function Home(q: home$0.Query): $CancellablePromise<home$0.Snapshot> {
+    return $Call.ByID(1346496579, q);
 }
 
 /**

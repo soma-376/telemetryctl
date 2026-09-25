@@ -30,6 +30,11 @@ import type {
 
 export { App, Dashboard, TrayState, LimitState };
 export type {
+  Query as HomeQuery,
+  Snapshot as HomeSnapshot,
+} from "../../bindings/github.com/your-org/pulsemetry/internal/dashboard/home";
+export type { CostSummary } from "../../bindings/github.com/your-org/pulsemetry/internal/dashboard";
+export type {
   SessionRow,
   SessionMetrics,
   TurnMetrics,
