@@ -198,6 +198,38 @@ describe("React 전환 후 화면과 조회 수명주기", () => {
     client.clear();
   });
 
+  it("목록 자격을 잃은 세션의 열린 상세는 ID 조회 결과로 유지한다", async () => {
+    const { wrapper, client } = provider();
+    const view = render(<Activity />, { wrapper });
+
+    fireEvent.click(await within(view.container).findByText("session-1"));
+
+    await waitFor(() =>
+      expect(document.querySelector(".session-overlay")?.textContent).toContain(
+        "session-1",
+      ),
+    );
+
+    api.Activity.mockResolvedValue({ rows: [row(2)], has_more: false });
+    fireEvent.click(screen.getByRole("button", { name: "새로고침" }));
+
+    await waitFor(() =>
+      expect(within(view.container).queryByText("session-1")).toBeNull(),
+    );
+
+    const overlay = document.querySelector(".session-overlay")!;
+
+    expect(overlay.textContent).toContain("session-1");
+
+    expect(overlay.textContent).not.toContain(
+      "세션이 삭제되었거나 더 이상 존재하지 않습니다.",
+    );
+
+    expect(api.ActivitySession).toHaveBeenCalledWith(1);
+    view.unmount();
+    client.clear();
+  });
+
   it("검색 입력을 지연 반영하고 필터가 바뀌면 이전 목록을 비운다", async () => {
     const { wrapper, client } = provider();
 
@@ -285,6 +317,101 @@ describe("React 전환 후 화면과 조회 수명주기", () => {
     });
 
     expect(api.Activity.mock.calls.length).toBeGreaterThan(1);
+    view.unmount();
+    client.clear();
+  });
+
+  it("Activity의 30초 갱신은 새 자격과 자격 상실을 첫 페이지부터 반영한다", async () => {
+    vi.useFakeTimers();
+    let eligible = [1, 2];
+
+    api.Activity.mockImplementation(
+      async (request: { cursor: { id: number } }) => {
+        const position =
+          request.cursor.id === 0 ? 0 : eligible.indexOf(request.cursor.id) + 1;
+        const current = eligible[position];
+
+        return {
+          rows: current === undefined ? [] : [row(current)],
+          has_more: position + 1 < eligible.length,
+          next_cursor: {
+            running: false,
+            sort_at: 1789139543,
+            id: current ?? 0,
+          },
+        };
+      },
+    );
+
+    const { wrapper, client } = provider();
+    const query = {
+      since: 0,
+      until: 1,
+      vendors: ["codex"],
+      projects: [],
+      status: [],
+      text: "",
+      limit: 1,
+      cursor: { id: 0, running: false, sort_at: 0 },
+    };
+    const view = renderHook(() => useActivityQuery(query, true), { wrapper });
+    const shownIDs = () =>
+      view.result.current.data?.pages.flatMap((page) =>
+        page.rows.map((item) => item.id),
+      ) ?? [];
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+
+    expect(view.result.current.hasNextPage).toBe(true);
+
+    await act(async () => {
+      await view.result.current.fetchNextPage();
+    });
+
+    expect(api.Activity.mock.calls.map((call) => call[0].cursor.id)).toEqual([
+      0, 1,
+    ]);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+
+    expect(shownIDs()).toEqual([1, 2]);
+
+    // 첫 커서 앞에 새로 자격을 얻은 세션이 들어온다.
+    eligible = [3, 1, 2];
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_001);
+    });
+
+    expect(shownIDs()[0]).toBe(3);
+    for (let i = 0; i < 4 && view.result.current.hasNextPage; i += 1) {
+      await act(async () => {
+        await view.result.current.fetchNextPage();
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+    }
+    expect(shownIDs()).toEqual([3, 1, 2]);
+    expect(new Set(shownIDs()).size).toBe(shownIDs().length);
+
+    // 마지막 자격을 잃은 행은 수동 새로고침 뒤 캐시에 남지 않는다.
+    eligible = [2];
+
+    await act(async () => {
+      await view.result.current.refetch();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+
+    expect(shownIDs()).toEqual([2]);
     view.unmount();
     client.clear();
   });

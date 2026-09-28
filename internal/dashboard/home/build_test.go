@@ -68,7 +68,7 @@ func TestSnapshotRecentLimitAndPeriodCounts(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	start := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC).Unix()
-	if _, err := db.SQL().Exec(`INSERT INTO vendors VALUES ('codex', ?, ?, 'enabled')`, start, start); err != nil {
+	if _, err := db.SQL().Exec(`INSERT INTO vendors VALUES ('claude_code', ?, ?, 'enabled')`, start, start); err != nil {
 		t.Fatal(err)
 	}
 	for i := range 10 {
@@ -77,7 +77,7 @@ func TestSnapshotRecentLimitAndPeriodCounts(t *testing.T) {
 		if i == 9 {
 			at = start - 1
 		}
-		if _, err := db.SQL().Exec(`INSERT INTO sessions(vendor_id,session_key,started_at,active_time_sec) VALUES ('codex', ?, ?, 60)`, i, at); err != nil {
+		if _, err := db.SQL().Exec(`INSERT INTO sessions(vendor_id,session_key,started_at,active_time_sec) VALUES ('claude_code', ?, ?, 60)`, i, at); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -47,7 +47,8 @@ const (
     JOIN turns t ON t.id = c.turn_id
    WHERE t.session_id = s.id AND f.file_path LIKE ? ESCAPE '\')`
 	matchContentSQL = `EXISTS (SELECT 1 FROM turns t
-   WHERE t.session_id = s.id AND t.prompt_text LIKE ? ESCAPE '\')`
+   WHERE t.session_id = s.id AND (` + dashboard.ActivityContentEligibleSQL + `)
+     AND t.prompt_text LIKE ? ESCAPE '\')`
 )
 
 // Activity 는 Activity 화면의 세션 목록 한 페이지다 (PROJ-90).
@@ -174,6 +175,7 @@ func activityWhere(q Query, text string) (string, []any) {
 	if q.Until > 0 {
 		add(activityStartKey+" < ?", []any{q.Until})
 	}
+	add("("+dashboard.DashboardSessionEligibleSQL+")", nil)
 	add(inClause("s.vendor_id", q.Vendors))
 	add(inClause("s.workspace_path", q.Projects))
 	add(inClause(dashboard.StatusExpr, q.Status))

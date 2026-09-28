@@ -79,6 +79,15 @@ func seedActivity(f *TestFixture) {
 			}),
 		},
 	})
+	// 필터 픽스처의 Codex 세션은 표시 자격이 확정된 실제 턴을 갖는다.
+	if _, err := f.TestDB().SQL().Exec(`INSERT INTO turns(session_id,turn_key,turn_index)
+SELECT id,'a-2-client',1 FROM sessions WHERE vendor_id='codex' AND session_key='a-2'`); err != nil {
+		f.TestT().Fatal(err)
+	}
+	if _, err := f.TestDB().SQL().Exec(`INSERT INTO codex_turn_provenance(turn_id,label,processing_state,link_state)
+SELECT id,'client_submitted','finalized','unique' FROM turns WHERE turn_key='a-2-client'`); err != nil {
+		f.TestT().Fatal(err)
+	}
 }
 
 func TestActivityFilterCombinations(t *testing.T) {
@@ -344,6 +353,15 @@ func TestActivityPaginationKeepsFilters(t *testing.T) {
 		}))
 	}
 	f.TestWrite(store.Batch{Sessions: sessions})
+	if _, err := f.TestDB().SQL().Exec(`INSERT INTO turns(session_id,turn_key,turn_index)
+SELECT id,session_key||'-client',1 FROM sessions WHERE vendor_id='codex'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.TestDB().SQL().Exec(`INSERT INTO codex_turn_provenance(turn_id,label,processing_state,link_state)
+SELECT t.id,'client_submitted','finalized','unique' FROM turns t
+JOIN sessions s ON s.id=t.session_id WHERE s.vendor_id='codex'`); err != nil {
+		t.Fatal(err)
+	}
 
 	rows, _ := drainActivity(t, f.TestReader(), activity.Query{Vendors: []string{TestVendorCodex}, Limit: 1})
 	if len(rows) != 3 {
