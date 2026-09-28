@@ -41,6 +41,11 @@ func TestActivityRoutesReadStoredSession(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Activity 경로는 완료된 사용자 제출 턴만 보여 준다. 이 테스트는 조회
+	// 경계이므로 저장된 턴의 분류 결과를 fixture에 명시한다.
+	if _, err := db.SQL().ExecContext(ctx, `UPDATE codex_turn_provenance SET label='client_submitted',processing_state='finalized',link_state='unique'`); err != nil {
+		t.Fatal(err)
+	}
 	svc := dashboard.NewService(path)
 	t.Cleanup(func() { _ = svc.Stop() })
 	h := WithActivity(http.NotFoundHandler(), svc)

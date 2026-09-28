@@ -566,25 +566,40 @@ func TestQueueFullRespondsPartialSuccessNot429(t *testing.T) {
 			if resp.PartialSuccess == nil || resp.PartialSuccess.ErrorMessage == "" {
 				t.Fatalf("PartialSuccess 에 errorMessage 가 없다: %s", rec.Body.String())
 			}
+			if resp.PartialSuccess.RejectedLogRecords != "" {
+				t.Fatalf("디코드 전 큐 드롭의 rejectedLogRecords = %q, want 0", resp.PartialSuccess.RejectedLogRecords)
+			}
 		}
 	}
 	if partial == 0 {
 		t.Fatal("큐가 포화했는데도 PartialSuccess 응답이 하나도 없었다")
 	}
-	if got := rc.Stats().Dropped; got == 0 {
-		t.Fatal("dropped 카운터가 올라가지 않았다")
+	if got := rc.Stats().Dropped; got != int64(partial) {
+		t.Fatalf("dropped 카운터=%d, partial 응답=%d", got, partial)
 	}
 
-	// 워커를 풀어 주면 큐에 남아 있던 배치는 정상 처리돼야 한다.
+	// 워커를 풀어 주면 수락한 배치만 전달된다. 이후 정상 배치도 계속 처리한다.
 	close(gate)
+	deadline := time.After(5 * time.Second)
+	for len(sink.snapshot()) != int(rc.Stats().Accepted) {
+		select {
+		case <-deadline:
+			t.Fatalf("수락 배치 전달 지연: delivered=%d accepted=%d", len(sink.snapshot()), rc.Stats().Accepted)
+		case <-time.After(time.Millisecond):
+		}
+	}
+	later := do(rc, authedRequest(http.MethodPost, "/v1/logs", "application/json", minimalLogsJSON()))
+	if later.Code != http.StatusOK || strings.Contains(later.Body.String(), "partialSuccess") {
+		t.Fatalf("포화 해제 후 정상 배치 응답=%d body=%q", later.Code, later.Body.String())
+	}
 	if err := rc.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if len(sink.snapshot()) == 0 {
-		t.Fatal("큐에 들어갔던 배치가 sink 에 도달하지 않았다")
+	if got, want := len(sink.snapshot()), int(rc.Stats().Accepted); got != want {
+		t.Fatalf("드롭 배치가 Sink 에 전달됐거나 후속 배치가 누락됨: delivered=%d accepted=%d", got, want)
 	}
-	if accepted := rc.Stats().Accepted; int(accepted)+partial != requests {
-		t.Fatalf("accepted(%d) + dropped(%d) != 요청 수(%d)", accepted, partial, requests)
+	if accepted := rc.Stats().Accepted; int(accepted)+partial != requests+1 {
+		t.Fatalf("accepted(%d) + dropped(%d) != 요청 수(%d)", accepted, partial, requests+1)
 	}
 }
 

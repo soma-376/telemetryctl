@@ -101,3 +101,87 @@ func TestSnapshotRecentLimitAndPeriodCounts(t *testing.T) {
 		t.Fatal("취소된 조회 성공")
 	}
 }
+
+func TestSnapshotCodexSubtotalKeepsAllVendorTotal(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, store.PathIn(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	at := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC).Unix()
+	for _, query := range []string{
+		`INSERT INTO vendors(vendor,first_seen,last_seen,status) VALUES ('codex',1,2,'enabled'),('claude_code',1,2,'enabled')`,
+		`INSERT INTO sessions(id,vendor_id,session_key,started_at) VALUES (1,'codex','codex',?)`,
+		`INSERT INTO sessions(id,vendor_id,session_key,started_at) VALUES (2,'claude_code','claude',?)`,
+		`INSERT INTO turns(id,session_id,turn_key,turn_index,started_at) VALUES (1,1,'user',1,?),(2,1,'internal',2,?),(3,2,'claude',1,?)`,
+		`INSERT INTO codex_turn_provenance(turn_id,label,processing_state,link_state) VALUES (1,'client_submitted','finalized','unique'),(2,'internal_task','finalized','unique')`,
+	} {
+		var args []any
+		switch {
+		case query == `INSERT INTO sessions(id,vendor_id,session_key,started_at) VALUES (1,'codex','codex',?)`, query == `INSERT INTO sessions(id,vendor_id,session_key,started_at) VALUES (2,'claude_code','claude',?)`:
+			args = []any{at}
+		case query == `INSERT INTO turns(id,session_id,turn_key,turn_index,started_at) VALUES (1,1,'user',1,?),(2,1,'internal',2,?),(3,2,'claude',1,?)`:
+			args = []any{at, at, at}
+		}
+		if _, err := db.SQL().Exec(query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, row := range []struct{ turn, tokens int }{{1, 10}, {2, 20}, {3, 7}} {
+		id := i + 1
+		if _, err := db.SQL().Exec(`INSERT INTO events(id,turn_id,seq,event_name,record_hash) VALUES (?,?,1,'usage',?)`, id, row.turn, id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.SQL().Exec(`INSERT INTO llm_calls(turn_id,source_event_id,called_at,input_tokens,output_tokens,cost_usd) VALUES (?,?,?,?,0,0.01)`, row.turn, id, at, row.tokens); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := dashboard.NewService(db.Path())
+	t.Cleanup(func() { _ = svc.Stop() })
+	out, err := NewBuilder(svc).Snapshot(ctx, Query{TZ: "UTC", Start: "2026-09-20", End: "2026-09-20"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Usage.Totals.InputTokens+out.Usage.Totals.OutputTokens != 37 ||
+		out.CodexPromptUsage.TotalTokens != 30 || out.CodexPromptUsage.UserTokens != 10 ||
+		out.CodexPromptUsage.SystemTokens != 20 || out.CodexPromptUsage.UnclassifiedTokens != 0 || out.CodexPromptUsage.OtherTokens != 20 {
+		t.Fatalf("Home 전체 벤더/ Codex 소계 = usage %+v split %+v", out.Usage.Totals, out.CodexPromptUsage)
+	}
+	// 전체 사용량을 읽은 직후 별도 쓰기 연결이 커밋해도 Codex 소계는 같은 스냅샷에 머문다.
+	start := time.Unix(at-1, 0)
+	end := time.Unix(at+1, 0)
+	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := svc.ReadSnapshot(readCtx, func(reader dashboard.SQLQuerier) error {
+		usage, err := dashboard.ReadUsageBreakdown(readCtx, reader, []time.Time{start, end})
+		if err != nil {
+			return err
+		}
+		if _, err := db.SQL().ExecContext(readCtx, `INSERT INTO events(id,turn_id,seq,event_name,record_hash) VALUES (4,1,2,'usage','new')`); err != nil {
+			return err
+		}
+		if _, err := db.SQL().ExecContext(readCtx, `INSERT INTO llm_calls(turn_id,source_event_id,called_at,input_tokens,output_tokens,cost_usd) VALUES (1,4,?,5,0,0.01)`, at); err != nil {
+			return err
+		}
+		split, err := dashboard.ReadCodexPromptUsage(readCtx, reader, start, end)
+		if err != nil {
+			return err
+		}
+		if usage.Totals.InputTokens+usage.Totals.OutputTokens != 37 || split.TotalTokens != 30 || split.UserTokens != 10 {
+			t.Fatalf("경합 중 읽기 스냅샷 불일치: usage=%+v split=%+v", usage.Totals, split)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := NewBuilder(svc).Snapshot(ctx, Query{TZ: "UTC", Start: "2026-09-20", End: "2026-09-20"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Usage.Totals.InputTokens+updated.Usage.Totals.OutputTokens != 42 ||
+		updated.CodexPromptUsage.TotalTokens != 35 || updated.CodexPromptUsage.UserTokens != 15 ||
+		updated.CodexPromptUsage.OtherTokens != 20 {
+		t.Fatalf("다음 스냅샷이 새 커밋을 놓침: usage=%+v split=%+v", updated.Usage.Totals, updated.CodexPromptUsage)
+	}
+}

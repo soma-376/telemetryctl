@@ -24,6 +24,8 @@ func TestOpenAppliesMigrations(t *testing.T) {
 	// meta 는 초기화 코드가 유지하고, 나머지는 schema.go의 도메인 테이블이다.
 	tables := []string{
 		"meta", "vendors", "sessions", "turns", "events", "llm_calls", "tool_calls", "file_changes",
+		"codex_turn_provenance", "codex_pending", "codex_jsonl_files", "codex_jsonl_records",
+		"codex_jsonl_errors", "codex_content_tombstones", "codex_worker_state",
 	}
 	for _, name := range tables {
 		var n int
@@ -57,12 +59,14 @@ func TestSchemaNamedIndexesAndForeignKeys(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 
-	// 단일 DDL의 기본 인덱스 넷과 읽기 인덱스 셋이 전부다. 목록 밖의 인덱스가 생기면
+	// 단일 DDL의 명명 인덱스 전부다. 목록 밖의 인덱스가 생기면
 	// 아래 계수 단언이 잡는다 — 인덱스 변경은 단일 DDL과 함께 검증한다.
 	indexes := []string{
 		"ux_turns_virtual", "ix_events_name", "ix_llm_turn", "ix_fc_tool",
 		"ix_tool_calls_turn", "ix_turns_session", "ix_sessions_started",
 		"ix_sessions_open_activity",
+		"ix_codex_provenance_state", "ix_codex_pending_due", "ix_codex_jsonl_files_owner",
+		"ix_codex_jsonl_records_time", "ix_codex_jsonl_records_message", "ix_codex_jsonl_records_turn",
 	}
 	for _, name := range indexes {
 		var n int
@@ -153,10 +157,12 @@ func TestSchemaV3Columns(t *testing.T) {
 		},
 		"turns": {
 			"id", "session_id", "turn_key", "turn_index", "client_version", "started_at",
-			"ended_at", "prompt_text", "ttft_ms",
+			"ended_at", "prompt_text", "prompt_message_id", "prompt_source_turn_id",
+			"prompt_completeness", "prompt_completeness_evidence", "prompt_evidence_event_id",
+			"prompt_conflict", "content_purged", "ttft_ms",
 		},
 		"events": {
-			"id", "turn_id", "seq", "event_name", "occurred_at", "record_hash", "payload",
+			"id", "turn_id", "seq", "event_name", "occurred_at", "record_hash", "diagnostic", "payload",
 		},
 		"llm_calls": {
 			"id", "turn_id", "source_event_id", "called_at", "model", "input_tokens",

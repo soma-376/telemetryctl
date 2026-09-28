@@ -1,10 +1,15 @@
 package otlpdecode
 
 import (
+	"math"
 	"strings"
 	"testing"
 
+	logscolpb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
+	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/your-org/pulsemetry/internal/event"
 )
@@ -280,6 +285,70 @@ func TestAttributeLayeringPrecedence(t *testing.T) {
 	// 복사본이 원본을 오염시키지 않는다.
 	if base.attr.Model != "resource-model" {
 		t.Errorf("상위 carrier 가 오염됐다: %q", base.attr.Model)
+	}
+}
+
+func TestInvalidUsageClearsInheritedAndAliasValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		value *commonpb.AnyValue
+	}{
+		{"fractional", anyDouble(1.5)},
+		{"negative", anyInt64(-1)},
+		{"NaN", anyDouble(math.NaN())},
+		{"overflow", anyStr("9223372036854775808")},
+		{"missing", nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resource := carrier{}
+			resource.apply("input_tokens", anyInt64(10))
+			record := resource
+			record.apply("input_token_count", tc.value)
+			if record.measure.InputTokens.Valid() || len(record.invalidUsage) != 1 || record.invalidUsage[0] != "input_token_count" {
+				t.Fatalf("잘못된 하위 alias가 상위 값을 보존함: %+v %v", record.measure.InputTokens, record.invalidUsage)
+			}
+			if got := resource.measure.InputTokens.Or(-1); got != 10 || len(resource.invalidUsage) != 0 {
+				t.Fatalf("상위 carrier 오염: %d %v", got, resource.invalidUsage)
+			}
+		})
+	}
+}
+
+func TestOTLPInvalidRecordUsageIsNullWithDiagnostic(t *testing.T) {
+	req := &logscolpb.ExportLogsServiceRequest{ResourceLogs: []*logspb.ResourceLogs{{
+		Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{
+			{Key: "service.name", Value: anyStr("codex")},
+			{Key: "session.id", Value: anyStr("owner")},
+			{Key: "input_tokens", Value: anyInt64(10)},
+			{Key: "output_tokens", Value: anyInt64(7)},
+			{Key: "cost_usd", Value: anyDouble(2)},
+		}},
+		ScopeLogs: []*logspb.ScopeLogs{{LogRecords: []*logspb.LogRecord{{
+			TimeUnixNano: 1_700_000_000_000_000_000,
+			EventName:    "codex.sse_event",
+			Attributes: []*commonpb.KeyValue{
+				{Key: "input_token_count", Value: anyDouble(1.5)},
+				{Key: "cost_usd", Value: anyDouble(math.NaN())},
+				{Key: "output_token_count", Value: anyInt64(12)},
+			},
+		}}}},
+	}}}
+	raw, err := proto.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := DecodeLogs(raw, EncodingProtobuf, testOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Events) != 1 || result.UsageDiagnostics != 2 {
+		t.Fatalf("이벤트/진단 = %d/%d", len(result.Events), result.UsageDiagnostics)
+	}
+	e := result.Events[0]
+	if e.Measure.InputTokens.Valid() || e.Measure.CostUSD.Valid() || e.Measure.OutputTokens.Or(-1) != 12 ||
+		!strings.Contains(e.UsageDiagnostic, "input_token_count") || !strings.Contains(e.UsageDiagnostic, "cost_usd") {
+		t.Fatalf("무효 사용량이 NULL/진단으로 남지 않음: input=%+v cost=%+v output=%+v diagnostic=%q", e.Measure.InputTokens, e.Measure.CostUSD, e.Measure.OutputTokens, e.UsageDiagnostic)
 	}
 }
 
