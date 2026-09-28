@@ -1,6 +1,7 @@
 package otlpdecode
 
 import (
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -125,6 +126,32 @@ var intMeasures = map[string]func(*event.Measures, int64){
 	"tool_result_bytes": func(m *event.Measures, v int64) { m.ToolResultBytes = event.Some(v) },
 }
 
+var usageIntKeys = map[string]bool{
+	"input_tokens": true, "output_tokens": true, "cache_read_tokens": true,
+	"cached_input_tokens": true, "cache_creation_tokens": true, "input_token_count": true,
+	"output_token_count": true, "cached_token_count": true, "cache_write_token_count": true,
+	"reasoning_token_count": true,
+}
+
+// 잘못된 하위 계층 값은 같은 의미의 상위 계층·별칭 값을 지운다. 값이 남으면
+// 실제 잘못된 필드가 NULL이 아니라 다른 곳의 수치로 저장되어 출처를 숨긴다.
+func clearUsageMeasure(m *event.Measures, key string) {
+	switch key {
+	case "input_tokens", "input_token_count":
+		m.InputTokens = event.Opt[int64]{}
+	case "output_tokens", "output_token_count":
+		m.OutputTokens = event.Opt[int64]{}
+	case "cache_read_tokens", "cached_input_tokens", "cached_token_count":
+		m.CacheReadTokens = event.Opt[int64]{}
+	case "cache_creation_tokens", "cache_write_token_count":
+		m.CacheCreationTokens = event.Opt[int64]{}
+	case "reasoning_token_count":
+		m.ReasoningTokens = event.Opt[int64]{}
+	case "cost_usd":
+		m.CostUSD = event.Opt[float64]{}
+	}
+}
+
 var floatMeasures = map[string]func(*event.Measures, float64){
 	"cost_usd": func(m *event.Measures, v float64) { m.CostUSD = event.Some(v) },
 }
@@ -191,12 +218,14 @@ var contentAttrs = map[string]event.ContentKind{
 // 전부 값 필드라 대입만으로 안전하게 복사된다 — 상위 계층 carrier 를 여러 데이터포인트가
 // 나눠 써도 서로 오염되지 않는다.
 type carrier struct {
-	attr    event.Attributes
-	measure event.Measures
+	attr         event.Attributes
+	measure      event.Measures
+	invalidUsage []string
 
 	sessionID      string
 	conversationID string
 	turnKey        string
+	messageID      string
 	callKey        string
 	eventID        string
 	eventName      string
@@ -243,6 +272,10 @@ func (c carrier) sessionIDFor(vendorID string) string {
 // apply 는 속성 하나를 allowlist 에 비춰 반영한다. 어느 테이블에도 없으면 아무 일도 하지 않는다.
 func (c *carrier) apply(key string, v *commonpb.AnyValue) {
 	if v == nil {
+		if usageIntKeys[key] || key == "cost_usd" {
+			clearUsageMeasure(&c.measure, key)
+			c.invalidUsage = append(c.invalidUsage[:len(c.invalidUsage):len(c.invalidUsage)], key)
+		}
 		return
 	}
 	switch key {
@@ -265,6 +298,11 @@ func (c *carrier) apply(key string, v *commonpb.AnyValue) {
 	case "prompt.id", "prompt_id", "turn.id", "turn_id":
 		if s := anyString(v); s != "" {
 			c.turnKey = s
+		}
+		return
+	case "message.id", "message_id":
+		if s := anyString(v); s != "" {
+			c.messageID = s
 		}
 		return
 	case "tool_use_id", "tool.use.id", "call_id", "call.id":
@@ -338,14 +376,27 @@ func (c *carrier) apply(key string, v *commonpb.AnyValue) {
 		return
 	}
 	if set, ok := intMeasures[key]; ok {
-		if n, ok := anyInt(v); ok {
+		var n int64
+		var valid bool
+		if usageIntKeys[key] {
+			n, valid = strictUsageInt(v)
+		} else {
+			n, valid = anyInt(v)
+		}
+		if valid {
 			set(&c.measure, n)
+		} else if usageIntKeys[key] {
+			clearUsageMeasure(&c.measure, key)
+			c.invalidUsage = append(c.invalidUsage[:len(c.invalidUsage):len(c.invalidUsage)], key)
 		}
 		return
 	}
 	if set, ok := floatMeasures[key]; ok {
 		if f, ok := anyFloat(v); ok {
 			set(&c.measure, f)
+		} else {
+			clearUsageMeasure(&c.measure, key)
+			c.invalidUsage = append(c.invalidUsage[:len(c.invalidUsage):len(c.invalidUsage)], key)
 		}
 		return
 	}
@@ -422,15 +473,41 @@ func anyInt(v *commonpb.AnyValue) (int64, bool) {
 	return 0, false
 }
 
+func strictUsageInt(v *commonpb.AnyValue) (int64, bool) {
+	var f float64
+	switch x := v.GetValue().(type) {
+	case *commonpb.AnyValue_IntValue:
+		return x.IntValue, x.IntValue >= 0
+	case *commonpb.AnyValue_DoubleValue:
+		f = x.DoubleValue
+	case *commonpb.AnyValue_StringValue:
+		s := strings.TrimSpace(x.StringValue)
+		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return n, n >= 0
+		}
+		parsed, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return 0, false
+		}
+		f = parsed
+	default:
+		return 0, false
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) || f < 0 || f >= 0x1p63 || math.Trunc(f) != f {
+		return 0, false
+	}
+	return int64(f), true
+}
+
 func anyFloat(v *commonpb.AnyValue) (float64, bool) {
 	switch x := v.GetValue().(type) {
 	case *commonpb.AnyValue_DoubleValue:
-		return x.DoubleValue, true
+		return x.DoubleValue, !math.IsNaN(x.DoubleValue) && !math.IsInf(x.DoubleValue, 0) && x.DoubleValue >= 0
 	case *commonpb.AnyValue_IntValue:
-		return float64(x.IntValue), true
+		return float64(x.IntValue), x.IntValue >= 0
 	case *commonpb.AnyValue_StringValue:
 		if f, err := strconv.ParseFloat(strings.TrimSpace(x.StringValue), 64); err == nil {
-			return f, true
+			return f, !math.IsNaN(f) && !math.IsInf(f, 0) && f >= 0
 		}
 	}
 	return 0, false

@@ -31,4 +31,9 @@ type Content struct {
 	Kind      ContentKind
 	Body      string
 	Truncated bool
+	// OriginalBytes와 OriginalHash는 디코더의 UTF-8 절단 증명에만 쓴다.
+	// 원문 저장 OFF일 때는 저장 계층에 기록하지 않는다.
+	OriginalBytes int
+	OriginalHash  string
+	CapBytes      int
 }

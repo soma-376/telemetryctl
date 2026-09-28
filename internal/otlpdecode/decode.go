@@ -1,8 +1,10 @@
 package otlpdecode
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -80,7 +82,8 @@ type Result struct {
 	Targets  []Target
 	Rejected Rejected
 	// Patches는 파일 변경을 확정하지 못한 이유별 건수다. 이벤트 자체의 거절과 구분한다.
-	Patches PatchDiagnostics
+	Patches          PatchDiagnostics
+	UsageDiagnostics int
 }
 
 // Decode 는 시그널 종류에 맞는 디코더를 부른다. traces 는 정규화하지 않고 빈 결과를 준다 —
@@ -175,16 +178,17 @@ type seqKey struct {
 }
 
 type decoder struct {
-	payloads        []Payload
-	payloadBytes    int
-	payloadsDropped int
-	opt             Options
-	events          []event.Event
-	contents        []Content
-	targets         []Target
-	rejected        Rejected
-	patches         PatchDiagnostics
-	seq             map[seqKey]int
+	payloads         []Payload
+	payloadBytes     int
+	payloadsDropped  int
+	opt              Options
+	events           []event.Event
+	contents         []Content
+	targets          []Target
+	rejected         Rejected
+	patches          PatchDiagnostics
+	usageDiagnostics int
+	seq              map[seqKey]int
 }
 
 func newDecoder(opt Options) *decoder {
@@ -192,7 +196,7 @@ func newDecoder(opt Options) *decoder {
 }
 
 func (d *decoder) result() Result {
-	return Result{Payloads: d.payloads, PayloadsDropped: d.payloadsDropped, Events: d.events, Contents: d.contents, Targets: d.targets, Rejected: d.rejected, Patches: d.patches}
+	return Result{Payloads: d.payloads, PayloadsDropped: d.payloadsDropped, Events: d.events, Contents: d.contents, Targets: d.targets, Rejected: d.rejected, Patches: d.patches, UsageDiagnostics: d.usageDiagnostics}
 }
 
 // metric 은 메트릭 하나의 데이터포인트를 이벤트로 옮긴다.
@@ -229,6 +233,7 @@ func (d *decoder) metric(base carrier, m *metricspb.Metric, raw *payloadNode) {
 			TS:          metricTimestamp(dp, &c),
 			SessionID:   c.sessionID,
 			TurnKey:     c.turnKey,
+			MessageID:   c.messageID,
 			CallKey:     c.callKey,
 			EventID:     c.eventID,
 			Temporality: temporality,
@@ -275,6 +280,7 @@ func (d *decoder) logRecord(base carrier, rec *logspb.LogRecord) {
 		TS:        logTimestamp(rec, &c),
 		SessionID: c.sessionID,
 		TurnKey:   c.turnKey,
+		MessageID: c.messageID,
 		CallKey:   c.callKey,
 		EventID:   c.eventID,
 		TraceID:   idHex(rec.GetTraceId()),
@@ -289,6 +295,10 @@ func (d *decoder) logRecord(base carrier, rec *logspb.LogRecord) {
 
 // emit 은 벤더·installation_id·sequence 를 채우고 검증을 통과한 이벤트만 결과에 넣는다.
 func (d *decoder) emit(ev event.Event, c *carrier) bool {
+	if len(c.invalidUsage) > 0 {
+		ev.UsageDiagnostic = strings.Join(c.invalidUsage, ",")
+		d.usageDiagnostics += len(c.invalidUsage)
+	}
 	ev.Vendor = vendorOf(c.serviceName, ev.Name, d.opt.Vendor)
 	if ev.Signal == event.SignalLog && ev.Vendor == "codex" && ev.Name == "codex.tool_result" {
 		if c.codexArguments.set {
@@ -329,14 +339,23 @@ func (d *decoder) appendContents(index int, dedupKey string, c *carrier) {
 		if !c.content[i].set {
 			continue
 		}
-		body, truncated := capContent(c.content[i].body, max)
+		original := c.content[i].body
+		body, truncated := capContent(original, max)
+		var originalHash string
+		if contentKindByOrdinal[i] == event.ContentPrompt && truncated {
+			hash := sha256.Sum256([]byte(original))
+			originalHash = hex.EncodeToString(hash[:])
+		}
 		d.contents = append(d.contents, Content{
 			EventIndex: index,
 			DedupKey:   dedupKey,
 			Content: event.Content{
-				Kind:      contentKindByOrdinal[i],
-				Body:      body,
-				Truncated: truncated,
+				Kind:          contentKindByOrdinal[i],
+				Body:          body,
+				Truncated:     truncated,
+				OriginalBytes: len(original),
+				OriginalHash:  originalHash,
+				CapBytes:      max,
 			},
 		})
 	}
