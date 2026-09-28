@@ -6,6 +6,7 @@ export {
 } from "./models.js";
 
 export type {
+    CodexPromptUsage,
     CostSummary,
     CostTotals,
     Evidence,

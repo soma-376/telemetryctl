@@ -6,6 +6,18 @@
 import * as pricing$0 from "../pricing/models.js";
 
 /**
+ * CodexPromptUsage는 동일 호출 시각 범위의 Codex 전체 사용량을 출처별로 나눈다.
+ * NULL인 토큰 필드는 0으로 계산하며 cache/reasoning은 중복 가산하지 않는다.
+ */
+export interface CodexPromptUsage {
+    "total_tokens": number;
+    "user_tokens": number;
+    "system_tokens": number;
+    "unclassified_tokens": number;
+    "other_tokens": number;
+}
+
+/**
  * CostSummary 는 구간(또는 세션) 하나의 예상 비용이다.
  * 
  * 금액 필드가 Total 하나뿐인 것은 pricing.Cost 와 같은 이유다 — 보고값과 추정값을 서로
@@ -443,7 +455,7 @@ export interface SessionMetrics {
     "active_seconds": number | null;
 
     /**
-     * Totals 의 TurnTotals 부분은 **Turns 가 잘려도 세션 전체**를 덮는다.
+     * Totals 의 TurnTotals 부분은 **Turns 가 분류·상한으로 걸러져도 세션 전체**를 덮는다.
      */
     "totals": SessionTotals;
     "turns": TurnMetrics[] | null;
@@ -546,8 +558,8 @@ export interface SessionRow {
 /**
  * SessionTotals 는 세션 상단 값이다.
  * 
- * TurnTotals 를 임베드해 JSON 에서 평평하게 펼쳐지고, 그 부분은 **정확히 턴별 값의 합**이다
- * (TestSessionMetricsTopLineEqualsTurnSum).
+ * TurnTotals 를 임베드해 JSON 에서 평평하게 펼쳐지고, 그 부분은 표시 목록으로
+ * 걸러지기 전 **저장된 전체 턴의 합**이다.
  */
 export interface SessionTotals {
     /**
@@ -557,7 +569,7 @@ export interface SessionTotals {
     "turn_count": number;
 
     /**
-     * PromptTurns 는 실제 턴 수다(turn_index IS NOT NULL). 사용자 프롬프트 수와 같다.
+     * PromptTurns 는 자격을 갖춘 사용자 프롬프트 턴 수다.
      */
     "prompt_turns": number;
 

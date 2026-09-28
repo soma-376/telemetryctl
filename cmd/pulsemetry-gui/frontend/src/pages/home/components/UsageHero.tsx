@@ -18,6 +18,27 @@ export default function UsageHero({ hero }: { hero: HeroData }) {
                 {hero.totalTokens}
               </span>
             </div>
+            <div className="border-border border-t pt-[10px] mb-[14px] text-[12px]">
+              <div className="text-text-muted mb-[5px]">Codex 기준</div>
+              <div
+                className="flex justify-between gap-[8px]"
+                title={`${hero.codexUserTokens.toLocaleString()} 토큰`}
+              >
+                <span>사용자</span>
+                <span className="font-semibold tabular-nums">
+                  {(hero.codexUserTokens / 1_000_000).toFixed(2)}M
+                </span>
+              </div>
+              <div
+                className="flex justify-between gap-[8px]"
+                title={`${hero.codexOtherTokens.toLocaleString()} 토큰`}
+              >
+                <span>그 외</span>
+                <span className="font-semibold tabular-nums">
+                  {(hero.codexOtherTokens / 1_000_000).toFixed(2)}M
+                </span>
+              </div>
+            </div>
             <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-[7px_12px] text-[12.5px]">
               <span className="text-text-muted whitespace-nowrap">
                 예상 비용

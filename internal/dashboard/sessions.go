@@ -228,7 +228,7 @@ var SessionColumns = `s.id, s.session_key, s.vendor_id,
   ` + toolCount(``) + `,
   ` + toolCount(`c.success = 0`) + `,
   ` + toolCount(`c.decision = 'reject'`) + `,
-  COALESCE((SELECT COUNT(*) FROM turns t WHERE t.session_id = s.id AND t.turn_index IS NOT NULL), 0),
+  COALESCE((SELECT COUNT(*) FROM turns t WHERE t.session_id = s.id AND ` + promptEligibleSQL + `), 0),
   ` + fileSum(`SUM(f.additions)`) + `,
 	` + fileSum(`SUM(f.deletions)`) + `,
   ` + llmSum(`COUNT(c.cost_usd)`)

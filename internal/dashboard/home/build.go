@@ -27,6 +27,10 @@ func (b *Builder) Snapshot(ctx context.Context, q Query) (Snapshot, error) {
 			return err
 		}
 		start, end := boundaries[0], boundaries[len(boundaries)-1]
+		out.CodexPromptUsage, err = dashboard.ReadCodexPromptUsage(ctx, db, start, end)
+		if err != nil {
+			return err
+		}
 		out.Recent, out.RecentTruncated, err = dashboard.ReadRecentSessions(ctx, db, start, end, 7)
 		if err != nil {
 			return err

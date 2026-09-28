@@ -20,6 +20,7 @@ export interface Query {
  */
 export interface Snapshot {
     "usage": dashboard$0.HomeBreakdown;
+    "codex_prompt_usage": dashboard$0.CodexPromptUsage;
     "end_date": string;
     "unit": string;
     "bucket_size": number;

@@ -113,7 +113,7 @@ var factSources = []factSource{
 		at:   `t.started_at`,
 		// turn_index 가 NULL 인 턴은 세션 수준 이벤트를 담는 가상 턴이라 프롬프트가 아니다
 		// (store/resolve.go 의 virtualTurnKey).
-		where: `t.turn_index IS NOT NULL`,
+		where: promptEligibleSQL,
 		cols:  `COUNT(*)`,
 		dest:  func(t *Totals) []any { return []any{&t.Prompts} },
 		keys: map[Dim]string{

@@ -12,13 +12,14 @@ type Query struct {
 // Snapshot은 홈 한 장이다. 사용량은 사실 발생 시각, 세션 목록은 시작 시각으로 자른다.
 // 목록 각 행의 토큰·비용은 세션 생애 전체다. 활동 시간도 시작일에 통째로 귀속된다.
 type Snapshot struct {
-	Usage           dashboard.HomeBreakdown   `json:"usage"`
-	EndDate         string                    `json:"end_date"`
-	Unit            string                    `json:"unit"`
-	BucketSize      int                       `json:"bucket_size"`
-	Recent          []dashboard.RecentSession `json:"recent"`
-	RecentTruncated bool                      `json:"recent_truncated"`
-	RunningSessions int64                     `json:"running_sessions"`
+	Usage            dashboard.HomeBreakdown    `json:"usage"`
+	CodexPromptUsage dashboard.CodexPromptUsage `json:"codex_prompt_usage"`
+	EndDate          string                     `json:"end_date"`
+	Unit             string                     `json:"unit"`
+	BucketSize       int                        `json:"bucket_size"`
+	Recent           []dashboard.RecentSession  `json:"recent"`
+	RecentTruncated  bool                       `json:"recent_truncated"`
+	RunningSessions  int64                      `json:"running_sessions"`
 	// ActiveAgents는 현재 진행 중인 벤더다. 헤더는 선택 기간과 무관하게 사용한다.
 	ActiveAgents      []string `json:"active_agents"`
 	DatabaseAvailable bool     `json:"database_available"`

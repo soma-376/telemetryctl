@@ -88,6 +88,8 @@ export function homeView(snapshot: HomeSnapshot): {
       avgLabel: `${unitLabel} 평균`,
       avgValue: formatTokens(activeWindows ? total / activeWindows : 0),
       totalTokens: formatTokens(total),
+      codexUserTokens: snapshot.codex_prompt_usage.user_tokens,
+      codexOtherTokens: snapshot.codex_prompt_usage.other_tokens,
       totalCost: costText(usage.cost),
       totalTime: formatDuration(usage.totals.active_seconds / 60),
       peakNote: peak
