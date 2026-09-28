@@ -10,6 +10,7 @@
 | `event_name` | `TEXT` | 필수 | 원본 이벤트 종류 |
 | `occurred_at` | `INTEGER` | 선택 | 이벤트 발생 시각 (**Unix 초**) |
 | `record_hash` | `TEXT` | 필수, UNIQUE | 원본 레코드 중복 방지 해시 |
+| `diagnostic` | `TEXT` | 필수 | 정규화한 사용량 필드의 오류 진단. 기본값은 빈 문자열 |
 | `payload` | `BLOB` | 선택, CHECK | SQLite JSONB. `json_valid(payload, 8)`을 만족해야 함 |
 
 `(turn_id, seq)`가 UNIQUE이며 `ix_events_name(event_name)` 인덱스를 둔다.
@@ -32,13 +33,7 @@
 
 ## `payload`
 
-**현재 쓰기 경로는 이 컬럼을 항상 `NULL`로 둔다.** 원본 OTLP 바이트를 붙들고 있는 경로가 없기
-때문이다 — 수신한 바이트는 디코드 전에 포워더로 넘어가고, 로컬 저장은 정규화된 `event.Event`만
-받는다. 원본을 통째로 담는 catch-all은 [ADR 0002](../adr/0002-로컬-집계-저장소로-SQLite-채택.md)·
-[ADR 0003](../adr/0003-원문과-tool-details를-로컬에만-보관.md)이 명시적으로 거부한 것이기도 하다.
-
-나중에 쓰게 되면 **반드시 `jsonb(?)`로 바인딩한다.** CHECK가 `json_valid(payload, 8)`이므로
-텍스트 JSON이 아니라 SQLite JSONB를 요구한다. 읽을 때는 SQLite JSON 함수를 쓴다.
+수신 배치에서 이벤트별로 분리한 원본 record JSON을 로컬에만 JSONB로 저장한다([ADR 0025](../adr/0025-이벤트별-수신-payload를-로컬에-보관한다.md)). 이 값은 별도 턴·호출·토큰을 만들지 않는다. 원문 저장을 끄거나 이벤트별·배치별 보관 한도를 넘으면 payload만 생략하고 정규화된 이벤트와 정상 사용량은 남긴다. `purge --content`는 이 컬럼을 `NULL`로 비운다. 상위 전달은 별도 포워더의 스크럽 정책을 따른다.
 
 ```sql
 CREATE TABLE events (
@@ -48,6 +43,7 @@ CREATE TABLE events (
   event_name  TEXT NOT NULL,
   occurred_at INTEGER,
   record_hash TEXT NOT NULL UNIQUE,
+  diagnostic TEXT NOT NULL DEFAULT '',
   payload     BLOB
     CHECK (payload IS NULL OR json_valid(payload, 8)),
   UNIQUE (turn_id, seq)

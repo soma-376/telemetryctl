@@ -12,6 +12,13 @@
 | `started_at` | `INTEGER` | 선택 | 턴 시작 시각 |
 | `ended_at` | `INTEGER` | 선택 | 턴 종료 시각 |
 | `prompt_text` | `TEXT` | 선택 | 프롬프트 원문 |
+| `prompt_message_id` | `TEXT` | 선택 | OTel에서 관측한 Codex 메시지 ID |
+| `prompt_source_turn_id` | `TEXT` | 선택 | OTel에서 관측한 Codex 원천 turn ID |
+| `prompt_completeness` | `TEXT` | 필수 | `complete`·`truncated`·`unknown`; 기본값 `unknown` |
+| `prompt_completeness_evidence` | `TEXT` | 선택 | 본문 완전성 또는 UTF-8 절단 근거 |
+| `prompt_evidence_event_id` | `INTEGER` | 선택 | 근거가 된 기존 이벤트 ID. 이벤트 중복 키는 그대로 둠 |
+| `prompt_conflict` | `INTEGER` | 필수 | 서로 다른 OTel 근거 충돌 여부(0/1) |
+| `content_purged` | `INTEGER` | 필수 | 원문 삭제 뒤 JSONL 재처리로 본문이 되살아나지 않도록 하는 표식(0/1) |
 | `ttft_ms` | `INTEGER` | 선택 | Codex time-to-first-token |
 
 `(session_id, turn_key)`와 `(session_id, turn_index)`는 각각 UNIQUE다. SQLite는 UNIQUE의
@@ -28,6 +35,13 @@ CREATE TABLE turns (
   started_at     INTEGER,
   ended_at       INTEGER,
   prompt_text    TEXT,
+  prompt_message_id TEXT,
+  prompt_source_turn_id TEXT,
+  prompt_completeness TEXT NOT NULL DEFAULT 'unknown' CHECK (prompt_completeness IN ('complete', 'truncated', 'unknown')),
+  prompt_completeness_evidence TEXT,
+  prompt_evidence_event_id INTEGER,
+  prompt_conflict INTEGER NOT NULL DEFAULT 0 CHECK (prompt_conflict IN (0, 1)),
+  content_purged INTEGER NOT NULL DEFAULT 0 CHECK (content_purged IN (0, 1)),
   ttft_ms        INTEGER CHECK (ttft_ms >= 0),
   UNIQUE (session_id, turn_key),
   UNIQUE (session_id, turn_index),
