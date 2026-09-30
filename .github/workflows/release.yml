@@ -1,42 +1,44 @@
-name: CLI Release
+name: Product Release
 
 on:
   push:
     tags: ['v*']
 
 concurrency:
-  group: cli-release-${{ github.ref }}
+  group: product-release-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: write
+  validate:
+    name: Validate release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     env:
       RELEASE_TAG: ${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Validate release tag
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Validate release tag and main ancestry
+        id: version
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo '버전 태그는 v0.1.0 또는 v0.1.0-rc.1 형태여야 합니다.' >&2
-            exit 1
-          fi
-          # 운영 릴리스는 main에 반영된 커밋에서 발행한다.
-          git merge-base --is-ancestor HEAD origin/main
-          echo "CLI_VERSION=${RELEASE_TAG#v}" >> "$GITHUB_ENV"
+          version=$(node scripts/release.mjs validate-tag "$RELEASE_TAG")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
@@ -48,45 +50,118 @@ jobs:
       - name: Check CLI
         run: task check:cli
 
-      - name: Build all CLI targets
-        run: task build:cli:all
-
-      - name: Prepare release assets
+  build:
+    name: Package (${{ matrix.os }}/${{ matrix.arch }})
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      # GUI는 플랫폼 라이브러리를 링크하므로 각 OS·CPU의 네이티브 러너에서 만든다.
+      matrix:
+        include:
+          - {os: windows, arch: amd64, runner: windows-2025}
+          - {os: windows, arch: arm64, runner: windows-11-arm}
+          - {os: darwin, arch: amd64, runner: macos-15-intel}
+          - {os: darwin, arch: arm64, runner: macos-15}
+          - {os: linux, arch: amd64, runner: ubuntu-24.04}
+          - {os: linux, arch: arm64, runner: ubuntu-24.04-arm}
+    env:
+      TARGET_OS: ${{ matrix.os }}
+      TARGET_ARCH: ${{ matrix.arch }}
+      RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+    defaults:
+      run:
         shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: cmd/pulsemetry-gui/frontend/package-lock.json
+
+      - name: Install Linux GUI build and package dependencies
+        if: runner.os == 'Linux'
         run: |
-          set -euo pipefail
-          mkdir -p artifacts/release
-          # backend /bin/{filename}의 파일명 계약을 따른다.
-          for os in windows darwin linux; do
-            for arch in amd64 arm64; do
-              ext=''
-              if [[ "$os" == windows ]]; then ext='.exe'; fi
-              source="artifacts/build/$os-$arch/bin/pulsemetry$ext"
-              test -s "$source"
-              metadata=$(go version -m "$source")
-              grep -q "GOOS=$os" <<< "$metadata"
-              grep -q "GOARCH=$arch" <<< "$metadata"
-              grep -q 'CGO_ENABLED=0' <<< "$metadata"
-              cp "$source" "artifacts/release/pulsemetry_${os}_${arch}${ext}"
-            done
-          done
-          test "$(artifacts/build/linux-amd64/bin/pulsemetry version)" = "pulsemetry $CLI_VERSION"
-          cd artifacts/release
-          sha256sum pulsemetry_* > SHA256SUMS
-          test "$(wc -l < SHA256SUMS)" -eq 6
-          sha256sum -c SHA256SUMS
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev patchelf desktop-file-utils
 
-      - name: Publish GitHub Release
-        shell: bash
+      - name: Prepare Windows installer tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco upgrade nsis --version=3.12.0 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $nsisDirectory = Join-Path ${env:ProgramFiles(x86)} 'NSIS'
+          if (!(Test-Path (Join-Path $nsisDirectory 'makensis.exe'))) { throw 'NSIS compiler not found' }
+          $nsisDirectory >> $env:GITHUB_PATH
+          $sevenZipDirectory = Join-Path $env:ProgramFiles '7-Zip'
+          if (!(Test-Path (Join-Path $sevenZipDirectory '7z.exe'))) { throw '7-Zip not found' }
+          $sevenZipDirectory >> $env:GITHUB_PATH
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.11
+
+      - name: Install Task runner
+        run: go install github.com/go-task/task/v3/cmd/task@v3.40.1
+
+      - name: Build product
+        run: task build TARGET_OS="$TARGET_OS" TARGET_ARCH="$TARGET_ARCH" CLI_VERSION="$RELEASE_VERSION" GUI_VERSION="$RELEASE_VERSION"
+
+      - name: Package GUI
+        run: task package:gui TARGET_OS="$TARGET_OS" TARGET_ARCH="$TARGET_ARCH" GUI_VERSION="$RELEASE_VERSION"
+
+      - name: Validate and stage release assets
+        run: node scripts/release.mjs stage "$TARGET_OS" "$TARGET_ARCH" "$RELEASE_VERSION"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ matrix.os }}-${{ matrix.arch }}
+          path: artifacts/release/${{ matrix.os }}-${{ matrix.arch }}/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # 빌드·검증은 읽기 권한으로 끝내고 공개 단계에만 쓰기 권한을 준다.
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          path: artifacts/release
+          merge-multiple: true
+
+      - name: Verify complete asset set and generate checksums
+        run: node scripts/release.mjs checksums artifacts/release
+
+      - name: Publish complete release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          flags=()
-          if [[ "$RELEASE_TAG" == *-* ]]; then flags+=(--prerelease); fi
-          # 공개된 버전을 덮어쓰지 않는다. 실패하면 draft를 확인한 뒤 재실행한다.
-          gh release create "$RELEASE_TAG" artifacts/release/* \
-            --verify-tag --draft --title "$RELEASE_TAG" --generate-notes "${flags[@]}"
-          # 모든 첨부 파일 업로드가 성공한 뒤에만 공개한다.
-          gh release edit "$RELEASE_TAG" --draft=false
+        run: node scripts/release.mjs publish "$RELEASE_TAG" artifacts/release

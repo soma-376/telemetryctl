@@ -2,6 +2,9 @@ package main
 
 import "github.com/wailsapp/wails/v3/pkg/application"
 
+// Version은 릴리스 빌드에서 -ldflags로 주입한다.
+var Version = "development"
+
 // App is the GUI boundary and intentionally does not import daemon code.
 // Wails v3 service: 공개 메서드가 프런트엔드 바인딩으로 노출된다.
 type App struct {
@@ -17,7 +20,7 @@ func (a *App) bind(app *application.App, main, quick *application.WebviewWindow)
 	a.app, a.main, a.quick = app, main, quick
 }
 
-func (a *App) GetAppInfo() AppInfo { return AppInfo{Name: "Pulsemetry", Version: "development"} }
+func (a *App) GetAppInfo() AppInfo { return AppInfo{Name: "Pulsemetry", Version: Version} }
 
 // IsTrayVisible 은 WebView가 다시 만들어졌을 때도 네이티브 퀵뷰의 현재 상태를 복구하게 한다.
 // tray:shown/tray:hidden은 상태 변경 알림일 뿐이므로 마운트 시점의 상태 원본이 될 수 없다.

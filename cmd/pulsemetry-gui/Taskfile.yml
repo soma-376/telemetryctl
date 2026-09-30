@@ -6,6 +6,13 @@ vars:
   # pulsemetry-gui 는 Go 패키지 이름이지 사용자가 볼 이름이 아니다.
   APP_NAME: "Pulsemetry"
   BIN_DIR: '{{.BIN_DIR | default "bin"}}'
+  # 릴리스는 생성 메타데이터를 artifacts 아래에 준비하고 이 경로로 전달한다.
+  ASSETS_DIR: '{{.ASSETS_DIR | default "build"}}'
+  ASSETS_PATH: '{{if osIsAbs .ASSETS_DIR}}{{.ASSETS_DIR}}{{else}}{{joinPath .ROOT_DIR .ASSETS_DIR}}{{end}}'
+  BIN_PATH: '{{if osIsAbs .BIN_DIR}}{{.BIN_DIR}}{{else}}{{joinPath .ROOT_DIR .BIN_DIR}}{{end}}'
+  PACKAGE_DIR: '{{.PACKAGE_DIR | default ""}}'
+  PACKAGE_PATH: '{{if .PACKAGE_DIR}}{{if osIsAbs .PACKAGE_DIR}}{{.PACKAGE_DIR}}{{else}}{{joinPath .ROOT_DIR .PACKAGE_DIR}}{{end}}{{else}}{{.BIN_PATH}}{{end}}'
+  GUI_VERSION: '{{.GUI_VERSION | default ""}}'
   PACKAGE_MANAGER: '{{.PACKAGE_MANAGER | default "npm"}}'
   VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
   # Target OS for build/package/run. Defaults to the host OS, and is overridden

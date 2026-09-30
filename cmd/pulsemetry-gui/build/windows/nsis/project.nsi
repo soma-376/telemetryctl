@@ -35,9 +35,12 @@ Unicode true
 ####
 !include "wails_tools.nsh"
 
-# The version information for this two must consist of 4 parts
-VIProductVersion "${INFO_PRODUCTVERSION}.0"
-VIFileVersion    "${INFO_PRODUCTVERSION}.0"
+# Windows 파일 버전은 숫자 네 부분이어야 한다. 표시 버전에는 prerelease도 유지한다.
+!ifndef INFO_NUMERICVERSION
+    !define INFO_NUMERICVERSION "${INFO_PRODUCTVERSION}"
+!endif
+VIProductVersion "${INFO_NUMERICVERSION}.0"
+VIFileVersion    "${INFO_NUMERICVERSION}.0"
 
 VIAddVersionKey "CompanyName"     "${INFO_COMPANYNAME}"
 VIAddVersionKey "FileDescription" "${INFO_PRODUCTNAME} Installer"
@@ -72,7 +75,10 @@ ManifestDPIAware true
 #!finalize 'signtool --file "%1"'
 
 Name "${INFO_PRODUCTNAME}"
-OutFile "..\..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
+!ifndef ARG_WAILS_OUTPUT_FILE
+    !define ARG_WAILS_OUTPUT_FILE "..\..\..\bin\${INFO_PROJECTNAME}-installer.exe"
+!endif
+OutFile "${ARG_WAILS_OUTPUT_FILE}"
 !if "${WAILS_INSTALL_SCOPE}" == "user"
     InstallDir "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
 !else
