@@ -3,6 +3,7 @@ import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync, copyFileSync } 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
+import { prepareAppImagePatchelf } from './appimage-patchelf.mjs';
 
 export function pinnedWailsVersion(output) {
   return /(?:^|\s)v3\.0\.0-beta\.11(?:\s|$)/.test(stripVTControlCharacters(output));
@@ -77,6 +78,14 @@ export function packageGUI(mode, { root, os, arch, version, wails = 'wails3' }) 
     env[pathKey] = `${path.dirname(wailsCommand)}${path.delimiter}${env[pathKey] || ''}`;
   }
   const runWails = (args) => execFileSync(wailsCommand, args, { cwd, env, stdio: 'inherit' });
+  // 패키징 도구는 자산 생성이나 이전 패키지 삭제 전에 검사한다.
+  let packageEnv = env;
+  if (mode === 'package' && os === 'linux') {
+    const { packageDir } = targetPaths(root, os, arch);
+    const appDir = appImageName(arch).replace(/\.AppImage$/, '.AppDir');
+    const gui = path.join(packageDir, 'appimage', 'build', appDir, 'usr', 'bin', 'Pulsemetry');
+    packageEnv = { ...env, PATCHELF: prepareAppImagePatchelf(packageDir, gui, { env }) };
+  }
   const dirs = prepareAssets(root, os, arch, version, runWails);
   if (mode === 'package') {
     const extension = { windows: '.exe', darwin: '.dmg', linux: '.AppImage' }[os];
@@ -93,9 +102,9 @@ export function packageGUI(mode, { root, os, arch, version, wails = 'wails3' }) 
   const task = mode === 'build' ? 'build' : {
     windows: 'windows:package', darwin: 'darwin:package:dmg', linux: 'linux:create:appimage',
   }[os];
-  runWails(['task', task, `GOOS=${os}`, `ARCH=${arch}`, `GUI_VERSION=${version}`,
+  execFileSync(wailsCommand, ['task', task, `GOOS=${os}`, `ARCH=${arch}`, `GUI_VERSION=${version}`,
     `BIN_DIR=${dirs.build}`, `ASSETS_DIR=${dirs.assets}`, `PACKAGE_DIR=${dirs.packageDir}`,
-    ...(os === 'windows' ? ['FORMAT=nsis'] : [])]);
+    ...(os === 'windows' ? ['FORMAT=nsis'] : [])], { cwd, env: packageEnv, stdio: 'inherit' });
   if (mode === 'package' && os === 'darwin') {
     copyFileSync(path.join(dirs.build, 'Pulsemetry.dmg'), path.join(dirs.packageDir, 'Pulsemetry.dmg'));
   }

@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { after, test } from 'node:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, realpathSync, statSync, symlinkSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { appImageName, pinnedWailsVersion, prepareAssets, resolveWailsCommand, targetPaths, versionParts } from './package-gui.mjs';
 import { assetNames, checkBinary, checkPackage, checksums, expectedAssets, publish, stageTarget, validateTag } from './release.mjs';
+import { prepareAppImagePatchelf } from './appimage-patchelf.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const testParent = path.join(root, 'artifacts', 'release-tests');
@@ -18,6 +19,100 @@ const fixture = (name) => {
   return dir;
 };
 const execute = (command, args, options = {}) => execFileSync(command, args, { encoding: 'utf8', ...options });
+const posixOnly = process.platform === 'win32' ? '실행 파일 fixture는 POSIX shebang을 사용한다.' : false;
+const writeNodeTool = (filename, source) => writeFileSync(filename, `#!${process.execPath}\n${source}`, { mode: 0o755 });
+const loggedCalls = (filename) => existsSync(filename) ? readFileSync(filename, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [];
+const fakePatchelf = (filename) => writeNodeTool(filename, `
+import { appendFileSync } from 'node:fs';
+const args = process.argv.slice(2);
+if (args[0] === '--help') {
+  const output = process.env.FAKE_PATCHELF_UNSUPPORTED === '1' ? 'patchelf usage\\n' : 'patchelf usage --no-sort\\n';
+  (process.env.FAKE_PATCHELF_HELP_STDERR === '1' ? process.stderr : process.stdout).write(output);
+} else {
+  appendFileSync(process.env.FAKE_PATCHELF_LOG, JSON.stringify({ args, cwd: process.cwd(), tool: process.argv[1] }) + '\\n');
+  process.stdout.write('patchelf stdout\\n');
+  process.stderr.write('patchelf stderr\\n');
+  if (process.env.FAKE_PATCHELF_SIGNAL) process.kill(process.pid, process.env.FAKE_PATCHELF_SIGNAL);
+  else process.exit(Number(process.env.FAKE_PATCHELF_STATUS || 0));
+}
+`);
+
+const fakePackaging = (name) => {
+  const cwd = fixture(name);
+  const gui = path.join(cwd, 'cmd', 'pulsemetry-gui');
+  const source = path.join(gui, 'build');
+  const tools = path.join(cwd, "tools with 'quotes' and spaces");
+  mkdirSync(path.join(source, 'windows'), { recursive: true });
+  mkdirSync(tools, { recursive: true });
+  const originalInfo = '{"fixed":{"file_version":"0.1.0"},"info":{"0000":{"ProductVersion":"0.1.0"}}}\n';
+  writeFileSync(path.join(source, 'windows', 'info.json'), originalInfo);
+  writeFileSync(path.join(source, 'config.yml'), 'info:\n  version: "0.1.0"\n');
+  writeFileSync(path.join(source, 'appicon.png'), 'source icon');
+  const patchelf = path.join(tools, 'selected-patchelf.mjs');
+  fakePatchelf(patchelf);
+  writeNodeTool(path.join(tools, 'go'), `
+if (JSON.stringify(process.argv.slice(2)) !== JSON.stringify(['env', 'GOHOSTOS', 'GOHOSTARCH'])) throw new Error('unexpected Go command');
+process.stdout.write(process.env.FAKE_HOST_OS + '\\n' + process.env.FAKE_HOST_ARCH + '\\n');
+`);
+  const wails = path.join(tools, 'wails3');
+  writeNodeTool(wails, `
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+const args = process.argv.slice(2);
+appendFileSync(process.env.FAKE_WAILS_LOG, JSON.stringify({ args, cwd: process.cwd(), patchelf: process.env.PATCHELF || null }) + '\\n');
+if (args[0] === 'version') {
+  console.error('v3.0.0-beta.11');
+} else if (args[0] === 'update') {
+  const assets = args[args.indexOf('-dir') + 1];
+  const numeric = args[args.indexOf('-productversion') + 1];
+  writeFileSync(path.join(assets, 'windows', 'info.json'), JSON.stringify({ fixed: { file_version: numeric }, info: { '0000': { ProductVersion: numeric } } }));
+} else if (args[0] === 'task' && args.includes('common:generate:icons')) {
+  const assets = args.find((arg) => arg.startsWith('ASSETS_DIR=')).slice('ASSETS_DIR='.length);
+  writeFileSync(path.join(assets, 'windows', 'icon.ico'), 'generated icon');
+} else if (args[0] === 'task') {
+  const value = (key) => args.find((arg) => arg.startsWith(key + '=')).slice(key.length + 1);
+  const packageDir = value('PACKAGE_DIR');
+  const build = value('BIN_DIR');
+  if (args[1] === 'linux:create:appimage') {
+    const arch = value('ARCH') === 'amd64' ? 'x86_64' : 'aarch64';
+    const gui = path.join(packageDir, 'appimage', 'build', 'pulsemetry-' + arch + '.AppDir', 'usr', 'bin', 'Pulsemetry');
+    mkdirSync(path.dirname(gui), { recursive: true });
+    writeFileSync(gui, 'packaged GUI');
+    const result = spawnSync(process.env.PATCHELF, ['--set-rpath', '$ORIGIN/../lib', gui], { env: process.env, encoding: 'utf8' });
+    if (result.error) throw result.error;
+    if (result.status !== 0) process.exit(result.status || 1);
+    writeFileSync(path.join(packageDir, 'pulsemetry-' + arch + '.AppImage'), 'new AppImage');
+  } else if (args[1] === 'darwin:package:dmg') {
+    writeFileSync(path.join(build, 'Pulsemetry.dmg'), 'new DMG');
+  } else if (args[1] === 'windows:package') {
+    writeFileSync(path.join(packageDir, 'Pulsemetry.exe'), 'new installer');
+  } else if (args[1] !== 'build') throw new Error('unexpected Wails task');
+} else throw new Error('unexpected Wails command');
+`);
+  const driver = path.join(cwd, 'driver.mjs');
+  const moduleURL = pathToFileURL(path.join(root, 'scripts', 'package-gui.mjs')).href;
+  writeFileSync(driver, `import { packageGUI } from ${JSON.stringify(moduleURL)};
+const before = process.env.PATCHELF;
+try {
+  packageGUI(process.argv[2], { root: process.cwd(), os: process.env.FAKE_HOST_OS, arch: process.env.FAKE_HOST_ARCH, version: '1.2.3-rc.1', wails: process.argv[3] });
+  if (process.env.PATCHELF !== before) throw new Error('PATCHELF environment was mutated');
+} catch (error) {
+  console.error(error.message);
+  process.exitCode = 1;
+}
+`);
+  const wailsLog = path.join(cwd, 'wails.log');
+  const patchelfLog = path.join(cwd, 'patchelf.log');
+  const run = (os, arch, mode, extraEnv = {}) => spawnSync(process.execPath, [driver, mode, wails], {
+    cwd, encoding: 'utf8', env: {
+      ...process.env, FAKE_HOST_OS: os, FAKE_HOST_ARCH: arch, FAKE_WAILS_LOG: wailsLog,
+      FAKE_PATCHELF_LOG: patchelfLog, PATCHELF: path.relative(cwd, patchelf),
+      PATH: `${tools}${path.delimiter}${process.env.PATH}`, ...extraEnv,
+    },
+  });
+  return { cwd, source, originalInfo, patchelf, wailsLog, patchelfLog, run };
+};
 
 test('정상 버전과 prerelease를 표시 버전·숫자 버전으로 나눈다', () => {
   assert.deepEqual(versionParts('1.2.3'), { full: '1.2.3', numeric: '1.2.3' });
@@ -117,6 +212,168 @@ packageGUI('build', { root: process.cwd(), os: ${JSON.stringify(os)}, arch: ${JS
 test('고정 Wails 버전의 AppImage 출력명은 Linux에서 소문자 경로로 찾는다', () => {
   assert.equal(appImageName('amd64'), 'pulsemetry-x86_64.AppImage');
   assert.equal(appImageName('arm64'), 'pulsemetry-aarch64.AppImage');
+});
+
+test('patchelf 경로를 고정하고 정확한 GUI RPATH 변경에만 --no-sort를 전달한다', { skip: posixOnly }, () => {
+  const cwd = fixture("patchelf 'quoted' $root with spaces");
+  const tools = path.join(cwd, "tools with 'quotes'");
+  mkdirSync(tools);
+  const tool = path.join(tools, 'real-patchelf.mjs');
+  const alias = path.join(tools, 'patchelf');
+  fakePatchelf(tool);
+  symlinkSync(tool, alias);
+  const gui = path.join(cwd, 'AppDir', 'usr', 'bin', 'Pulsemetry');
+  mkdirSync(path.dirname(gui), { recursive: true });
+  writeFileSync(gui, 'GUI');
+  const guiAlias = path.join(cwd, 'GUI symlink');
+  symlinkSync(gui, guiAlias);
+  const otherGUI = path.join(fixture('other AppDir'), 'Pulsemetry');
+  writeFileSync(otherGUI, 'different GUI');
+  const library = path.join(cwd, 'AppDir', 'libexample.so');
+  writeFileSync(library, 'library');
+  const log = path.join(cwd, 'patchelf.log');
+  const env = { ...process.env, FAKE_PATCHELF_LOG: log, PATH: `${tools}${path.delimiter}${process.env.PATH}` };
+  const otherCwd = fixture('different patchelf cwd');
+  const rpath = "$ORIGIN/../lib with 'quotes' and $(literal)";
+  const cases = [
+    { args: ['--set-rpath', rpath, gui], protected: true },
+    { args: ['--set-rpath', rpath, guiAlias], protected: true },
+    { args: ['--set-rpath', rpath, path.relative(otherCwd, gui)], protected: true },
+    { args: ['--no-sort', '--set-rpath', rpath, gui], protected: true },
+    { args: ['--print-rpath', gui], protected: false },
+    { args: ['--set-rpath', rpath, otherGUI], protected: false },
+    { args: ['--set-rpath', rpath, library], protected: false },
+    { args: ['--version'], protected: false },
+  ];
+  for (const [index, command] of [tool, path.relative(cwd, alias), 'patchelf'].entries()) {
+    const packageDir = path.join(cwd, `package ${index}`);
+    const launcher = prepareAppImagePatchelf(packageDir, gui, { command, cwd, env: { ...env, FAKE_PATCHELF_HELP_STDERR: index === 1 ? '1' : '0' } });
+    assert.equal(path.isAbsolute(launcher), true);
+    for (const scenario of cases) {
+      const result = spawnSync(launcher, scenario.args, { cwd: otherCwd, env, encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, 'patchelf stdout\n');
+      assert.equal(result.stderr, 'patchelf stderr\n');
+      const call = loggedCalls(log).at(-1);
+      assert.equal(call.tool, realpathSync(tool));
+      assert.equal(call.cwd, otherCwd);
+      assert.deepEqual(call.args.filter((arg) => arg !== '--no-sort'), scenario.args.filter((arg) => arg !== '--no-sort'));
+      assert.equal(call.args.filter((arg) => arg === '--no-sort').length, scenario.protected ? 1 : 0);
+    }
+  }
+  assert.equal(readFileSync(gui, 'utf8'), 'GUI');
+});
+
+test('patchelf wrapper가 출력·실패 종료코드·종료 시그널을 보존한다', { skip: posixOnly }, () => {
+  const cwd = fixture('patchelf failure forwarding');
+  const tool = path.join(cwd, 'patchelf.mjs');
+  fakePatchelf(tool);
+  const gui = path.join(cwd, 'Pulsemetry');
+  writeFileSync(gui, 'GUI');
+  const env = { ...process.env, FAKE_PATCHELF_LOG: path.join(cwd, 'patchelf.log') };
+  const launcher = prepareAppImagePatchelf(path.join(cwd, 'package'), gui, { command: tool, cwd, env });
+  const failed = spawnSync(launcher, ['--set-rpath', '$ORIGIN', gui], { env: { ...env, FAKE_PATCHELF_STATUS: '23' }, encoding: 'utf8' });
+  assert.equal(failed.status, 23, failed.stderr);
+  assert.equal(failed.stdout, 'patchelf stdout\n');
+  assert.equal(failed.stderr, 'patchelf stderr\n');
+  const signaled = spawnSync(launcher, ['--set-rpath', '$ORIGIN', gui], { env: { ...env, FAKE_PATCHELF_SIGNAL: 'SIGTERM' }, encoding: 'utf8' });
+  assert.equal(signaled.status, null);
+  assert.equal(signaled.signal, 'SIGTERM', signaled.stderr);
+});
+
+test('없는·실행 불가능한·--no-sort 미지원 patchelf는 staging 생성 전에 거절한다', { skip: posixOnly }, () => {
+  const cwd = fixture('patchelf preflight failures');
+  const tool = path.join(cwd, 'patchelf.mjs');
+  fakePatchelf(tool);
+  const blocked = path.join(cwd, 'nonexecutable-patchelf');
+  writeFileSync(blocked, 'not executable');
+  chmodSync(blocked, 0o644);
+  const scenarios = [
+    { command: path.join(cwd, 'missing-patchelf') },
+    { command: 'missing-patchelf', env: { PATH: cwd } },
+    { command: blocked },
+    { command: tool, env: { FAKE_PATCHELF_UNSUPPORTED: '1' } },
+  ];
+  for (const [index, scenario] of scenarios.entries()) {
+    const packageDir = path.join(cwd, `package ${index}`);
+    assert.throws(() => prepareAppImagePatchelf(packageDir, path.join(cwd, 'Pulsemetry'), {
+      cwd, command: scenario.command, env: { ...process.env, ...scenario.env },
+    }), (error) => /patchelf/i.test(error.message) && /[가-힣]/.test(error.message));
+    assert.equal(existsSync(packageDir), false);
+  }
+});
+
+test('생성한 launcher를 실제 patchelf로 재사용하지 않고 재생성 시 실행 권한을 복구한다', { skip: posixOnly }, () => {
+  const cwd = fixture('patchelf launcher reuse');
+  const tool = path.join(cwd, 'patchelf.mjs');
+  fakePatchelf(tool);
+  const packageDir = path.join(cwd, 'package');
+  const gui = path.join(cwd, 'Pulsemetry');
+  const launcher = prepareAppImagePatchelf(packageDir, gui, { command: tool, cwd });
+  const original = readFileSync(launcher, 'utf8');
+  const alias = path.join(cwd, 'launcher alias');
+  symlinkSync(launcher, alias);
+  for (const command of [launcher, alias]) {
+    assert.throws(() => prepareAppImagePatchelf(packageDir, gui, { command, cwd }), /실제 patchelf/);
+    assert.equal(readFileSync(launcher, 'utf8'), original);
+  }
+  chmodSync(launcher, 0o644);
+  assert.equal(prepareAppImagePatchelf(packageDir, gui, { command: tool, cwd }), launcher);
+  assert.equal(statSync(launcher).mode & 0o777, 0o755);
+  assert.equal(readFileSync(launcher, 'utf8'), original);
+});
+
+test('Linux 두 아키텍처의 패키징 task에만 PATCHELF wrapper를 배선한다', { skip: posixOnly }, () => {
+  for (const arch of ['amd64', 'arm64']) {
+    const setup = fakePackaging(`Linux ${arch} packaging with spaces`);
+    const originalPatchelf = path.relative(setup.cwd, setup.patchelf);
+    const result = setup.run('linux', arch, 'package');
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, '');
+    const calls = loggedCalls(setup.wailsLog);
+    const packageCall = calls.find((call) => call.args[1] === 'linux:create:appimage');
+    assert.equal(path.isAbsolute(packageCall.patchelf), true);
+    assert.notEqual(packageCall.patchelf, originalPatchelf);
+    assert.equal(calls.filter((call) => call !== packageCall).every((call) => call.patchelf === originalPatchelf), true);
+    const dirs = targetPaths(setup.cwd, 'linux', arch);
+    const packagedGUI = path.join(dirs.packageDir, 'appimage', 'build', appImageName(arch).replace(/\.AppImage$/, '.AppDir'), 'usr', 'bin', 'Pulsemetry');
+    const patchCalls = loggedCalls(setup.patchelfLog);
+    assert.equal(patchCalls.length, 1);
+    assert.deepEqual(patchCalls[0].args.filter((arg) => arg !== '--no-sort'), ['--set-rpath', '$ORIGIN/../lib', packagedGUI]);
+    assert.equal(patchCalls[0].args.filter((arg) => arg === '--no-sort').length, 1);
+    assert.equal(patchCalls[0].tool, realpathSync(setup.patchelf));
+    assert.equal(readFileSync(path.join(dirs.packageDir, 'Pulsemetry.AppImage'), 'utf8'), 'new AppImage');
+    assert.equal(readFileSync(path.join(setup.source, 'windows', 'info.json'), 'utf8'), setup.originalInfo);
+  }
+});
+
+test('patchelf 전처리 실패는 Wails 자산 갱신·이전 AppImage 삭제 전에 멈춘다', { skip: posixOnly }, () => {
+  for (const scenario of ['missing', 'unsupported']) {
+    const setup = fakePackaging(`Linux rejected ${scenario} patchelf`);
+    const dirs = targetPaths(setup.cwd, 'linux', 'amd64');
+    mkdirSync(dirs.packageDir, { recursive: true });
+    writeFileSync(path.join(dirs.packageDir, 'Pulsemetry.AppImage'), 'previous AppImage');
+    const input = scenario === 'missing' ? { PATCHELF: path.join(setup.cwd, 'missing-patchelf') } : { FAKE_PATCHELF_UNSUPPORTED: '1' };
+    const result = setup.run('linux', 'amd64', 'package', input);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /patchelf/i);
+    assert.match(result.stderr, /[가-힣]/);
+    assert.equal(loggedCalls(setup.wailsLog).every((call) => call.args[0] === 'version'), true);
+    assert.equal(existsSync(dirs.assets), false);
+    assert.equal(readFileSync(path.join(dirs.packageDir, 'Pulsemetry.AppImage'), 'utf8'), 'previous AppImage');
+  }
+});
+
+test('build·macOS·Windows 작업은 사용자 PATCHELF를 그대로 전달한다', { skip: posixOnly }, () => {
+  for (const [os, mode] of [['linux', 'build'], ['darwin', 'package'], ['windows', 'package']]) {
+    const setup = fakePackaging(`${os} ${mode} patchelf preservation`);
+    const originalPatchelf = path.join(setup.cwd, 'deliberately nonexistent patchelf');
+    const result = setup.run(os, 'amd64', mode, { PATCHELF: originalPatchelf });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(loggedCalls(setup.wailsLog).every((call) => call.patchelf === originalPatchelf), true);
+    assert.equal(loggedCalls(setup.patchelfLog).length, 0);
+  }
 });
 
 test('실제 Git 저장소에서 main 포함 커밋만 릴리스하고 잘못된 태그는 출력 없이 실패한다', () => {
@@ -323,15 +580,19 @@ if (process.argv[3] === 'create' && process.env.FAKE_GH_FAIL === 'upload') proce
 test('패키지에 CLI·다른 GUI 빌드·다른 버전이 있으면 거절하고 추출물을 정리한다', () => {
   const dir = fixture('package validation');
   const dirs = targetPaths(dir, 'linux', 'amd64');
-  mkdirSync(dirs.build, { recursive: true });
+  mkdirSync(path.join(dirs.build, 'bin'), { recursive: true });
   mkdirSync(dirs.packageDir, { recursive: true });
+  const cli = path.join(dirs.build, 'bin', 'pulsemetry');
   const original = path.join(dirs.build, 'Pulsemetry');
   const pkg = path.join(dirs.packageDir, 'Pulsemetry.AppImage');
+  writeFileSync(cli, 'current CLI');
   writeFileSync(original, 'current build');
   writeFileSync(pkg, 'package');
   let includeCLI = false;
   let packageBuildID = 'current-build';
   let packageVersion = '1.2.3';
+  let metadataError = false;
+  let postMetadataCalls = 0;
   const fake = (command, args, options) => {
     if (command === pkg) {
       assert.deepEqual(args, ['--appimage-extract']);
@@ -346,11 +607,18 @@ test('패키지에 CLI·다른 GUI 빌드·다른 버전이 있으면 거절하�
       return '';
     }
     if (command === 'go' && args[0] === 'version') {
-      return '\tbuild\tGOOS=linux\n\tbuild\tGOARCH=amd64\n\tbuild\tCGO_ENABLED=1\n';
+      assert.deepEqual(args.slice(0, 2), ['version', '-m']);
+      if (metadataError && args[2].includes(`${path.sep}verify${path.sep}`)) throw new Error('not a Go executable');
+      return `\tbuild\tGOOS=linux\n\tbuild\tGOARCH=amd64\n\tbuild\tCGO_ENABLED=${args[2] === cli ? '0' : '1'}\n`;
     }
+    postMetadataCalls++;
     if (command === 'go') {
       assert.deepEqual(args.slice(0, 2), ['run', 'cmd/buildid']);
       return args[2] === original ? 'current-build\n' : `${packageBuildID}\n`;
+    }
+    if (command === cli) {
+      assert.deepEqual(args, ['version']);
+      return 'pulsemetry 1.2.3\n';
     }
     assert.equal(path.basename(command), 'Pulsemetry');
     assert.deepEqual(args, ['--version']);
@@ -365,5 +633,14 @@ test('패키지에 CLI·다른 GUI 빌드·다른 버전이 있으면 거절하�
   packageBuildID = 'current-build';
   packageVersion = '1.2.2';
   assert.throws(() => checkPackage(pkg, 'linux', 'amd64', '1.2.3', dirs, fake), /버전/);
+  assert.equal(existsSync(path.join(dirs.packageDir, 'verify')), false);
+  packageVersion = '1.2.3';
+  metadataError = true;
+  const before = postMetadataCalls;
+  assert.throws(() => checkPackage(pkg, 'linux', 'amd64', '1.2.3', dirs, fake), /not a Go executable/);
+  assert.equal(postMetadataCalls, before);
+  assert.equal(existsSync(path.join(dirs.packageDir, 'verify')), false);
+  assert.throws(() => stageTarget(dir, 'linux', 'amd64', '1.2.3', { execute: fake }), /not a Go executable/);
+  assert.equal(existsSync(path.join(dir, 'artifacts', 'release', 'linux-amd64')), false);
   assert.equal(existsSync(path.join(dirs.packageDir, 'verify')), false);
 });

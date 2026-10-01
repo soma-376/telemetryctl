@@ -230,6 +230,16 @@ GUI는 해당 OS에서 빌드·패키징하며 Wails `v3.0.0-beta.11`과 플랫�
 로컬 패키징은 `task package:gui TARGET_OS=darwin TARGET_ARCH=arm64 GUI_VERSION=0.1.0`처럼
 실행합니다. `TARGET_OS`·`TARGET_ARCH`를 생략하면 현재 컴퓨터 기준입니다.
 
+Linux AppImage 패키징에는 `--no-sort`를 지원하는 `patchelf`(0.15 이상)가 필요합니다.
+기본은 `PATH`의 실행 파일이며, 다른 파일을 선택하려면
+`PATCHELF=/경로/patchelf task package:gui TARGET_OS=linux TARGET_ARCH=amd64`처럼 지정합니다.
+패키징 스크립트는 선택한 도구를 절대 경로로 고정하고 지원 옵션을 확인한 뒤,
+AppDir의 GUI 실행 파일에 RPATH를 설정할 때만 `--no-sort`를 적용해 Go 빌드 정보 판독을 유지합니다.
+
+함께 묶이는 라이브러리에는 기존 인자를 그대로 전달하지만, 이들도 linuxdeploy의 내장 도구 대신
+선택한 `patchelf`로 처리됩니다. 기존 AppImage에는 이 변경이 반영되지 않으므로
+`task package:gui`로 다시 생성하고 릴리스 검증을 실행해야 합니다.
+
 모든 빌드와 첨부 파일 검증·업로드가 성공해야 draft Release를 공개합니다.
 같은 버전은 자동으로 덮어쓰지 않습니다. 실패 후 draft가 남으면 첨부 파일과 실패 원인을 확인하고,
 미공개 draft만 삭제한 뒤 해당 태그의 workflow를 재실행합니다. 공개된 버전의 수정은 새 태그로 발행합니다.
