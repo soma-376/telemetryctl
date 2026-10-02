@@ -113,6 +113,33 @@ func Open(ctx context.Context, path string, opts ...Option) (*DB, error) {
 	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
 		return nil, fmt.Errorf("store: 데이터 디렉터리 생성: %w", err)
 	}
+	// 기존 DB는 WAL PRAGMA를 실행하는 쓰기 연결보다 먼저 읽기 전용으로 검사한다.
+	// 같은 v1 번호의 구형 DB도 구조가 다르므로, 거부 과정에서 파일을 바꾸면 안 된다.
+	if info, statErr := os.Stat(abs); statErr == nil && info.Size() > 0 {
+		preflight, openErr := sql.Open(DriverName, readDSN(abs, cfg.busyTimeout))
+		if openErr != nil {
+			return nil, fmt.Errorf("store: 기존 DB 읽기 전용 검사: %w", openErr)
+		}
+		var existingObjects int
+		shapeErr := preflight.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master
+WHERE type IN ('table', 'view', 'index', 'trigger') AND name NOT LIKE 'sqlite_%'`).Scan(&existingObjects)
+		valid := existingObjects == 0
+		if shapeErr == nil && existingObjects != 0 {
+			valid, shapeErr = schemaShape(ctx, preflight)
+		}
+		closeErr := preflight.Close()
+		if shapeErr != nil {
+			return nil, shapeErr
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("store: 기존 DB 검사 연결 종료: %w", closeErr)
+		}
+		if !valid {
+			return nil, errRecreateSchema()
+		}
+	} else if statErr != nil && !os.IsNotExist(statErr) {
+		return nil, fmt.Errorf("store: 기존 DB 확인: %w", statErr)
+	}
 
 	sqlDB, err := sql.Open(DriverName, writeDSN(abs, cfg.busyTimeout))
 	if err != nil {

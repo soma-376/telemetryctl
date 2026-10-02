@@ -380,10 +380,13 @@ func seedCleanDay(t *testing.T, f *fixture) {
 			vendor = s.llm.Vendor
 		}
 		turn := s.key + "-t1"
+		prompt := promptRecord(s.key, turn, s.at, 1, "인증 토큰 검증 프록시 "+s.key)
+		prompt.Event.Vendor = vendor
+		prompt.Event.Name = vendor + ".user_prompt"
 		f.write(store.Batch{
 			Sessions: []session.Session{sess},
 			Events: []store.EventRecord{
-				promptRecord(s.key, turn, s.at, 1, "인증 토큰 검증 프록시 "+s.key),
+				prompt,
 				llmRecord(s.key, turn, s.at.Add(time.Minute), 2, s.llm),
 				toolRecord(s.key, turn, s.key+"-call-1", s.at.Add(2*time.Minute), 3, toolSpec{
 					Vendor: vendor, ToolName: "Edit", Success: event.Some(true),
@@ -395,5 +398,17 @@ func seedCleanDay(t *testing.T, f *fixture) {
 				}),
 			},
 		})
+		if vendor == vendorCodex {
+			result, err := f.db.SQL().Exec(`UPDATE codex_turn_provenance
+SET label='client_submitted',processing_state='finalized',link_state='unique'
+WHERE turn_id IN (SELECT t.id FROM turns t JOIN sessions s ON s.id=t.session_id
+ WHERE s.vendor_id='codex' AND s.session_key=? AND t.turn_index IS NOT NULL)`, s.key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if changed, _ := result.RowsAffected(); changed != 1 {
+				t.Fatalf("Codex 픽스처 분류 = %d행, want 1", changed)
+			}
+		}
 	}
 }

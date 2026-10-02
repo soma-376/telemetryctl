@@ -22,21 +22,27 @@ func (b *Builder) Snapshot(ctx context.Context, q Query) (Snapshot, error) {
 	err = b.source.ReadSnapshot(ctx, func(db dashboard.SQLQuerier) error {
 		out.DatabaseAvailable = db != nil
 		var err error
-		out.Usage, err = dashboard.ReadUsageBreakdown(ctx, db, boundaries)
+		out.Usage, err = dashboard.ReadDashboardUsageBreakdown(ctx, db, boundaries)
 		if err != nil {
 			return err
 		}
 		start, end := boundaries[0], boundaries[len(boundaries)-1]
-		out.Recent, out.RecentTruncated, err = dashboard.ReadRecentSessions(ctx, db, start, end, 7)
+		out.CodexPromptUsage, err = dashboard.ReadCodexPromptUsage(ctx, db, start, end)
 		if err != nil {
 			return err
 		}
-		out.ActiveAgents, _, err = dashboard.ReadActiveAgents(ctx, db)
+		out.Recent, out.RecentTruncated, err = dashboard.ReadDashboardRecentSessions(ctx, db, start, end, 7)
+		if err != nil {
+			return err
+		}
+		out.ActiveAgents, _, err = dashboard.ReadDashboardActiveAgents(ctx, db)
 		if err != nil || db == nil {
 			return err
 		}
-		return db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions
- WHERE started_at >= ? AND started_at < ? AND ended_at IS NULL`, start.Unix(), end.Unix()).Scan(&out.RunningSessions)
+		query := `SELECT COUNT(*) FROM sessions s
+ WHERE s.started_at >= ? AND s.started_at < ? AND s.ended_at IS NULL
+   AND (` + dashboard.DashboardSessionEligibleSQL + `)`
+		return db.QueryRowContext(ctx, query, start.Unix(), end.Unix()).Scan(&out.RunningSessions)
 	})
 	if err != nil {
 		return Snapshot{}, err

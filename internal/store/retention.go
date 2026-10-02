@@ -146,6 +146,20 @@ func (d *DB) Prune(ctx context.Context, now time.Time) (PruneResult, error) {
 		return PruneResult{}, fmt.Errorf("store: vendors prune: %w", err)
 	}
 	res.Vendors = n
+	// JSONL 근거는 원본 Codex 세션을 넘어서 보존하지 않는다. 삭제된 턴이
+	// 이후 파일 재처리만으로 다시 출처 근거를 얻는 경로도 닫는다.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM codex_jsonl_files
+WHERE NOT EXISTS (
+ SELECT 1 FROM sessions s WHERE s.vendor_id='codex' AND s.session_key=codex_jsonl_files.owner_session_key
+)`); err != nil {
+		return PruneResult{}, fmt.Errorf("store: Codex JSONL 근거 정리: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM codex_content_tombstones
+WHERE NOT EXISTS (
+ SELECT 1 FROM sessions s WHERE s.vendor_id='codex' AND s.session_key=codex_content_tombstones.owner_session_key
+)`); err != nil {
+		return PruneResult{}, fmt.Errorf("store: Codex purge 표식 정리: %w", err)
+	}
 
 	if err := tx.Commit(); err != nil {
 		return PruneResult{}, fmt.Errorf("store: prune 커밋: %w", err)
@@ -293,6 +307,34 @@ func (d *DB) PurgeContent(ctx context.Context, before time.Time) (PurgeResult, e
 			return PurgeResult{}, fmt.Errorf("store: %s purge: %w", step.name, err)
 		}
 		*step.dst(&res) = n
+	}
+	var cutoff int64
+	if scoped {
+		cutoff = before.UnixNano()
+	} else {
+		// purge 당시 존재한 원문만 지운다. 활성 세션에 이후 새로 제출한
+		// 프롬프트는 출처 보강 대상에서 제외하지 않는다.
+		cutoff = time.Now().UnixNano()
+	}
+	where := ""
+	if scoped {
+		where = ` WHERE COALESCE(started_at, ended_at) < ?`
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE turns SET content_purged=1,
+ prompt_completeness='unknown', prompt_completeness_evidence=NULL`+where, args...); err != nil {
+		return PurgeResult{}, fmt.Errorf("store: Codex 원문 재생성 차단: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO codex_content_tombstones(owner_session_key,before_at)
+SELECT DISTINCT s.session_key, ? FROM sessions s JOIN turns t ON t.session_id=s.id
+WHERE s.vendor_id='codex' AND t.content_purged=1
+ON CONFLICT(owner_session_key) DO UPDATE SET before_at=MAX(before_at,excluded.before_at)`, cutoff); err != nil {
+		return PurgeResult{}, fmt.Errorf("store: Codex purge 표식 저장: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE codex_jsonl_records SET body=NULL, body_hash=''
+WHERE file_id IN (SELECT f.id FROM codex_jsonl_files f
+ JOIN codex_content_tombstones t ON t.owner_session_key=f.owner_session_key
+ WHERE codex_jsonl_records.event_time IS NULL OR codex_jsonl_records.event_time < t.before_at)`); err != nil {
+		return PurgeResult{}, fmt.Errorf("store: Codex JSONL 본문 purge: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {

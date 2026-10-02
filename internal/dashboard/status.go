@@ -46,7 +46,8 @@ type Status struct {
 	OldestEventAt int64 `json:"oldest_event_at"`
 	NewestEventAt int64 `json:"newest_event_at"`
 
-	Counts Counts `json:"counts"`
+	Counts      Counts            `json:"counts"`
+	CodexWorker CodexWorkerStatus `json:"codex_worker"`
 
 	RunningSessions int64    `json:"running_sessions"`
 	ActiveVendors   []string `json:"active_vendors"`
@@ -72,6 +73,13 @@ type Counts struct {
 	ToolCalls   int64 `json:"tool_calls"`
 	FileChanges int64 `json:"file_changes"`
 	Vendors     int64 `json:"vendors"`
+}
+
+type CodexWorkerStatus struct {
+	State        string `json:"state"`
+	Reason       string `json:"reason"`
+	HeartbeatAt  int64  `json:"heartbeat_at"`
+	RestartCount int64  `json:"restart_count"`
 }
 
 // DaemonStatus 는 runtime.json 에서 읽은 데몬 좌표다 (비밀 없음).
@@ -143,6 +151,10 @@ func (r *Reader) Status(ctx context.Context) (Status, error) {
 		return Status{}, err
 	}
 	st.SchemaVersion = version
+	if err := db.QueryRowContext(ctx, `SELECT status,reason,heartbeat_at,restart_count FROM codex_worker_state WHERE id=1`).Scan(
+		&st.CodexWorker.State, &st.CodexWorker.Reason, &st.CodexWorker.HeartbeatAt, &st.CodexWorker.RestartCount); err != nil {
+		return Status{}, QueryErr("Codex 보강 상태 조회", err)
+	}
 
 	if st.RetentionDays, err = r.metaInt(ctx, store.MetaRetentionDays); err != nil {
 		return Status{}, err

@@ -76,6 +76,29 @@ it("관측값과 세션 생애 합계를 구분하고 캐시·추론을 중복 �
   expect(view.activity.rows[0]?.time).toBe("00:00");
 });
 
+it("전체 벤더 토큰을 유지하며 Codex 사용자·그 외 소계를 별도로 표시한다", async () => {
+  const snapshot = homeFixture();
+
+  snapshot.codex_prompt_usage.user_tokens = 1_250_000;
+  snapshot.codex_prompt_usage.other_tokens = 2_500_000;
+  snapshot.codex_prompt_usage.total_tokens = 3_750_000;
+  snapshot.codex_prompt_usage.system_tokens = 2_000_000;
+  snapshot.codex_prompt_usage.unclassified_tokens = 500_000;
+  api.Home.mockResolvedValue(snapshot);
+
+  const { wrapper, client } = provider();
+  const view = render(<Home />, { wrapper });
+
+  await screen.findByText("Codex 기준");
+  expect(screen.getAllByText("1.2k").length).toBeGreaterThan(0);
+  expect(screen.getByText("1.25M")).toBeTruthy();
+  expect(screen.getByText("2.50M")).toBeTruthy();
+  expect(screen.getByTitle("1,250,000 토큰")).toBeTruthy();
+  expect(screen.getByTitle("2,500,000 토큰")).toBeTruthy();
+  view.unmount();
+  client.clear();
+});
+
 it("산정 불가와 사용량 없음은 구분한다", () => {
   const snapshot = homeFixture();
 

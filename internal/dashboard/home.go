@@ -504,6 +504,13 @@ var recentSessionsSQL = recentSessionsHead + `
   AND s.started_at >= ? AND s.started_at < ?
 ORDER BY s.started_at DESC, s.id DESC LIMIT ?`
 
+// dashboardRecentSessionsSQL은 Home GUI만 사용하는 표시 대상 목록이다.
+// 기존 recentSessionsSQL과 trayRecentSessionsSQL은 원시 세션 목록으로 유지한다.
+var dashboardRecentSessionsSQL = recentSessionsHead + `
+  AND (` + DashboardSessionEligibleSQL + `)
+  AND s.started_at >= ? AND s.started_at < ?
+ORDER BY s.started_at DESC, s.id DESC LIMIT ?`
+
 // trayRecentSessionsSQL 은 트레이가 묻는 "지금 무엇이 도나" 다.
 //
 // **날짜로 자르지 않는다.** 트레이는 하루의 기록이 아니라 가장 최근 세션들을 보여주는
@@ -523,7 +530,11 @@ ORDER BY (s.ended_at IS NULL) DESC, s.started_at DESC, s.id DESC LIMIT ?`
 // 상관 서브쿼리로 붙이지 않는 이유는 가격표 산정이 SQL 로 표현되지 않기 때문이다 —
 // 보고값이 없는 호출의 단가는 Go 쪽 표에만 있다 (internal/pricing).
 func recentSessions(ctx context.Context, db SQLQuerier, tr timeRange, limit int, anyDate bool) ([]RecentSession, bool, error) {
-	out, truncated, err := scanRecentSessions(ctx, db, tr, limit, anyDate)
+	return recentSessionsWithQuery(ctx, db, tr, limit, anyDate, false)
+}
+
+func recentSessionsWithQuery(ctx context.Context, db SQLQuerier, tr timeRange, limit int, anyDate, dashboardOnly bool) ([]RecentSession, bool, error) {
+	out, truncated, err := scanRecentSessions(ctx, db, tr, limit, anyDate, dashboardOnly)
 	if err != nil {
 		return nil, false, err
 	}
@@ -535,7 +546,7 @@ func recentSessions(ctx context.Context, db SQLQuerier, tr timeRange, limit int,
 	return out, truncated, nil
 }
 
-func scanRecentSessions(ctx context.Context, db SQLQuerier, tr timeRange, limit int, anyDate bool) (out []RecentSession, truncated bool, err error) {
+func scanRecentSessions(ctx context.Context, db SQLQuerier, tr timeRange, limit int, anyDate, dashboardOnly bool) (out []RecentSession, truncated bool, err error) {
 	const op = "최근 세션 조회"
 	out = []RecentSession{}
 
@@ -544,6 +555,8 @@ func scanRecentSessions(ctx context.Context, db SQLQuerier, tr timeRange, limit 
 	query, args := recentSessionsSQL, []any{tr.StartSec(), tr.EndSec(), want + 1}
 	if anyDate {
 		query, args = trayRecentSessionsSQL, []any{want + 1}
+	} else if dashboardOnly {
+		query = dashboardRecentSessionsSQL
 	}
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {

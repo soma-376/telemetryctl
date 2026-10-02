@@ -115,9 +115,26 @@ func (r *Reader) totalsIn(ctx context.Context, db SQLQuerier, tr timeRange) (Tot
 const activeAgentsSQL = `SELECT vendor_id, COUNT(*)
 FROM sessions WHERE ended_at IS NULL GROUP BY vendor_id ORDER BY vendor_id`
 
+const dashboardActiveAgentsSQL = `SELECT s.vendor_id, COUNT(*)
+FROM sessions s WHERE s.ended_at IS NULL AND (` + DashboardSessionEligibleSQL + `)
+GROUP BY s.vendor_id ORDER BY s.vendor_id`
+
 func activeAgents(ctx context.Context, db SQLQuerier) (vendors []string, sessions int64, err error) {
+	return activeAgentsFrom(ctx, db, activeAgentsSQL)
+}
+
+// ReadDashboardActiveAgents는 Home 목록 자격을 만족하는 진행 중 세션만 센다.
+// 상태·트레이가 쓰는 activeAgents는 원시 조회로 유지한다.
+func ReadDashboardActiveAgents(ctx context.Context, db SQLQuerier) (vendors []string, sessions int64, err error) {
+	if db == nil {
+		return []string{}, 0, nil
+	}
+	return activeAgentsFrom(ctx, db, dashboardActiveAgentsSQL)
+}
+
+func activeAgentsFrom(ctx context.Context, db SQLQuerier, query string) (vendors []string, sessions int64, err error) {
 	const op = "실행 중 세션 조회"
-	rows, err := db.QueryContext(ctx, activeAgentsSQL)
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, 0, QueryErr(op, err)
 	}

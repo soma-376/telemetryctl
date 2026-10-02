@@ -80,6 +80,7 @@ type WriteResult struct {
 	LLMCallsInserted    int
 	ToolCallsUpserted   int
 	FileChangesInserted int
+	CodexTurnsTouched   int
 }
 
 // Write 는 배치를 하나의 트랜잭션으로 적용한다.
@@ -122,6 +123,9 @@ func (d *DB) Write(ctx context.Context, b Batch) (WriteResult, error) {
 		return WriteResult{}, err
 	}
 	if err := w.promote(b.Events, turnIDs, eventIDs); err != nil {
+		return WriteResult{}, err
+	}
+	if err := w.writeCodexEvidence(b.Events, turnIDs, eventIDs); err != nil {
 		return WriteResult{}, err
 	}
 

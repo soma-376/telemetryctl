@@ -155,6 +155,13 @@ func printDatabaseStatus(w io.Writer, st dashboard.Status) {
 		schema += fmt.Sprintf(" (이 바이너리가 아는 최신은 v%d)", st.LatestSchemaVersion)
 	}
 	fmt.Fprintf(w, "    DB: %s (%s · %s)\n", st.DatabasePath, formatBytes(st.DatabaseBytes), schema)
+	if st.CodexWorker.State != "" {
+		fmt.Fprintf(w, "    Codex 출처 보강: %s", st.CodexWorker.State)
+		if st.CodexWorker.Reason != "" {
+			fmt.Fprintf(w, " (%s)", st.CodexWorker.Reason)
+		}
+		fmt.Fprintln(w)
+	}
 	if st.RetentionDays > 0 {
 		fmt.Fprintf(w, "    보존(적용값): 전체 %d일\n", st.RetentionDays)
 	}

@@ -64,6 +64,10 @@ type Event struct {
 	// TurnKey 는 벤더가 직접 준 턴 식별자다 (Claude Code prompt.id, Codex turn.id).
 	// turns.turn_key 의 원천이고, 비어 있으면 session 패키지가 턴 경계를 추론한다.
 	TurnKey string
+	// MessageID는 Codex JSONL 연결 근거다. 기존 DedupKey 입력에는 넣지 않는다.
+	MessageID string
+	// UsageDiagnostic는 잘못된 수치 속성의 필드 이름이다. 중복 키에 넣지 않는다.
+	UsageDiagnostic string
 	// CallKey 는 벤더가 직접 준 도구 호출 식별자다 (Claude Code tool_use_id, Codex call_id).
 	// 결정 이벤트와 결과 이벤트를 tool_calls 한 행으로 합치는 근거다. 비어 있으면
 	// session 패키지가 턴 안의 순번으로 합성한다 — store 는 절대 추측하지 않는다.

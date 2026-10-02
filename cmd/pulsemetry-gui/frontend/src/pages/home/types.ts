@@ -14,6 +14,8 @@ export interface HeroData {
   avgLabel: string;
   avgValue: string;
   totalTokens: string;
+  codexUserTokens: number;
+  codexOtherTokens: number;
   totalCost: string;
   totalTime: string;
   peakNote: string;

@@ -35,6 +35,7 @@ import (
 	"github.com/your-org/pulsemetry/internal/autostart"
 	"github.com/your-org/pulsemetry/internal/claudecode"
 	"github.com/your-org/pulsemetry/internal/codexapp"
+	"github.com/your-org/pulsemetry/internal/codexsource"
 	"github.com/your-org/pulsemetry/internal/dashboard"
 	"github.com/your-org/pulsemetry/internal/dashboard/tray"
 	"github.com/your-org/pulsemetry/internal/forward"
@@ -151,6 +152,9 @@ type Options struct {
 	LimitInterval   time.Duration
 	UpdateInterval  time.Duration
 	BatchEvents     int
+	// CodexJSONLRoot는 격리된 파일 검증을 위한 경계다. 비우면 사용자 홈의
+	// .codex/sessions를 읽기 전용으로 사용한다.
+	CodexJSONLRoot string
 
 	// IngestToken 은 loopback ingest 토큰이다. 비우면 receiver.EnsureToken 이
 	// 키링에서 읽거나 만든다. 키링을 쓸 수 없는 환경(테스트·헤드리스)의 통로다.
@@ -228,7 +232,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	d.loop(ctx)
 	d.shutdown()
-	return nil
+	return d.codexSourceErr
 }
 
 type daemon struct {
@@ -238,19 +242,22 @@ type daemon struct {
 	opts      Options
 	log       *log.Logger
 
-	state          *installer.State
-	db             *store.DB
-	fwd            *forward.Forwarder
-	srv            *receiver.Server
-	pipe           *pipeline
-	tokens         forward.TokenSource
-	limitCollector *vendorlimit.Collector
-	limits         *vendorlimit.Refresher
-	codex          *codexapp.Client
-	codexTitles    *titleRefresher
-	claudeTitles   *titleRefresher
-	updates        *updatecheck.Service
-	updatesDone    chan struct{}
+	state             *installer.State
+	db                *store.DB
+	fwd               *forward.Forwarder
+	srv               *receiver.Server
+	pipe              *pipeline
+	tokens            forward.TokenSource
+	limitCollector    *vendorlimit.Collector
+	limits            *vendorlimit.Refresher
+	codex             *codexapp.Client
+	codexTitles       *titleRefresher
+	codexSourceDone   chan error
+	codexSourceCancel context.CancelFunc
+	codexSourceErr    error
+	claudeTitles      *titleRefresher
+	updates           *updatecheck.Service
+	updatesDone       chan struct{}
 	// query 는 GUI 조회에 쓰는 read-only 핸들이다. 쓰기 커넥션(db)과 별개다 —
 	// dashboard 는 mode=ro 를 강제하고, 조회가 쓰기를 할 수 없다는 것이 그 계약이다.
 	query *dashboard.Service
@@ -367,6 +374,7 @@ func (d *daemon) start(ctx context.Context) error {
 		return err
 	}
 
+	codexNotify := make(chan struct{}, 1)
 	d.pipe = newPipeline(pipelineConfig{
 		DB:           db,
 		Forwarder:    d.fwd,
@@ -379,7 +387,20 @@ func (d *daemon) start(ctx context.Context) error {
 		SessionTTL:   sessionMemoryTTL,
 		CodexTitles:  d.codexTitles,
 		ClaudeTitles: d.claudeTitles,
+		CodexNotify:  codexNotify,
 	})
+	jsonlRoot := d.opts.CodexJSONLRoot
+	if jsonlRoot == "" {
+		if env, detectErr := hostenv.Detect(); detectErr == nil {
+			jsonlRoot = filepath.Join(env.HomeDir, ".codex", "sessions")
+		}
+	}
+	sourceCtx, sourceCancel := context.WithCancel(ctx)
+	d.codexSourceCancel = sourceCancel
+	d.codexSourceDone = make(chan error, 1)
+	go func() {
+		d.codexSourceDone <- (codexsource.Supervisor{DB: db, Root: jsonlRoot, Notify: codexNotify}).Run(sourceCtx)
+	}()
 
 	if err := d.startReceiver(); err != nil {
 		return err
@@ -615,6 +636,13 @@ func (d *daemon) loop(ctx context.Context) {
 		case <-ctx.Done():
 			d.log.Printf("데몬 정지 신호: %v", ctx.Err())
 			return
+		case err := <-d.codexSourceDone:
+			d.codexSourceDone = nil
+			if err != nil {
+				d.codexSourceErr = err
+				d.log.Printf("오류: Codex 보강 감독자 종료: %v", err)
+				return
+			}
 		case <-flushT.C:
 			d.pipe.submit(cmdFlush)
 		case <-sessionT.C:
@@ -730,6 +758,26 @@ func (d *daemon) shutdown() {
 		d.codexTitles.Close()
 	}
 	d.claudeTitles.Close()
+	if d.codexSourceCancel != nil {
+		d.codexSourceCancel()
+	}
+	if d.codexSourceDone != nil {
+		wait := min(5*time.Second, time.Until(overall))
+		if wait <= 0 {
+			wait = time.Millisecond
+		}
+		select {
+		case err := <-d.codexSourceDone:
+			if err != nil {
+				d.codexSourceErr = err
+				d.log.Printf("오류: Codex 보강 감독자 종료: %v", err)
+			}
+		case <-time.After(wait):
+			d.codexSourceErr = codexsource.ErrWorkerUnresponsive
+			d.log.Printf("오류: Codex 보강 감독자 종료 대기 초과")
+		}
+		d.codexSourceDone = nil
+	}
 
 	if d.fwd != nil {
 		ctx, cancel := context.WithDeadline(context.Background(), stageDeadline(overall, stage))
@@ -760,12 +808,12 @@ func (d *daemon) shutdown() {
 		// 파이프라인이 제한 시간을 넘겼다면 쓰기가 아직 진행 중일 수 있다. 그 상태에서
 		// 닫으면 진행 중인 트랜잭션을 우리 손으로 깨뜨린다. WAL 이라 안 닫고 나가도
 		// 다음 기동이 복구하므로, 애매하면 닫지 않는 쪽이 안전하다.
-		if flushed {
+		if flushed && !errors.Is(d.codexSourceErr, codexsource.ErrWorkerUnresponsive) {
 			if err := d.db.Close(); err != nil {
 				d.log.Printf("경고: DB 닫기 실패: %v", err)
 			}
 		} else {
-			d.log.Printf("경고: 파이프라인이 아직 쓰는 중이라 DB 를 닫지 않는다 (WAL 이 복구한다)")
+			d.log.Printf("경고: 저장 작업 종료가 확인되지 않아 DB 를 닫지 않는다 (WAL 이 복구한다)")
 		}
 	}
 

@@ -47,6 +47,7 @@ type pipeline struct {
 	// Claude Code 는 로컬 트랜스크립트다 (ADR 0017·0018).
 	codexTitles  sessionTitleRefresher
 	claudeTitles sessionTitleRefresher
+	codexNotify  chan<- struct{}
 
 	// batchEvents 는 크기 기준 flush 임계값이다.
 	batchEvents int
@@ -193,6 +194,7 @@ func newPipeline(cfg pipelineConfig) *pipeline {
 		now:          cfg.Now,
 		codexTitles:  cfg.CodexTitles,
 		claudeTitles: cfg.ClaudeTitles,
+		codexNotify:  cfg.CodexNotify,
 		batchEvents:  cfg.BatchEvents,
 		writeTimeout: cfg.WriteTimeout,
 		pruneTimeout: cfg.PruneTimeout,
@@ -241,6 +243,7 @@ type pipelineConfig struct {
 	SessionTTL   time.Duration
 	CodexTitles  sessionTitleRefresher
 	ClaudeTitles sessionTitleRefresher
+	CodexNotify  chan<- struct{}
 	// DedupCapacity 는 배선 단계 중복 제거 창의 크기다. 0 이면 기본값.
 	DedupCapacity int
 }
@@ -607,6 +610,12 @@ func (p *pipeline) flush(sessions []session.Session) {
 	p.counters.llmCalls.Add(int64(res.LLMCallsInserted))
 	p.counters.toolCalls.Add(int64(res.ToolCallsUpserted))
 	p.counters.fileChanges.Add(int64(res.FileChangesInserted))
+	if res.CodexTurnsTouched > 0 && p.codexNotify != nil {
+		select {
+		case p.codexNotify <- struct{}{}:
+		default:
+		}
+	}
 	p.pending = nil
 	p.dirty = false
 	p.recordFlushTime()

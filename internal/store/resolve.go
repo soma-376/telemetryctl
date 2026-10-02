@@ -322,7 +322,8 @@ ON CONFLICT(session_id, turn_key) DO UPDATE SET
   client_version = COALESCE(turns.client_version, excluded.client_version),
   started_at     = MIN(COALESCE(excluded.started_at, turns.started_at),
                        COALESCE(turns.started_at, excluded.started_at)),
-  prompt_text    = COALESCE(turns.prompt_text, excluded.prompt_text)
+  prompt_text    = CASE WHEN turns.content_purged=1 THEN NULL
+                        ELSE COALESCE(turns.prompt_text, excluded.prompt_text) END
 RETURNING id`
 
 const selectTurnSQL = `SELECT id FROM turns WHERE session_id = ? AND turn_key = ?`
@@ -449,8 +450,8 @@ func (w *writer) nextTurnIndex(sessionID int64) (int64, error) {
 
 // insertEventSQL은 수신 JSON을 SQLite JSONB로 저장한다. 원문 OFF는 NULL이다.
 const insertEventSQL = `INSERT INTO events (
-  turn_id, seq, event_name, occurred_at, record_hash, payload
-) VALUES (?,?,?,?,?,jsonb(?))
+  turn_id, seq, event_name, occurred_at, record_hash, diagnostic, payload
+) VALUES (?,?,?,?,?,?,CASE WHEN (SELECT content_purged FROM turns WHERE id=?)=0 THEN jsonb(?) ELSE NULL END)
 ON CONFLICT(record_hash) DO NOTHING`
 
 // writeEvents 는 중복을 걸러 낸 뒤 도착 순서대로 seq 를 매겨 넣는다.
@@ -499,7 +500,7 @@ func (w *writer) writeEvents(recs []EventRecord, turnIDs []int64) ([]int64, erro
 		if w.db.cfg.storeContent && len(rec.Payload) > 0 && len(rec.Payload) <= event.MaxPayloadBytes && json.Valid(rec.Payload) {
 			payload = string(rec.Payload)
 		}
-		outRes, err := stmt.ExecContext(w.ctx, turnID, seq, e.Name, nullSec(e.TS.Sec()), hashes[i], payload)
+		outRes, err := stmt.ExecContext(w.ctx, turnID, seq, e.Name, nullSec(e.TS.Sec()), hashes[i], e.UsageDiagnostic, turnID, payload)
 		if err != nil {
 			return nil, fmt.Errorf("store: events INSERT (name=%q): %w", e.Name, err)
 		}

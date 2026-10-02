@@ -18,6 +18,13 @@ export function homeFixture(): HomeSnapshot {
   };
 
   return {
+    codex_prompt_usage: {
+      total_tokens: 740,
+      user_tokens: 150,
+      system_tokens: 340,
+      unclassified_tokens: 250,
+      other_tokens: 590,
+    },
     usage: {
       tz: "Asia/Seoul",
       date: "2026-09-20",

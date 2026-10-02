@@ -37,6 +37,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sort"
 
 	"github.com/your-org/pulsemetry/internal/pricing"
 )
@@ -195,19 +196,20 @@ func (t *TurnTotals) finalize() {
 
 // SessionTotals 는 세션 상단 값이다.
 //
-// TurnTotals 를 임베드해 JSON 에서 평평하게 펼쳐지고, 그 부분은 **정확히 턴별 값의 합**이다
-// (TestSessionMetricsTopLineEqualsTurnSum).
+// TurnTotals 를 임베드해 JSON 에서 평평하게 펼쳐지고, 그 부분은 표시 목록으로
+// 걸러지기 전 **저장된 전체 턴의 합**이다.
 type SessionTotals struct {
 	// TurnCount 는 세션의 모든 턴 수다. 가상 턴(turn_index IS NULL)을 포함한다 —
 	// 세션 수준 이벤트가 귀속되는 자리라 그 안의 호출도 세션 비용에 든다.
 	TurnCount int64 `json:"turn_count"`
-	// PromptTurns 는 실제 턴 수다(turn_index IS NOT NULL). 사용자 프롬프트 수와 같다.
+	// PromptTurns 는 자격을 갖춘 사용자 프롬프트 턴 수다.
 	PromptTurns int64 `json:"prompt_turns"`
 	TurnTotals
 }
 
 // TurnMetrics 는 턴 하나의 지표다.
 type TurnMetrics struct {
+	promptEligible  bool
 	PromptText      string `json:"prompt_text"`
 	PromptTruncated bool   `json:"prompt_truncated"`
 	FilesChanged    int64  `json:"files_changed"`
@@ -262,7 +264,7 @@ type SessionMetrics struct {
 	// 0초와 다르다 (sessions 스키마 문서).
 	ActiveSeconds *int64 `json:"active_seconds"`
 
-	// Totals 의 TurnTotals 부분은 **Turns 가 잘려도 세션 전체**를 덮는다.
+	// Totals 의 TurnTotals 부분은 **Turns 가 분류·상한으로 걸러져도 세션 전체**를 덮는다.
 	Totals SessionTotals `json:"totals"`
 	Turns  []TurnMetrics `json:"turns"`
 
@@ -326,7 +328,24 @@ func ReadSessionMetrics(ctx context.Context, db SQLQuerier, q SessionMetricsQuer
 	}
 
 	out.Totals = foldTurns(index.turns)
-	out.Turns, out.TurnsTruncated = capTurns(index.turns, out.TurnLimit)
+	listed := make([]*TurnMetrics, 0, len(index.turns))
+	for _, turn := range index.turns {
+		if out.Vendor != "codex" || turn.promptEligible {
+			listed = append(listed, turn)
+		}
+	}
+	// 집계용 전체 턴과 표시용 턴을 분리한 뒤에만 정렬·상한을 적용한다.
+	sort.Slice(listed, func(i, j int) bool {
+		a, b := listed[i], listed[j]
+		if a.Virtual != b.Virtual {
+			return !a.Virtual
+		}
+		if a.TurnIndex != nil && b.TurnIndex != nil && *a.TurnIndex != *b.TurnIndex {
+			return *a.TurnIndex < *b.TurnIndex
+		}
+		return a.TurnID < b.TurnID
+	})
+	out.Turns, out.TurnsTruncated = capTurns(listed, out.TurnLimit)
 	return out, nil
 }
 
@@ -336,7 +355,7 @@ func foldTurns(turns []*TurnMetrics) SessionTotals {
 	var out SessionTotals
 	for _, t := range turns {
 		out.TurnCount++
-		if !t.Virtual {
+		if t.promptEligible {
 			out.PromptTurns++
 		}
 		t.finalize()
@@ -457,15 +476,13 @@ func (x *turnIndex) at(turnID int64) *TurnMetrics {
 	return t
 }
 
-// sessionTurnsSQL 은 세션의 턴을 화면 순서로 읽는다.
-//
-// 실제 턴이 turn_index 오름차순으로 먼저 오고 가상 턴이 마지막이다 — 가상 턴은 순서가
-// 없는 세션 수준 이벤트의 자리라 타임라인 중간에 끼워 넣을 지점이 없다.
+// sessionTurnsSQL은 집계용 전체 턴을 읽는다. 표시 목록은 자격을 거른 뒤
+// 실제 턴의 turn_index·id 순서, 마지막으로 가상 턴 순서로 정렬한다.
 const sessionTurnsSQL = `SELECT t.id, t.turn_key, t.turn_index, t.started_at, t.ended_at, t.ttft_ms,
 COALESCE(substr(t.prompt_text,1,4000),''), COALESCE(length(t.prompt_text)>4000,0),
-(SELECT COUNT(DISTINCT f.file_path) FROM file_changes f JOIN tool_calls c ON c.id=f.tool_call_id WHERE c.turn_id=t.id)
-FROM turns t WHERE t.session_id = ?
-ORDER BY (t.turn_index IS NULL) ASC, t.turn_index ASC, t.id ASC`
+(SELECT COUNT(DISTINCT f.file_path) FROM file_changes f JOIN tool_calls c ON c.id=f.tool_call_id WHERE c.turn_id=t.id),
+(` + promptEligibleSQL + `)
+FROM turns t JOIN sessions s ON s.id=t.session_id WHERE t.session_id = ?`
 
 func sessionTurnMetrics(ctx context.Context, db SQLQuerier, id int64) (index *turnIndex, err error) {
 	const op = "턴 목록 조회"
@@ -481,7 +498,7 @@ func sessionTurnMetrics(ctx context.Context, db SQLQuerier, id int64) (index *tu
 			t                         TurnMetrics
 			idx, started, ended, ttft sql.NullInt64
 		)
-		if serr := rows.Scan(&t.TurnID, &t.TurnKey, &idx, &started, &ended, &ttft, &t.PromptText, &t.PromptTruncated, &t.FilesChanged); serr != nil {
+		if serr := rows.Scan(&t.TurnID, &t.TurnKey, &idx, &started, &ended, &ttft, &t.PromptText, &t.PromptTruncated, &t.FilesChanged, &t.promptEligible); serr != nil {
 			return nil, QueryErr(op, serr)
 		}
 		t.TurnIndex = nullInt64(idx)

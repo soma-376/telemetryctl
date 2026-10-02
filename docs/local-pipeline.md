@@ -30,6 +30,7 @@ Claude Code·Codex 의 시그널을 직접 받고, 정규화·집계해 로컬 S
 | [0010](adr/0010-식별-정보를-로컬에만-저장한다.md) | 로컬 모델이 요구하는 경로·이메일·계정 ID를 로컬에만 저장, 상위 전달은 불변 |
 | [0012](adr/0012-배포-전-로컬-스키마는-단일-DDL로-관리한다.md) | 배포 전에는 `schema.go`의 `schemaSQL` 하나로 전체 DDL 관리, 구형 개발 DB는 재생성 |
 | [0013](adr/0013-GUI는-데몬의-로컬-API로-대시보드를-조회한다.md) | GUI 직접 SQLite 조회를 데몬의 인증된 로컬 HTTP API로 전환 |
+| [0032](adr/0032-Codex-프롬프트-출처를-JSONL로-보강하고-단일-워커로-복구한다.md) | Codex JSONL을 출처 근거로만 읽고 단일 워커·영속 상태에서 재개 |
 
 기존 설치 아키텍처는 [설치 아키텍처](installation-architecture.md)에 있다. 이 문서의 `§4.5`·`§5.4`
 같은 표기는 그 문서의 절 번호다.
@@ -41,10 +42,10 @@ Claude Code·Codex 의 시그널을 직접 받고, 정규화·집계해 로컬 S
 **지원 벤더는 Claude Code와 Codex 둘뿐이다.** Gemini CLI와 Cursor는 로컬 화면 범위 밖이며,
 이는 제품 PRD의 Non-goal("Cursor·Gemini CLI 등 그 밖의 도구 연동")과 일치한다.
 
-**PRD의 「데몬 GUI」 Non-goal과의 관계.** PRD는 데몬 GUI를 Non-goal로 두되
-"데이터 계층은 있으나 화면을 만들지 않는다"고 적는다. PROJ-83이 만드는 것은 **그 데이터 계층**이다.
-즉 Go 측 저장·보존·조회 계층과 화면별 조회 계약까지가 범위이고, Wails 화면 구현은 범위 밖이다.
-두 문서는 충돌하지 않는다.
+**PRD의 「데몬 GUI」 Non-goal과의 관계.** 기존 PROJ-83의 범위 설명은 Go 데이터 계층과
+조회 계약에 한정됐다. 현재 레포에는 Wails·React GUI가 있고 이번 Home의 Codex 소계도
+그 화면에 표시한다. 허브 PRD의 GUI 범위 문구와 현재 로컬 제품 범위의 불일치는 별도
+제품 문서 작업에서 정리한다.
 
 화면별 조회 계약이 대상으로 삼는 네 화면은 Home · Activity · Session Detail · Tray다.
 
@@ -53,21 +54,8 @@ Claude Code·Codex 의 시그널을 직접 받고, 정규화·집계해 로컬 S
 - GUI는 인증된 localhost API로 데몬이 조립한 화면 스냅샷을 받는다 (ADR 0013)
 - 모든 로컬 데이터 **400일 보존** (ADR 0008)
 
-> **현재 미충족 항목.** `cmd/pulsemetry-gui`(Wails v3 + React)는 `develop`에 없고
-> `feature/PROJ-44-gui`에만 있다. `develop`의 `go.mod`에는 Wails 의존성이 없다. 따라서
-> "Wails 바인딩 최신성 검사"와 "GUI 모듈 빌드" 검증은 해당 브랜치가 병합된 뒤에야 가능하다.
-> PROJ-83 범위에서는 **Go 조회 계층까지** 구현하고 이 검증은 후속으로 이월한다.
->
-> PROJ-97 이 대신 고정한 것은 **바인딩이 최신이 아니면 반드시 깨지는 성질**뿐이다
-> (`internal/dashboard/binding_test.go`) — `Service`·`Classifier` 시그니처에서 재귀로 모은
-> GUI 표면 타입 전부의 snake_case `json` 태그, 비밀로 보이는 필드 부재, JSON 왕복, 그리고
-> `Service` 가 `Reader` 의 모든 조회를 감싼다는 것. **생성물이 최신인지는 검사하지 못한다.**
->
-> `feature/PROJ-44-gui` 병합 뒤 후속 티켓이 해야 할 일:
-> `wails3 generate bindings` 를 CI 에서 돌려 생성물에 diff 가 없음을 단언한다 (ADR 0004 Follow-up 이
-> "GUI 티켓에서 정한다" 고 남긴 항목이다). 그때 `binding_test.go` 의 머리말도 함께 갱신한다.
-> GUI 빌드 자체는 PROJ-110 이 이미 CI 에 넣었다 — `build-test` 잡이 프런트를 먼저 빌드하고,
-> `product-build` 잡이 `task build` 로 실제 산출물을 만든다.
+GUI는 루트 Go 모듈의 `cmd/pulsemetry-gui`에 있으며 프런트엔드는 React다. 생성 바인딩의
+최신성은 `task check:bindings`, 제품 산출물은 `task build`로 확인한다.
 
 ---
 
@@ -86,8 +74,9 @@ telemetryctl daemon
   ├── forward      Batch.Body(원본 바이트) → otlpdecode.Scrub → 회사 Collector
   │                   (여기만 네트워크로 나간다)
   │
-  └── pipeline     Batch.Result → dedup 창 → session.Assembler(+TurnOf)
-                                            → store.Batch (한 트랜잭션)
+  ├── pipeline     Batch.Result → dedup 창 → session.Assembler(+TurnOf)
+  │                                         → store.Batch (한 트랜잭션) → 보강 알림
+  └── codexsource  Codex JSONL 읽기 → 기존 Codex 턴의 출처 판정·영속 checkpoint
         │
         ▼ (read-only, WAL)
 internal/dashboard  ←  telemetryctl stats·sessions·status
@@ -98,8 +87,9 @@ internal/dashboard  ←  telemetryctl stats·sessions·status
 
 - **원본 바이트**(`receiver.Batch.Body`)는 포워더로 간다. 포워더가 회사 manifest 의 `Privacy` 기준으로
   원문·tool details 를 제거하고 재인코딩해 상위로 보낸다.
-- **정규화 결과**(`receiver.Batch.Result`)는 세션 조립기·저장소로 간다. v1 에서 원문이 남는 자리는
-  `turns.prompt_text` 하나뿐이다.
+- **정규화 결과**(`receiver.Batch.Result`)는 세션 조립기·저장소로 간다. 로컬 원문은 설정에 따라
+  `turns.prompt_text`, 이벤트별 `events.payload`, Codex JSONL 근거의 `body`에 남을 수 있다.
+  이 근거는 로컬 출처 판정에만 사용한다.
 
 `daemon/pipeline.go` 의 `Consume` 은 **`forward.Enqueue` 를 직렬화 지점 밖에서 먼저 호출한다.**
 SQLite 가 느려도 상위 전달이 막히지 않아야 하기 때문이다(§5.4).
@@ -120,12 +110,13 @@ internal/
   session/      이벤트 → 세션 조립, 턴 경계, 파일·툴 추출                       (순수 함수, 시계 미접근)
   claudecode/   Claude Code 트랜스크립트에서 벤더 제목 조회
   codexapp/     Codex App Server에서 사용 한도·스레드 제목 조회
+  codexsource/  Codex JSONL의 구조화 출처 보강·단일 워커 복구
   store/        SQLite 스키마·초기화·쓰기·보존 정책·read-only 열기
   dashboard/    화면별 조회 API                                                   (Wails 의존 없음)
   runtimeinfo/  runtime.json (비밀 없음: 주소·pid·데이터 경로)
   autostart/    로그인 시 데몬 자동 실행 등록 (launchd · systemd user unit · Windows 작업 스케줄러)
   daemon/       위 패키지들을 잇는 배선 + 틱 루프 + graceful shutdown
-gui/            Wails v3 앱 (별도 go.mod, 아직 없음 — PROJ-35)
+cmd/pulsemetry-gui/  Wails v3 앱·React 프런트엔드 (루트 go.mod 공유)
 ```
 
 ### 3.1 의존 방향
@@ -293,13 +284,40 @@ DDL, 테이블 관계, PRAGMA, 보존 정책, 초기화 규칙은
 
 스키마 버전은 v1로 고정하고 전체 DDL은 `schemaSQL`에서 관리한다.
 읽기 인덱스 셋(`tool_calls(turn_id)`·`turns(session_id)`·`sessions(started_at)`)도
-같은 DDL에 포함한다. 기존 개발 DB의 데이터 변환은 제공하지 않는다.
+같은 DDL에 포함한다. 같은 v1이어도 [현재 필수 구조](sqlite-schema/README.md)가 없는 개발 DB는
+자동 변경·삭제하지 않고 재생성 오류를 반환한다. 현재 DDL의 과거 Codex 턴은 pending 등록 후
+보강할 수 있지만 구형 DB의 증분 마이그레이션은 제공하지 않는다.
 
 보존 삭제의 판정 기준은 세션의 **마지막으로 알려진 활동**이다. 현재 스키마에는 `last_event_at`이 없고
 `started_at`·`ended_at`이 둘 다 선택이므로, 두 값과 소속 이벤트 시각 중 **가장 늦은 것**을 쓴다.
 시작 시각만 보면 400일 전에 시작해 지금도 도는 세션이 어제 만들어진 이벤트까지 함께 잃는다.
 시각을 하나도 모르는 세션은 판정 근거가 없어 대상에서 빠진다. 컷오프 경계는 열려 있다 —
 컷오프와 정확히 같은 시각의 행은 남는다.
+
+### 5.1 Codex 출처 보강과 복구
+
+OTel은 모든 턴·이벤트·호출·토큰의 진실원이다. 저장 commit 뒤 알림을 받은 단일 보강 워커가
+Codex JSONL을 읽기 전용으로 열어 기존 턴에 구조화 출처를 연결한다. 알림을 놓치거나 데몬이
+재시작해도 SQLite의 pending과 체크포인트에서 다시 조회한다. JSONL에서 턴·호출·토큰을
+새로 만들지 않는다. 자세한 저장 구조는 [Codex 출처 보강 테이블](sqlite-schema/codex-provenance.md)에 있다.
+
+첫 `session_meta.payload.id`가 파일 owner다. 같은 owner의 후보를 message ID → turn ID →
+정확한 본문 → 입증된 UTF-8 strict prefix 순서로 확인한다. 부모 문맥·중복 표현·복수 후보·충돌은
+구조화 근거로 남기며 키워드로 출처를 정하지 않는다. 라벨, 처리 상태와 연결 상태는 독립이다.
+CLI 실행의 `session_meta.payload.source="exec"`도 사용자 문맥의 구조화 근거로 해석한다.
+진행 중 턴의 본문 후보 구간은 시작 이상·다음 OTel 턴 시작 미만이며, 마지막 열린 턴에는
+임의의 종료 상한을 두지 않는다. 완료 턴은 저장된 종료 시각의 마지막 소수 초까지 포함한다.
+같은 초에 시작한 두 턴은 본문 exact·prefix만으로 구분하지 않고 유효한 명시 ID가 있을 때만
+연결한다. 다음 턴이 저장되면 같은 트랜잭션에서 직전 열린 턴을 재조회 대상으로 되돌린다.
+파일은 생산자의 append·flush·close를 막지 않고 읽는다. 완성된 행의 근거·결과 또는
+재처리 가능한 pending·오류와 체크포인트를 같은 트랜잭션에 기록하고 워커 세대를 확인한다.
+
+워커는 5초 주기로 상태를 검사하고 heartbeat 15초·작업 30초·취소 종료 5초를 한도로 둔다.
+종료를 확인한 뒤 1·2·4·8·16·30초 backoff로 다시 시작하되 5분에 최대 5회다. 반복 실패는
+`degraded`로 표시하면서 OTel 수집을 유지한다. 취소에 응답하지 않으면 두 번째 워커를 띄우지
+않고 데몬을 비정상 종료한다. 정상 종료에서는 재시작 예약을 취소하고 기존 15초 종료 예산을
+지킨다. `status`는 워커의 저장 상태를 보여준다. 파일·근거가 없는 unknown은 1시간 간격으로
+재조회하며 시간 경과만으로 시스템 사용량으로 확정하지 않는다.
 
 이 절 번호는 GUI 계약과 운영 절을 가리키는 기존 링크가 깨지지 않도록 유지한다.
 
@@ -388,6 +406,11 @@ func (s *Service) Stop() error            // ServiceShutdown 자리
   그 JOIN 은 **`EXISTS` 안에 가둔다** — 바깥에 풀면 세션 한 줄이 자식 행 수만큼 복제돼 토큰·비용
   합계가 그 배수로 부풀어 오른다.
 - **원문 저장을 꺼도 제목·작업 폴더 경로·파일 경로 검색은 그대로 동작한다** (`--no-store-content`).
+- **Codex 세션 목록 자격은 사용자 제출 확인이다** ([ADR 0033](adr/0033-Codex-대시보드-세션-목록은-사용자-제출이-확인된-세션만-표시한다.md)).
+  세션 전체의 실제 `client_submitted/finalized` 턴이 하나 이상인 세션만 검색·정렬·제한 전에
+  선택한다. `HasMore`·`NextCursor`도 그 결과를 기준으로 한다. Codex 프롬프트 원문 검색과
+  `matchedSources`의 프롬프트 출처에는 자격 있는 턴만 쓰며, 다른 벤더의 검색·목록은 유지한다.
+  본문 `NULL`·purge나 ambiguous 연결의 최종 사용자 분류는 세션 자격을 잃지 않는다.
 - **진행 중인 세션을 먼저 보여준다** ([ADR 0027](adr/0027-액티비티에서-진행-중인-세션을-먼저-보여준다.md)).
   진행 중은 시작 시각 오름차순, 종료는 시작 시각 내림차순이며 동률은 각 묶음의 방향을 따른다.
   진행 여부·정렬 시각·ID를 keyset 커서로 사용한다. 기간 필터는 시작 시각 기준을 유지한다.
@@ -421,7 +444,7 @@ func (s *Service) Stop() error            // ServiceShutdown 자리
 | 비용·토큰 4종·`api_requests` | `llm_calls` | `called_at` |
 | `tool_calls`·`tool_accepts`·`tool_rejects` | `tool_calls` | `called_at` |
 | `lines_added`·`lines_removed` | `file_changes` | 소유 `tool_calls.called_at` |
-| `prompts` | `turns` (`turn_index IS NOT NULL`) | `started_at` |
+| `prompts` | `turns`의 실제 턴. Codex는 `client_submitted/finalized`인 턴만 | `started_at` |
 | `sessions_started`·`active_seconds` | `sessions` | `started_at` |
 
 **v1 에 출처가 없어 항상 0 인 필드**: `Totals` 의 `api_errors`·`retries`·`commits`·
@@ -432,6 +455,12 @@ func (s *Service) Stop() error            // ServiceShutdown 자리
 `Dim`은 `type` 축을 제공하지 않는다. `events`에는 벤더 속성을 담는 컬럼이 없어 그 축을
 만들 입력 자체가 없다. `DimProject` 의 키는 `project_hash` 가 아니라 **`sessions.workspace_path`**
 이고 `Label` 이 그 basename 이다 (ADR 0010).
+
+Codex 프롬프트 수와 목록은 기간 집계·세션 카드·세션 상세·Activity가 같은 자격 조건을 쓴다.
+`turn_index IS NOT NULL`인 실제 턴이면서 분류가 `client_submitted/finalized`여야 한다.
+목록은 이 조건을 정렬·제한보다 먼저 적용한다. `internal_task/finalized`와
+`unknown/finalized`, pending·retrying·오류 상태는 사용자 프롬프트에 넣지 않는다.
+세션 상세의 **전체** 토큰·비용·호출 수는 분류와 무관하게 저장된 모든 턴에서 계산한다.
 
 ### 6.2 `json` 태그 규약
 
@@ -616,7 +645,7 @@ Windows 에서 데몬의 prune 이 막힌다.
 | | 무엇을 고르는가 | 값은 무엇인가 |
 |---|---|---|
 | 카드 (`Totals`·`Cost`·`TwoHour`) | **사실이 일어난 시각**이 `[StartAt, EndAt)` 에 든 것 | 그 구간 몫 |
-| 최근 세션 (`Recent`) | **`sessions.started_at`** 이 같은 구간에 든 세션 | 그 세션의 **생애 전체** 합계 |
+| 최근 세션 (`Recent`) | **`sessions.started_at`** 이 같은 구간에 든 세션. Codex는 ADR 0033의 사용자 제출 자격도 필요 | 그 세션의 **생애 전체** 합계 |
 
 사실의 시각은 비용·토큰·API 호출 수가 `llm_calls.called_at`, 도구·파일이 `tool_calls.called_at`,
 프롬프트가 `turns.started_at` 이다. **`sessions_started`·`active_seconds` 만 예외**로 세션이
@@ -624,10 +653,12 @@ Windows 에서 데몬의 prune 이 막힌다.
 
 따라서:
 
-- 자정을 넘겨 이어진 세션이 없고 목록이 잘리지 않았으면(`RecentTruncated=false`)
-  **최근 세션 행들의 토큰·비용 합 = 카드 값**이다.
+- 자정을 넘겨 이어진 세션이 없고 목록이 잘리지 않았으며 사용자 제출 미확인으로 빠진
+  Codex 세션도 없다면(`RecentTruncated=false`) **최근 세션 행들의 토큰·비용 합 = 카드 값**이다.
 - 자정을 넘긴 세션이 있으면 그 세션의 다음 날 몫이 행에는 있고 카드에는 없다. 행 합계가 **크다.**
 - `RecentLimit` 로 잘린 목록의 합은 카드보다 **작다.** `RecentTruncated` 가 그 사실을 알린다.
+- 사용자 제출이 확인되지 않은 Codex 세션은 최근 목록에서 빠지지만 전체 사용량 카드에는
+  남는다. 따라서 목록이 잘리지 않아도 카드 값과 행 합계가 다를 수 있다.
 
 행의 값이 생애 전체인 이유는 같은 세션이 Activity 목록·세션 상세와 다른 숫자를 보이면 안 되기
 때문이다. 단 `RecentSession.Cost` 는 가격표 기준이라 `SessionRow.CostUSD`(보고값 합)보다 크거나
@@ -636,6 +667,7 @@ Windows 에서 데몬의 prune 이 막힌다.
 #### `ActiveAgents` 는 날짜와 무관하다
 
 진행 중 판정은 **`ended_at IS NULL` 하나**다 (ADR 0009, v1 에는 `sessions.status` 가 없다).
+Home에 표시하는 진행 중 수와 활성 벤더에는 ADR 0033의 Codex 세션 자격도 적용한다.
 "지금 몇 개가 돌고 있나" 는 과거 날짜로 되돌릴 수 없으므로 `Home` 은 선택 날짜와 무관하게
 **지금**을 답한다. `HomeSummary.IsToday` 가 화면이 표기를 고르는 손잡이다.
 
@@ -771,6 +803,18 @@ DST 전환일은 마지막 시간 구간을 다음 현지 자정에서 끊는다
 읽는다. `ReadSnapshot` 안에서 사용량·최근 세션·진행 중 수를 조합해 수집 중에도 같은
 DB 시점의 결과를 반환한다. 벤더 사용 한도 API를 호출하거나 갱신하지 않는다.
 
+같은 `ReadSnapshot`과 `llm_calls.called_at` 시각 범위에서 `codex_prompt_usage`를 계산한다.
+로컬 API·Go 타입·생성 바인딩·React 어댑터의 필드는 `total_tokens`, `user_tokens`,
+`system_tokens`, `unclassified_tokens`, `other_tokens`다. 완료된 실제 `client_submitted` 턴의
+호출만 사용자로, 완료된 `internal_task`·`unknown` 턴의 호출은 시스템으로, 그 밖의 Codex
+호출은 미분류로 센다. 세션의 가상 턴은 분류 행이 있더라도 항상 미분류다.
+`total_tokens = user_tokens + other_tokens`,
+`other_tokens = system_tokens + unclassified_tokens`가 성립한다.
+
+Home의 큰 토큰 숫자는 계속 **전체 벤더 사용량**이다. 아래 `Codex 기준`에는 사용자·그 외
+두 행을 M 단위 소수 둘째 자리로 표시하며, 정확한 정수 토큰 값은 툴팁에 둔다. 캐시·reasoning
+토큰을 다시 더하거나 출처별 비용을 추가하지 않는다.
+
 집계 의미는 §6.8·6.9를 따른다.
 
 - 차트·벤더·요약의 토큰은 입력+출력이다. 캐시·추론 토큰을 다시 더하지 않는다.
@@ -778,8 +822,11 @@ DB 시점의 결과를 반환한다. 벤더 사용 한도 API를 호출하거나
   제외하고 화면에 개수를 표시한다. 전부 산정 불가이면 `$0.00`로 표시하지 않는다.
 - 활동 시간은 세션 시작일에 생애 전체 값을 귀속한다. 평균은 활동이 있는 차트 구간만
   분모에 넣는다. 미래·무활동 구간은 평균을 낮추지 않는다.
-- 최근 활동은 선택 기간에 시작한 세션을 최신순으로 최대 7건 보여준다. 각 행의 토큰은
-  세션 생애 전체다. 전체 세션 수와 진행 중 수는 목록의 7건 제한을 적용하지 않는다.
+- 최근 활동은 선택 기간에 시작한 세션 중 Codex만 ADR 0033의 사용자 제출 자격을 적용해
+  최신순으로 최대 7건 보여준다. 각 행의 토큰은 세션 생애 전체다. 전체 세션 수와 진행 중 수,
+  활성 벤더에도 같은 자격을 적용하되 목록의 7건 제한은 적용하지 않는다. 자격은 세션 전체 턴으로
+  판정하고 기간은 기존 세션 시작 시각에 적용한다. 같은 응답의 목록·건수·활성 벤더는 동일한
+  `ReadSnapshot`에서 읽는다. 토큰·비용·호출·활동시간의 전체 집계에는 목록 자격을 적용하지 않는다.
 - 현재 활성 벤더는 선택 기간과 무관하다. 헤더의 토큰은 항상 오늘 조회에서 가져온다.
 - UTC 정시 버킷에 기초한 토큰·활동의 구간 배분은 §6.9의 근사를 유지한다. 30·45분
   오프셋에서는 인접 구간으로 일부 값이 옮겨질 수 있으나 선택 기간 전체 합계는 유지된다.
@@ -1264,7 +1311,8 @@ telemetryctl status
   기계가 로컬 시각을 복원할 수 있게 한다.
 - `purge --content` 는 v1 에서 원문이 남는 세 컬럼(`turns.prompt_text`·`events.payload`·
   `tool_calls.error_message`)을 한 트랜잭션으로 비운다. 행을 지우지 않고 컬럼만 `NULL` 로 만들어
-  세션·턴·이벤트 행과 집계 수치는 남기고 원문만 없앤다. 컬럼별 계수를 함께 출력한다.
+  세션·턴·이벤트 행과 집계 수치는 남기고 원문만 없앤다. 대상 Codex JSONL 본문·해시도 비우고
+  턴과 owner의 삭제 표식을 저장해 재처리로 복원되지 않게 한다. 기존 세 컬럼의 계수를 함께 출력한다.
 - `purge --content` 는 지우기 전에 대상 행 수와 되돌릴 수 없음을 알린다. 이 계수는 실제 삭제와
   **같은 조건**으로 `store.ContentCounts` 가 센다 — 예고와 결과가 갈리면 안 된다. 구간 제한 없는
   전체 삭제만 확인을 요구하고, 비대화 실행에서는 프롬프트로 멈추지 않고 `--yes`·`--before` 를

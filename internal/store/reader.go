@@ -96,11 +96,9 @@ func OpenReadOnlyIfPresent(path string, opts ...Option) (*ReadOnly, error) {
 	return r, nil
 }
 
-// minReadableSchemaVersion 은 단일 DDL 세대의 버전이다 (ADR 0012).
+// schemaReadable 은 스키마 초기화이 조회 가능한 지점까지 진행됐는지 본다.
 const minReadableSchemaVersion = schemaVersion
 
-// schemaReadable 은 스키마 초기화이 조회 가능한 지점까지 진행됐는지 본다.
-//
 // meta 테이블 존재 여부를 sqlite_master 로 먼저 확인하는 이유는, 없는 테이블을 SELECT
 // 하면 드라이버 메시지를 문자열로 판별해야 하기 때문이다. 그 판별은 드라이버가 바뀌면
 // 조용히 무너진다.
@@ -118,7 +116,17 @@ func (r *ReadOnly) schemaReadable(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return v >= minReadableSchemaVersion, nil
+	if v == 0 {
+		return false, nil
+	}
+	ready, err := schemaShape(ctx, r.db)
+	if err != nil {
+		return false, err
+	}
+	if !ready {
+		return false, errRecreateSchema()
+	}
+	return true, nil
 }
 
 func (r *ReadOnly) Close() error { return r.db.Close() }
