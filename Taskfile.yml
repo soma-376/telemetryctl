@@ -13,7 +13,10 @@ version: 3
 
 vars:
   CLI_VERSION: '{{.CLI_VERSION | default ""}}'
-  BUILD_DIR: "artifacts/build/{{OS}}-{{ARCH}}"
+  GUI_VERSION: '{{.GUI_VERSION | default ""}}'
+  TARGET_OS: '{{.TARGET_OS | default OS}}'
+  TARGET_ARCH: '{{.TARGET_ARCH | default ARCH}}'
+  BUILD_DIR: "artifacts/build/{{.TARGET_OS}}-{{.TARGET_ARCH}}"
   # 순수 Go 로 검사할 수 있는 범위. GUI(cmd/pulsemetry-gui)는 뺀다 — OS 의 창 시스템을
   # 링크하므로 리눅스는 GTK4·WebKitGTK 개발 패키지가, macOS 는 Objective-C 를 위한 C
   # 툴체인이 있어야 컴파일된다. GUI 는 build:gui 가 wails3 를 통해 따로 빌드한다.
@@ -128,11 +131,21 @@ tasks:
 
   build:gui:
     desc: Wails GUI와 임베드할 프런트엔드를 빌드한다.
-    deps:
-      - prepare:build
-    dir: cmd/pulsemetry-gui
+    env:
+      PULSEMETRY_TARGET_OS: '{{.TARGET_OS}}'
+      PULSEMETRY_TARGET_ARCH: '{{.TARGET_ARCH}}'
+      PULSEMETRY_GUI_VERSION: '{{.GUI_VERSION}}'
     cmds:
-      - wails3 task build BIN_DIR=../../{{.BUILD_DIR}}
+      - node scripts/package-gui.mjs build
+
+  package:gui:
+    desc: 현재 OS·CPU용 GUI만 NSIS·DMG·AppImage로 패키징한다. CLI는 별도 설치한다.
+    env:
+      PULSEMETRY_TARGET_OS: '{{.TARGET_OS}}'
+      PULSEMETRY_TARGET_ARCH: '{{.TARGET_ARCH}}'
+      PULSEMETRY_GUI_VERSION: '{{.GUI_VERSION}}'
+    cmds:
+      - node scripts/package-gui.mjs package
 
   build:
     desc: CLI와 GUI를 공통 산출물 디렉터리에 빌드한다.
@@ -162,6 +175,7 @@ tasks:
       - task: check:format
       - task: check:frontend
       - task: test:frontend
+      - task: test:release
 
   # ── 검증 ────────────────────────────────────────────────────────────────
 
@@ -240,6 +254,11 @@ tasks:
     dir: cmd/pulsemetry-gui/frontend
     cmds:
       - npm test
+
+  test:release:
+    desc: 릴리스 파일·버전·게시 실패 경로를 외부 게시 없이 검증한다.
+    cmds:
+      - node --test scripts/release.test.mjs
 
   check:bindings:
     desc: 커밋된 Go 바인딩이 현재 Go 코드와 일치하는지 검사한다.

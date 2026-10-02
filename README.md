@@ -195,6 +195,8 @@ task build          # CLI + GUI → artifacts/build/{os}-{arch}
 task build:cli      # 현재 컴퓨터용 CLI만 빌드
 task build:cli TARGET_OS=linux TARGET_ARCH=arm64  # 지정한 대상용 CLI
 task build:cli:all  # Windows·macOS·Linux × amd64·arm64 CLI 6종
+task build CLI_VERSION=0.1.0 GUI_VERSION=0.1.0  # CLI·GUI 버전 주입
+task package:gui TARGET_OS=darwin TARGET_ARCH=arm64 GUI_VERSION=0.1.0  # GUI 배포 패키지
 task test           # 전체 검사 (빌드·vet·race 테스트·gofmt·go mod tidy·tsc --noEmit)
 ```
 
@@ -204,22 +206,49 @@ CLI의 `TARGET_OS`는 `windows`, `darwin`(macOS), `linux`, `TARGET_ARCH`는 `amd
 `.exe`가 붙습니다. 다른 대상용 파일도 현재 컴퓨터에서 빌드할 수 있지만, 실행 검증에는 해당
 OS·CPU 환경이 필요합니다. `task build`는 현재 컴퓨터용 GUI와 CLI를 함께 만듭니다.
 
-### CLI 릴리스
+### CLI·GUI 릴리스
 
 `main`에 반영된 커밋에 `v0.1.0` 같은 태그를 발행하면
-`.github/workflows/release.yml`이 CLI 검사 → 6종 빌드 → GitHub Releases 업로드를 수행합니다.
+`.github/workflows/release.yml`이 CLI 검사·빌드와 GUI 빌드·패키징을 거쳐 GitHub Releases에 게시합니다.
 `v0.1.0-rc.1` 같은 태그는 prerelease로 게시합니다. 태그의 `v`를 제외한 버전을
-`CLI_VERSION`으로 주입하며, `pulsemetry version`과 설치 요청에 같은 버전이 사용됩니다.
-로컬에서도 `task build:cli CLI_VERSION=0.1.0`으로 버전 주입을 확인할 수 있습니다.
+`CLI_VERSION`과 `GUI_VERSION`으로 주입합니다. CLI의 `pulsemetry version`과 설치 요청,
+GUI 배포 패키지는 같은 릴리스 버전을 사용합니다.
 
-CI는 `artifacts/release/`에 `pulsemetry_{os}_{arch}` 형식의 파일 6개(Windows만 `.exe`)와
-`SHA256SUMS`를 준비합니다. 모든 첨부 파일 업로드가 성공해야 draft Release를 공개합니다.
+Windows·macOS(`darwin`)·Linux 각각 `amd64`·`arm64`를 대상으로 아래 산출물 12개와
+그 파일들의 `SHA256SUMS`를 게시합니다.
+
+| 종류 | Release asset 이름 | 형식 |
+|---|---|---|
+| CLI | `pulsemetry_cli_{os}_{arch}` (Windows만 `.exe`) | 실행 파일 6개 |
+| Windows GUI | `pulsemetry_gui_windows_{arch}.exe` | NSIS 인스톨러 |
+| macOS GUI | `pulsemetry_gui_darwin_{arch}.dmg` | DMG |
+| Linux GUI | `pulsemetry_gui_linux_{arch}.AppImage` | AppImage |
+
+GUI 패키지에는 GUI만 포함합니다. GUI를 사용하려면 CLI를 별도로 설치하고 데몬을 실행해야 합니다.
+CLI는 별도 실행 파일로 배포하며 인스톨러로 만들지 않습니다.
+GUI는 해당 OS에서 빌드·패키징하며 Wails `v3.0.0-beta.11`과 플랫폼별 빌드 도구가 필요합니다.
+로컬 패키징은 `task package:gui TARGET_OS=darwin TARGET_ARCH=arm64 GUI_VERSION=0.1.0`처럼
+실행합니다. `TARGET_OS`·`TARGET_ARCH`를 생략하면 현재 컴퓨터 기준입니다.
+
+Linux AppImage 패키징에는 `--no-sort`를 지원하는 `patchelf`(0.15 이상)가 필요합니다.
+기본은 `PATH`의 실행 파일이며, 다른 파일을 선택하려면
+`PATCHELF=/경로/patchelf task package:gui TARGET_OS=linux TARGET_ARCH=amd64`처럼 지정합니다.
+패키징 스크립트는 선택한 도구를 절대 경로로 고정하고 지원 옵션을 확인한 뒤,
+AppDir의 GUI 실행 파일에 RPATH를 설정할 때만 `--no-sort`를 적용해 Go 빌드 정보 판독을 유지합니다.
+
+함께 묶이는 라이브러리에는 기존 인자를 그대로 전달하지만, 이들도 linuxdeploy의 내장 도구 대신
+선택한 `patchelf`로 처리됩니다. 기존 AppImage에는 이 변경이 반영되지 않으므로
+`task package:gui`로 다시 생성하고 릴리스 검증을 실행해야 합니다.
+
+모든 빌드와 첨부 파일 검증·업로드가 성공해야 draft Release를 공개합니다.
 같은 버전은 자동으로 덮어쓰지 않습니다. 실패 후 draft가 남으면 첨부 파일과 실패 원인을 확인하고,
 미공개 draft만 삭제한 뒤 해당 태그의 workflow를 재실행합니다. 공개된 버전의 수정은 새 태그로 발행합니다.
 
-사용자는 backend의 기존 `/bin/{filename}`에서 다운로드합니다. backend CI가 고정된 릴리스
-버전을 내려받아 체크섬을 검증하고 이미지에 포함하는 연결은 backend 저장소의 후속 작업입니다.
-파일명 계약은 [문서 허브의 enrollment API](../docs/contracts/enrollment-api.md)를 따릅니다.
+backend의 기존 `/bin/pulsemetry_{os}_{arch}`(Windows만 `.exe`) 다운로드 경로는 유지합니다.
+backend CI가 고정된 릴리스의 `pulsemetry_cli_{os}_{arch}`를 내려받아 체크섬을 검증하고,
+기존 서버 파일명으로 배치해 이미지에 포함하는 연결은 backend 저장소의 후속 작업입니다.
+backend 설치 과정에서 CLI를 PATH에 등록하는 작업도 이번 릴리스 범위에 포함하지 않습니다.
+서버 다운로드 계약은 [문서 허브의 enrollment API](../docs/contracts/enrollment-api.md)를 따릅니다.
 
 `go build ./...` 를 직접 쓰지 않습니다. GUI 가 Vite 산출물을 embed 하고 OS 의 창 시스템을 링크해서
 순수 Go 기준의 검사가 성립하는 범위가 아닙니다. 자세한 것은 `AGENTS.md` 「명령어」를 보세요.

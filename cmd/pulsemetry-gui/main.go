@@ -2,7 +2,9 @@ package main
 
 import (
 	"embed"
+	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -16,6 +18,11 @@ var assets embed.FS
 var trayIcon []byte
 
 func main() {
+	// 릴리스 검증은 창이나 데몬을 시작하지 않고 주입된 버전만 확인한다.
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Printf("pulsemetry-gui %s\n", Version)
+		return
+	}
 	svc := NewApp()
 
 	app := application.New(application.Options{

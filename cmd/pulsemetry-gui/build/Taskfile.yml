@@ -13,12 +13,12 @@ tasks:
       - package.json
       - package-lock.json
     generates:
-      - node_modules
+      - node_modules/.package-lock.json
     preconditions:
       - sh: npm version
         msg: "Looks like npm isn't installed. Npm is part of the Node installer: https://nodejs.org/en/download/"
     cmds:
-      - npm install
+      - npm ci
 
   build:frontend:
     label: build:frontend (DEV={{.DEV}} RUNNER={{.PACKAGE_MANAGER}})
@@ -92,7 +92,8 @@ tasks:
   generate:icons:
     summary: Generates Windows `.ico` and Mac `.icns` from an image; on macOS, `-iconcomposerinput appicon.icon -macassetdir darwin` also produces `Assets.car` from a `.icon` file (skipped on other platforms).
     run: once
-    dir: build
+    # 릴리스에서는 복사한 자산 안에서 생성하고 일반 개발에서는 기존 build를 쓴다.
+    dir: '{{.ASSETS_PATH}}'
     sources:
       - "appicon.png"
       - "appicon.icon"
