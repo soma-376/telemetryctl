@@ -147,6 +147,15 @@ tasks:
     cmds:
       - node scripts/package-gui.mjs package
 
+  gen:icons:
+    desc: 아이콘 SVG(cmd/pulsemetry-gui/build/icons)로 앱 아이콘을 다시 만든다. 결과는 커밋한다.
+    # 빌드는 산출물이 없을 때만 만든다 (build/Taskfile.yml 의 generate:icons). SVG 를
+    # 고친 뒤에는 이것으로 강제 재생성한다.
+    dir: scripts/gen-icons
+    cmds:
+      - npm ci --no-audit --no-fund
+      - node gen-icons.mjs
+
   build:
     desc: CLI와 GUI를 공통 산출물 디렉터리에 빌드한다.
     cmds:

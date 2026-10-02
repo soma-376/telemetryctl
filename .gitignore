@@ -9,6 +9,7 @@
 /bin/
 /artifacts/
 /.task/
+/scripts/gen-icons/node_modules/
 
 # Go test and coverage artifacts
 *.test

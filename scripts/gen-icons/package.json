@@ -1,0 +1,13 @@
+{
+  "name": "pulsemetry-gen-icons",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "cmd/pulsemetry-gui/build/icons 의 SVG 로 앱 아이콘을 만든다.",
+  "scripts": {
+    "gen": "node gen-icons.mjs"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "2.6.2"
+  }
+}
