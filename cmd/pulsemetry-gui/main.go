@@ -14,9 +14,6 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-//go:embed build/appicon.png
-var trayIcon []byte
-
 func main() {
 	// 릴리스 검증은 창이나 데몬을 시작하지 않고 주입된 버전만 확인한다.
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
@@ -24,13 +21,14 @@ func main() {
 		return
 	}
 	svc := NewApp()
+	dash := NewDashboard()
 
 	app := application.New(application.Options{
 		Name:        "Pulsemetry",
 		Description: "AI 도구 사용 현황 데스크톱 대시보드",
 		Services: []application.Service{
 			application.NewService(svc),
-			application.NewService(NewDashboard()),
+			application.NewService(dash),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -87,8 +85,16 @@ func main() {
 	svc.bind(app, win, quick)
 
 	tray := app.SystemTray.New()
-	tray.SetIcon(trayIcon)
-	tray.SetTooltip("Pulsemetry")
+	// 아이콘은 연결된 벤더 한도 사용률의 최댓값을 링 게이지로 보여준다 (internal/trayicon 이
+	// 런타임에 그린다). 시작 직후에는 빈 링을 걸어 두고, 앱이 뜬 뒤부터 데몬 스냅샷으로 갱신한다.
+	icons := newTrayIconUpdater(tray, dash, app.Env.IsDarkMode)
+	icons.setInitial()
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		go icons.run(app.Context())
+	})
+	app.Event.OnApplicationEvent(events.Common.ThemeChanged, func(*application.ApplicationEvent) {
+		go icons.themeChanged()
+	})
 	tray.AttachWindow(quick) // 클릭 → 퀵뷰 토글
 	tray.WindowOffset(8)
 	tray.WindowDebounce(200 * time.Millisecond)
