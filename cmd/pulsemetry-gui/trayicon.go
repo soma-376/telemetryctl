@@ -39,12 +39,12 @@ func newTrayIconUpdater(systray *application.SystemTray, dash *Dashboard, isDark
 	return &trayIconUpdater{systray: systray, dash: dash, isDark: isDark}
 }
 
-// setInitial 은 앱 실행 전 첫 그림을 건다. 데몬을 아직 묻지 않았으므로 빈 링이다.
+// setInitial 은 앱 실행 전 첫 그림을 건다. 데몬을 아직 묻지 않았으므로 한도 미확인 상태다.
 // 리눅스는 이 시점에 테마를 물을 수 없어 밝은 테마로 두고, 첫 갱신에서 바로잡는다.
 func (u *trayIconUpdater) setInitial() {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	u.apply(tray.Icon{Kind: tray.IconRing}, false)
+	u.apply(tray.Icon{Kind: tray.IconUnknown}, false)
 }
 
 // run 은 ctx 가 끝날 때까지 주기적으로 아이콘을 갱신한다.
@@ -119,5 +119,8 @@ func trayTooltip(icon tray.Icon) string {
 	if icon.Kind == tray.IconOffline {
 		return "Pulsemetry — 데몬 연결 안 됨"
 	}
-	return fmt.Sprintf("Pulsemetry — 한도 사용률 %d%%", icon.Percent)
+	if icon.Kind == tray.IconUnknown {
+		return "Pulsemetry — 남은 한도 확인 불가"
+	}
+	return fmt.Sprintf("Pulsemetry — 남은 한도 %d%%", icon.Percent)
 }

@@ -56,9 +56,38 @@ func TestRingFillsClockwiseFromTop(t *testing.T) {
 
 // 길이 0 인 호도 round 캡이면 점으로 찍힌다. 0% 에서 12시 지점은 트랙만이어야 한다.
 func TestZeroPercentHasNoCapDot(t *testing.T) {
-	img := decode(t, Render(tray.Icon{Kind: tray.IconRing, Percent: 0}, Light))
-	if a := alphaAtUnit(img, 8.0, 2.4); a > 0.4 {
-		t.Errorf("0%% 의 12시 알파 = %.2f, want 트랙(≈0.3)", a)
+	for _, kind := range []tray.IconKind{tray.IconRing, tray.IconAlert} {
+		img := decode(t, Render(tray.Icon{Kind: kind, Percent: 0}, Light))
+		if a := alphaAtUnit(img, 8.0, 2.4); a > 0.4 {
+			t.Errorf("%s 0%% 의 12시 알파 = %.2f, want 트랙(≈0.3)", kind, a)
+		}
+	}
+}
+
+// 경고 상태에서도 남은 10% 만 그린다. 고정 94% 링으로 돌아가면 이 검사가 실패한다.
+func TestAlertKeepsRemainingRing(t *testing.T) {
+	img := decode(t, Render(tray.Icon{Kind: tray.IconAlert, Percent: 10}, Light))
+	if a := alphaAtUnit(img, 8.0, 2.4); a < 0.9 {
+		t.Errorf("남은 호의 알파 = %.2f, want ≈1", a)
+	}
+	if a := alphaAtUnit(img, 2.4, 8.0); a < 0.2 || a > 0.4 {
+		t.Errorf("사용한 구간의 알파 = %.2f, want ≈0.3", a)
+	}
+	if a := alphaAtUnit(img, 8.0, 6.0); a < 0.9 {
+		t.Errorf("경고 표시의 알파 = %.2f, want ≈1", a)
+	}
+}
+
+func TestUnknownDiffersFromEmptyFullAndOffline(t *testing.T) {
+	unknown := Render(tray.Icon{Kind: tray.IconUnknown}, Light)
+	for _, icon := range []tray.Icon{
+		{Kind: tray.IconRing, Percent: 0},
+		{Kind: tray.IconRing, Percent: 100},
+		{Kind: tray.IconOffline},
+	} {
+		if bytes.Equal(unknown, Render(icon, Light)) {
+			t.Errorf("한도 미확인 그림이 %+v 와 같다", icon)
+		}
 	}
 }
 
@@ -70,17 +99,17 @@ func TestThemeColors(t *testing.T) {
 	}{
 		{tray.Icon{Kind: tray.IconRing, Percent: 100}, Light, [3]uint8{0x1F, 0x1F, 0x1F}},
 		{tray.Icon{Kind: tray.IconRing, Percent: 100}, Dark, [3]uint8{0xFF, 0xFF, 0xFF}},
-		{tray.Icon{Kind: tray.IconAlert, Percent: 95}, Light, [3]uint8{0xC7, 0x7A, 0x10}},
-		{tray.Icon{Kind: tray.IconAlert, Percent: 95}, Dark, [3]uint8{0xF0, 0xA9, 0x3A}},
+		{tray.Icon{Kind: tray.IconAlert, Percent: 5}, Light, [3]uint8{0xC7, 0x7A, 0x10}},
+		{tray.Icon{Kind: tray.IconAlert, Percent: 5}, Dark, [3]uint8{0xF0, 0xA9, 0x3A}},
 		// 템플릿은 OS 가 칠하므로 경고도 검정이다.
-		{tray.Icon{Kind: tray.IconAlert, Percent: 95}, Template, [3]uint8{0, 0, 0}},
+		{tray.Icon{Kind: tray.IconAlert, Percent: 5}, Template, [3]uint8{0, 0, 0}},
 	}
 	for _, tc := range cases {
 		img := decode(t, Render(tc.icon, tc.theme))
-		// 링의 9시 지점 (2.4, 8) 은 두 아이콘 모두 채워진 호 위다. 템플릿은 3단위 여백에 1단위=2px.
-		x, y := 2.4*2, 8.0*2
+		// 링의 12시 지점은 두 아이콘 모두 채워진 호 위다. 템플릿은 3단위 여백에 1단위=2px.
+		x, y := 8.0*2, 2.4*2
 		if tc.theme == Template {
-			x, y = (2.4+3)*2, (8.0+3)*2
+			x, y = (8.0+3)*2, (2.4+3)*2
 		}
 		c := img.NRGBAAt(int(x), int(y))
 		if [3]uint8{c.R, c.G, c.B} != tc.want || c.A == 0 {

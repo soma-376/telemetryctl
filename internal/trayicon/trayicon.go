@@ -1,7 +1,7 @@
 // Package trayicon 은 트레이 아이콘 PNG 를 런타임에 그린다.
 //
 // 그림은 디자인 핸드오프의 tray-ring·tray-alert·tray-offline SVG(16×16 뷰박스)를 옮긴
-// 것이다. 미리 그려 둔 PNG 를 임베드하지 않는 이유는 사용률 눈금과 테마 수만큼 파일이
+// 것이다. 미리 그려 둔 PNG 를 임베드하지 않는 이유는 남은 비율 눈금과 테마 수만큼 파일이
 // 곱으로 늘기 때문이다. 도형이 원·호·선분뿐이라 각 도형까지의 거리(SDF)로 픽셀의 덮임
 // 정도를 구하면 래스터라이저 없이 표준 라이브러리만으로 안티앨리어싱된 그림이 나온다.
 package trayicon
@@ -35,8 +35,7 @@ const (
 	ringHalf    = 1.1 // stroke-width 2.2
 	trackAlpha  = 0.3
 	dotRadius   = 1.4
-	alertSweep  = 33.075 / 35.186 // 경고 아이콘의 링은 94% 로 고정이다
-	offlineHalf = 0.8             // stroke-width 1.6
+	offlineHalf = 0.8 // stroke-width 1.6
 	offlineDash = 2.2
 	offlineGap  = 1.8
 	offlineOp   = 0.55
@@ -108,8 +107,12 @@ func alphaAt(icon tray.Icon, x, y, scale float64) float64 {
 		sd := math.Min(dashedRingSD(x, y), segmentSD(x, y, 3.6, 12.4, 12.4, 3.6)-offlineHalf)
 		return cover(sd) * offlineOp
 
+	case tray.IconUnknown:
+		// 숫자를 모르는 상태는 호·중앙점 없이 점선 링만 표시한다.
+		return cover(dashedRingSD(x, y)) * offlineOp
+
 	case tray.IconAlert:
-		a := over(trackAlpha*cover(annulusSD(x, y)), cover(arcSD(x, y, alertSweep)))
+		a := ringAlpha(icon.Percent, x, y, cover)
 		mark := math.Min(
 			segmentSD(x, y, 8, 5.7, 8, 8.0)-0.8, // 느낌표 막대 (rect 7.2,4.9 1.6×3.9 rx .8)
 			math.Hypot(x-8, y-10.7)-0.95,        // 느낌표 점
@@ -117,12 +120,18 @@ func alphaAt(icon tray.Icon, x, y, scale float64) float64 {
 		return over(a, cover(mark))
 
 	default:
-		a := trackAlpha * cover(annulusSD(x, y))
-		if icon.Percent > 0 {
-			a = over(a, cover(arcSD(x, y, float64(min(icon.Percent, 100))/100)))
-		}
+		a := ringAlpha(icon.Percent, x, y, cover)
 		return over(a, cover(math.Hypot(x-center, y-center)-dotRadius))
 	}
+}
+
+// ringAlpha 는 일반·경고 아이콘에 같은 남은 비율의 링을 그린다.
+func ringAlpha(percent int, x, y float64, cover func(float64) float64) float64 {
+	a := trackAlpha * cover(annulusSD(x, y))
+	if percent > 0 {
+		a = over(a, cover(arcSD(x, y, float64(min(percent, 100))/100)))
+	}
+	return a
 }
 
 // annulusSD 는 링 트랙까지의 부호 거리다 (안쪽이 음수).
