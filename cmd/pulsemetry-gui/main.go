@@ -56,7 +56,8 @@ func main() {
 	win.RegisterHook(events.Common.WindowShow, func(*application.WindowEvent) { win.EmitEvent("main:shown") })
 	win.RegisterHook(events.Common.WindowHide, func(*application.WindowEvent) { win.EmitEvent("main:hidden") })
 
-	// 트레이 퀵뷰는 포커스를 잃어도 유지하고, 일반 창 순서를 따른다.
+	// 트레이 퀵뷰는 포커스를 잃어도 유지한다.
+	// macOS에서는 열 때 현재 Space로 이동하고, 다른 앱의 전체 화면에도 함께 표시한다.
 	quick := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:         "Pulsemetry Quick View",
 		Width:         392,
@@ -65,6 +66,10 @@ func main() {
 		Hidden:        true,
 		DisableResize: true,
 		URL:           "/?view=tray",
+		Mac: application.MacWindow{
+			CollectionBehavior: application.MacWindowCollectionBehaviorMoveToActiveSpace |
+				application.MacWindowCollectionBehaviorFullScreenAuxiliary,
+		},
 	})
 	quick.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
 		e.Cancel()
