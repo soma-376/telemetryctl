@@ -20,6 +20,13 @@ export function GetAppInfo(): $CancellablePromise<$models.AppInfo> {
 }
 
 /**
+ * HideTrayWindow는 실제 표시 창을 숨긴다. macOS에서는 WebView 호스트가 아닌 패널이다.
+ */
+export function HideTrayWindow(): $CancellablePromise<void> {
+    return $Call.ByID(3932364517);
+}
+
+/**
  * IsTrayVisible 은 WebView가 다시 만들어졌을 때도 네이티브 퀵뷰의 현재 상태를 복구하게 한다.
  * tray:shown/tray:hidden은 상태 변경 알림일 뿐이므로 마운트 시점의 상태 원본이 될 수 없다.
  */

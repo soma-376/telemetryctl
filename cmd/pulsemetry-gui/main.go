@@ -108,9 +108,10 @@ func main() {
 				application.MacWindowCollectionBehaviorFullScreenAuxiliary,
 		},
 	})
+	trayWindow := newTrayWindow(quick)
 	quick.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
 		e.Cancel()
-		quick.Hide()
+		trayWindow.Hide()
 	})
 	// WebView의 document.visibilityState는 네이티브 창 Hide/Show를 보장해서 반영하지
 	// 않는다. 퀵뷰가 실제로 보이는 동안만 프런트가 조회하도록 명시적인 이벤트를 보낸다.
@@ -121,7 +122,7 @@ func main() {
 		quick.EmitEvent("tray:hidden")
 	})
 
-	svc.bind(app, win, quick)
+	svc.bind(app, win, trayWindow)
 
 	tray := app.SystemTray.New()
 	// 아이콘은 연결된 벤더 한도 사용률의 최댓값을 링 게이지로 보여준다 (internal/trayicon 이
@@ -134,7 +135,7 @@ func main() {
 	app.Event.OnApplicationEvent(events.Common.ThemeChanged, func(*application.ApplicationEvent) {
 		go icons.themeChanged()
 	})
-	tray.AttachWindow(quick) // 클릭 → 퀵뷰 토글
+	tray.AttachWindow(trayWindow) // 클릭 → 퀵뷰 토글
 	tray.WindowOffset(8)
 	tray.WindowDebounce(200 * time.Millisecond)
 	tray.OnDoubleClick(func() { svc.OpenMainWindow() })
