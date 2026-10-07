@@ -9,6 +9,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
+	"github.com/your-org/pulsemetry/internal/desktopinstall"
 )
 
 //go:embed all:frontend/dist
@@ -20,8 +21,14 @@ func main() {
 		fmt.Printf("pulsemetry-gui %s\n", Version)
 		return
 	}
+	if removalCommand() {
+		return
+	}
+	uninstallMode := desktopinstall.IsUninstaller() || (len(os.Args) == 2 && os.Args[1] == "--uninstall")
+
 	svc := NewApp()
 	dash := NewDashboard()
+	removal := &Removal{enabled: uninstallMode}
 
 	app := application.New(application.Options{
 		Name:        "Pulsemetry",
@@ -29,11 +36,43 @@ func main() {
 		Services: []application.Service{
 			application.NewService(svc),
 			application.NewService(dash),
+			application.NewService(removal),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
 		},
 	})
+
+	removal.app = app
+	if uninstallMode {
+		win := app.Window.NewWithOptions(application.WebviewWindowOptions{Title: "Pulsemetry 제거", Width: 620, Height: 680, MinWidth: 520, MinHeight: 540, URL: "/?view=uninstall"})
+		win.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+			removal.mu.Lock()
+			defer removal.mu.Unlock()
+			if removal.busy && !removal.done {
+				e.Cancel()
+			}
+		})
+		svc.bind(app, win, nil)
+		if err := app.Run(); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	installed, err := desktopinstall.RegisterGUI(false)
+	if err != nil {
+		log.Printf("제거 도구 등록 실패: %v", err)
+	}
+	if installed {
+		home, _ := os.UserHomeDir()
+		lease, err := desktopinstall.AcquireGUI(home)
+		if err != nil {
+			log.Print(err)
+			return
+		}
+		defer lease.Close()
+		app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) { go desktopinstall.WatchRemoval(app.Context(), home, app.Quit) })
+	}
 
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:     "Pulsemetry",

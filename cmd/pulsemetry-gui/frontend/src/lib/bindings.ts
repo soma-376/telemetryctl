@@ -1,6 +1,7 @@
 import {
   App,
   Dashboard,
+  Removal,
 } from "../../bindings/github.com/your-org/pulsemetry/cmd/pulsemetry-gui";
 import type { AppInfo } from "../../bindings/github.com/your-org/pulsemetry/cmd/pulsemetry-gui";
 import type { RecentSession } from "../../bindings/github.com/your-org/pulsemetry/internal/dashboard";
@@ -28,7 +29,7 @@ import type {
 // 여기 없는 것을 내보내지 않는다. 쓰지 않는 타입까지 통과시키기 시작하면 이 파일이
 // 바인딩 전체의 복사본이 되고, 그러면 무엇이 실제로 쓰이는지 알 수 없게 된다.
 
-export { App, Dashboard, TrayState, LimitState };
+export { App, Dashboard, Removal, TrayState, LimitState };
 export type {
   Query as HomeQuery,
   Snapshot as HomeSnapshot,

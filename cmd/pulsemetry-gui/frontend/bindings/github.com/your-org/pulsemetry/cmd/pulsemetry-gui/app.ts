@@ -41,6 +41,10 @@ export function OpenMainWindow(): $CancellablePromise<void> {
     return $Call.ByID(3129367688);
 }
 
+export function OpenUninstaller(): $CancellablePromise<void> {
+    return $Call.ByID(1827727246);
+}
+
 /**
  * Quit 은 앱을 완전히 종료한다 (퀵뷰 전원 버튼).
  */

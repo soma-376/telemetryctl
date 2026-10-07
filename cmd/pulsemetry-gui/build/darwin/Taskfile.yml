@@ -133,12 +133,22 @@ tasks:
         fi
       - cp "{{.BIN_DIR}}/{{.APP_NAME}}" "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/MacOS"
       - cp "{{.ASSETS_PATH}}/darwin/Info.plist" "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents"
+      - |
+        helper="{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/Helpers/Uninstall Pulsemetry.app"
+        mkdir -p "$helper/Contents/MacOS" "$helper/Contents/Resources"
+        cp "{{.BIN_DIR}}/{{.APP_NAME}}" "$helper/Contents/MacOS/PulsemetryUninstall"
+        cp "{{.ASSETS_PATH}}/darwin/icons.icns" "$helper/Contents/Resources/icons.icns"
+        cp "{{.ASSETS_PATH}}/darwin/Info.plist" "$helper/Contents/Info.plist"
+        /usr/libexec/PlistBuddy -c 'Set :CFBundleName Uninstall Pulsemetry' "$helper/Contents/Info.plist"
+        /usr/libexec/PlistBuddy -c 'Set :CFBundleExecutable PulsemetryUninstall' "$helper/Contents/Info.plist"
+        /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier dev.soma376.pulsemetry.uninstall' "$helper/Contents/Info.plist"
       - task: '{{if eq OS "darwin"}}codesign:adhoc{{else}}codesign:skip{{end}}'
 
   codesign:adhoc:
     summary: Ad-hoc signs the app bundle (macOS only)
     internal: true
     cmds:
+      - codesign --force --sign - "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/Helpers/Uninstall Pulsemetry.app"
       - codesign --force --deep --sign - "{{.BIN_DIR}}/{{.APP_NAME}}.app"
 
   codesign:skip:

@@ -13,6 +13,7 @@ import { useUpdatesQuery } from "$lib/query/updates";
 import { cssStyle, useWindowEvent } from "$lib/react-utils";
 import { Fragment, useEffect, useState } from "react";
 import DaemonUpdates from "./DaemonUpdates";
+import { UninstallSetting } from "./Uninstall";
 import {
   COLLECTION,
   CONNECTIONS,
@@ -93,6 +94,7 @@ export default function SettingsModal({
                 </button>
               </div>
               <div className="overflow-y-auto flex-1 p-[16px_22px_20px]">
+                <UninstallSetting />
                 <div className="bg-surface-hover [border:1px_solid_#efe9e1] rounded-[12px] p-[14px_16px] mb-[20px]">
                   <div className="flex items-center gap-[12px] mb-[14px]">
                     <Mascot pose="found" height={44} />

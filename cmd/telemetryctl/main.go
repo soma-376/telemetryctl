@@ -22,6 +22,7 @@ import (
 	"github.com/your-org/pulsemetry/internal/contract"
 	"github.com/your-org/pulsemetry/internal/credential"
 	"github.com/your-org/pulsemetry/internal/daemon"
+	"github.com/your-org/pulsemetry/internal/desktopinstall"
 	"github.com/your-org/pulsemetry/internal/enrollment"
 	"github.com/your-org/pulsemetry/internal/installer"
 	"github.com/your-org/pulsemetry/internal/receiver"
@@ -40,6 +41,14 @@ func main() {
 		os.Exit(2)
 	}
 	switch os.Args[1] {
+	case "register-product":
+		if len(os.Args) != 2 {
+			os.Exit(2)
+		}
+		if err := desktopinstall.RegisterCLI(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	case "uninstall":
 		os.Exit(cmdUninstall(os.Args[2:]))
 	case "hook":
@@ -235,7 +244,14 @@ func parseListen(v string) (port int, fixed bool, err error) {
 }
 
 func cmdEnroll(args []string) int {
-	return runEnroll(os.Stdout, os.Stderr, args, enableAutostartBestEffort)
+	code := runEnroll(os.Stdout, os.Stderr, args, enableAutostartBestEffort)
+	if code == 0 {
+		if err := desktopinstall.RegisterCLI(); err != nil {
+			fmt.Fprintln(os.Stderr, "제거용 설치 기록 저장 실패:", err)
+			return 1
+		}
+	}
+	return code
 }
 
 // runEnroll 은 cmdEnroll 의 테스트 가능한 몸통이다.
