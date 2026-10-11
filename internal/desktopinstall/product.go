@@ -153,7 +153,10 @@ func RegisterGUI(force bool) (bool, error) {
 		helperFiles = []string{helper}
 	default:
 		image := os.Getenv("APPIMAGE")
-		if image == "" || filepath.Base(image) != "Pulsemetry.AppImage" {
+		// 부트스트랩 설치명과 GitHub Release의 두 아키텍처 파일명을 그대로 받는다.
+		switch filepath.Base(image) {
+		case "Pulsemetry.AppImage", "pulsemetry_gui_linux_amd64.AppImage", "pulsemetry_gui_linux_arm64.AppImage":
+		default:
 			return false, nil
 		}
 		if err := copyProgram(image, helper); err != nil {

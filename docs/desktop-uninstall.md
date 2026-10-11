@@ -19,11 +19,12 @@ macOS는 `~/Applications/Uninstall Pulsemetry.app`, Linux는 앱 메뉴의 **Uni
 |---|---|---|
 | Windows | `%LOCALAPPDATA%/Programs/Pulsemetry/Pulsemetry.exe` | `%USERPROFILE%/.pulsemetry/uninstaller/PulsemetryUninstall.exe` |
 | macOS | `~/Applications/Pulsemetry.app` 또는 `/Applications/Pulsemetry.app` | `~/Applications/Uninstall Pulsemetry.app` |
-| Linux | 설치한 `Pulsemetry.AppImage` | `~/.local/share/pulsemetry/PulsemetryUninstall.AppImage` |
+| Linux | `Pulsemetry.AppImage` 또는 릴리스의 `pulsemetry_gui_linux_{amd64,arm64}.AppImage` | `~/.local/share/pulsemetry/PulsemetryUninstall.AppImage` |
 
 Windows NSIS는 사용자별 고정 경로에 설치하고 제거를 전용 창에 위임한다.
 macOS 패키지에는 별도 식별자의 제거 앱을 포함하며, 최초 실행 또는 부트스트랩 설치가 이를 복사한다.
 Linux는 AppImage의 독립 복사본과 두 `.desktop` 진입점을 등록한다.
+GitHub Release에서 받은 Linux 파일은 이름을 바꾸지 않고 최초 실행해도 등록된다.
 CLI 파일은 부트스트랩 고정 경로만 관리한다. 수동 다운로드한 임의 CLI는 자동 인수하지 않는다.
 
 curl/irm 부트스트랩은 CLI와 GUI를 모두 설치한다. backend에도 같은 릴리스의 GUI 파일을 배치해야 한다.
@@ -33,6 +34,9 @@ curl/irm 부트스트랩은 CLI와 GUI를 모두 설치한다. backend에도 같
 ## 검증
 
 - `task test`: 파일 변경·링크 보존, 실패 후 재시도, 선택적 DB 삭제, 제거 화면 상호작용.
+  실행 중 GUI의 종료 대기와 대기 취소 시 설정·자격증명·프로그램 보존도 검증한다.
+- Linux의 `TestLinuxAppImageRegistrationAndRemoval`: 부트스트랩·릴리스 파일명의 최초 실행과 명시적 등록,
+  독립 제거 도구·앱 메뉴 생성, 등록 파일 제거와 사용자 파일 보존을 임시 HOME에서 검증한다.
 - `task build`와 `task package:gui`: 현재 OS의 실제 GUI·패키지 빌드.
 - macOS 패키징 뒤 `python3 scripts/test-desktop-uninstall.py`: 임시 HOME에서 본 앱 선삭제 후 독립 제거와 자체 정리를 검증.
   실제 launchctl·키체인 실행은 차단한다.
