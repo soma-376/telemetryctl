@@ -10,13 +10,13 @@ var Version = "development"
 type App struct {
 	app   *application.App
 	main  *application.WebviewWindow
-	quick *application.WebviewWindow
+	quick application.Window
 }
 
 func NewApp() *App { return &App{} }
 
 // bind 는 창 생성 뒤 참조를 주입한다. 바인딩으로 노출되지 않도록 소문자.
-func (a *App) bind(app *application.App, main, quick *application.WebviewWindow) {
+func (a *App) bind(app *application.App, main *application.WebviewWindow, quick application.Window) {
 	a.app, a.main, a.quick = app, main, quick
 }
 
@@ -28,11 +28,16 @@ func (a *App) IsTrayVisible() bool {
 	return a.quick != nil && a.quick.IsVisible()
 }
 
-// OpenMainWindow 는 퀵뷰를 닫고 메인 창을 앞으로 가져온다 (퀵뷰 "Pulsemetry 열기").
-func (a *App) OpenMainWindow() {
+// HideTrayWindow는 실제 표시 창을 숨긴다. macOS에서는 WebView 호스트가 아닌 패널이다.
+func (a *App) HideTrayWindow() {
 	if a.quick != nil {
 		a.quick.Hide()
 	}
+}
+
+// OpenMainWindow 는 퀵뷰를 닫고 메인 창을 앞으로 가져온다 (퀵뷰 "Pulsemetry 열기").
+func (a *App) OpenMainWindow() {
+	a.HideTrayWindow()
 	if a.main != nil {
 		a.main.Show()
 		a.main.Restore()

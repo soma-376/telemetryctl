@@ -104,6 +104,17 @@ export function checkPackage(filename, os, arch, version, dirs, execute = run) {
     if (!buildID || execute('go', ['run', 'cmd/buildid', guis[0]]).trim() !== buildID) {
       throw new Error('패키지의 GUI가 이번 빌드 산출물과 일치하지 않습니다.');
     }
+    if (os === 'darwin') {
+      const helper = path.join(root, 'Pulsemetry.app', 'Contents', 'Helpers', 'Uninstall Pulsemetry.app', 'Contents');
+      const executable = path.join(helper, 'MacOS', 'PulsemetryUninstall');
+      if (execute('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleIdentifier', path.join(helper, 'Info.plist')]).trim() !== 'dev.soma376.pulsemetry.uninstall') {
+        throw new Error('제거 도구의 앱 식별자가 일치하지 않습니다.');
+      }
+      checkBinary(executable, os, arch, version, false, execute);
+      if (execute('go', ['run', 'cmd/buildid', executable]).trim() !== buildID) {
+        throw new Error('제거 도구가 이번 GUI 빌드와 일치하지 않습니다.');
+      }
+    }
   } finally {
     if (mounted) execute('hdiutil', ['detach', root]);
     rmSync(work, { recursive: true, force: true });

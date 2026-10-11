@@ -33,6 +33,7 @@ Unicode true
 ####
 ## Include the wails tools
 ####
+!define WAILS_INSTALL_SCOPE "user"
 !include "wails_tools.nsh"
 
 # Windows 파일 버전은 숫자 네 부분이어야 한다. 표시 버전에는 prerelease도 유지한다.
@@ -62,7 +63,7 @@ ManifestDPIAware true
 
 !insertmacro MUI_PAGE_WELCOME # Welcome to the installer page.
 # !insertmacro MUI_PAGE_LICENSE "resources\eula.txt" # Adds a EULA page to the installer
-!insertmacro MUI_PAGE_DIRECTORY # In which folder install page.
+# 제거 도구와 같은 사용자 범위의 고정 경로에 설치한다.
 !insertmacro MUI_PAGE_INSTFILES # Installing page.
 !insertmacro MUI_PAGE_FINISH # Finished installation page.
 
@@ -88,6 +89,7 @@ ShowInstDetails show # This will always show the installation details.
 
 Function .onInit
    !insertmacro wails.checkArchitecture
+   StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
 FunctionEnd
 
 Section
@@ -106,20 +108,22 @@ Section
     !insertmacro wails.associateCustomProtocols
     
     !insertmacro wails.writeUninstaller
+    ExecWait '"$INSTDIR\${PRODUCT_EXECUTABLE}" --register-product' $0
+    ${If} $0 != 0
+        MessageBox MB_ICONSTOP "Pulsemetry removal tool registration failed. Installation was not completed."
+        SetErrorLevel 1
+        Abort
+    ${EndIf}
 SectionEnd
 
-Section "uninstall" 
-    !insertmacro wails.setShellContext
-
-    RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
-
-    RMDir /r $INSTDIR
-
-    Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
-    Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
-
-    !insertmacro wails.unassociateFiles
-    !insertmacro wails.unassociateCustomProtocols
-
-    !insertmacro wails.deleteUninstaller
+Section "uninstall"
+    # 전용 도구가 설정·데몬·파일을 정리한다. 실패 시 패키저가 후속 삭제하지 않는다.
+    IfFileExists "$PROFILE\.pulsemetry\uninstaller\PulsemetryUninstall.exe" launch missing
+    launch:
+        Exec '"$PROFILE\.pulsemetry\uninstaller\PulsemetryUninstall.exe" --uninstall'
+        Quit
+    missing:
+        MessageBox MB_ICONSTOP "Pulsemetry removal tool is missing. Reinstall Pulsemetry and try again."
+        SetErrorLevel 1
+        Abort
 SectionEnd

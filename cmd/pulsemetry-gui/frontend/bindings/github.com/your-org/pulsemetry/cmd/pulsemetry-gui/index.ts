@@ -3,9 +3,11 @@
 
 import * as App from "./app.js";
 import * as Dashboard from "./dashboard.js";
+import * as Removal from "./removal.js";
 export {
     App,
-    Dashboard
+    Dashboard,
+    Removal
 };
 
 export type {
