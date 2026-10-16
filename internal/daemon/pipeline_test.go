@@ -1,0 +1,402 @@
+package daemon
+
+import (
+	"context"
+	"database/sql"
+	"log"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/your-org/pulsemetry/internal/event"
+	"github.com/your-org/pulsemetry/internal/localapi"
+	"github.com/your-org/pulsemetry/internal/otlpdecode"
+	"github.com/your-org/pulsemetry/internal/receiver"
+	"github.com/your-org/pulsemetry/internal/store"
+)
+
+func TestLifecycleHookStartsEndsAndReopensSession(t *testing.T) {
+	db := openTestStore(t)
+	t.Cleanup(func() { _ = db.Close() })
+	now := time.Unix(fixtureUnix, 0).UTC()
+	logs := &syncBuffer{}
+	p := newTestPipeline(t, db, logs, func() time.Time { return now })
+	ctx := context.Background()
+	e := localapi.LifecycleEvent{Vendor: "codex", SessionID: "thr-hook", Source: "startup"}
+	if err := p.SubmitLifecycle(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if got := logs.String(); !strings.Contains(got, `세션 훅 수신: vendor=codex event=start session_id=thr-hook source="startup"`) {
+		t.Fatalf("시작 훅 로그가 없음: %q", got)
+	}
+	var started int64
+	var ended any
+	if err := db.SQL().QueryRow(`SELECT started_at, ended_at FROM sessions WHERE session_key='thr-hook'`).Scan(&started, &ended); err != nil {
+		t.Fatal(err)
+	}
+	if started != now.Unix() || ended != nil {
+		t.Fatalf("start=%d end=%v", started, ended)
+	}
+	now = now.Add(time.Minute)
+	e.End = true
+	if err := p.SubmitLifecycle(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if got := logs.String(); !strings.Contains(got, `세션 훅 수신: vendor=codex event=end session_id=thr-hook`) {
+		t.Fatalf("종료 훅 로그가 없음: %q", got)
+	}
+	if err := db.SQL().QueryRow(`SELECT ended_at FROM sessions WHERE session_key='thr-hook'`).Scan(&ended); err != nil {
+		t.Fatal(err)
+	}
+	if ended != now.Unix() {
+		t.Fatalf("end=%v", ended)
+	}
+	now = now.Add(time.Minute)
+	e.End = false
+	e.Source = "resume"
+	if err := p.SubmitLifecycle(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SQL().QueryRow(`SELECT ended_at FROM sessions WHERE session_key='thr-hook'`).Scan(&ended); err != nil {
+		t.Fatal(err)
+	}
+	if ended != nil {
+		t.Fatalf("resume end=%v", ended)
+	}
+}
+
+// newTestPipeline 은 수신기 없이 파이프라인만 띄운다. 저장 실패·조립기 정리처럼
+// HTTP 를 거치지 않고 봐야 하는 경로를 위한 것이다.
+func newTestPipeline(t *testing.T, db *store.DB, logs *syncBuffer, now func() time.Time) *pipeline {
+	t.Helper()
+	p := newPipeline(pipelineConfig{
+		DB:           db,
+		Logger:       log.New(logs, "", 0),
+		Now:          now,
+		BatchEvents:  DefaultBatchEvents,
+		QueueSize:    pipelineQueue,
+		WriteTimeout: 2 * time.Second,
+		PruneTimeout: 2 * time.Second,
+		SessionTTL:   sessionMemoryTTL,
+	})
+	t.Cleanup(func() { p.close(time.Now().Add(5 * time.Second)) })
+	return p
+}
+
+func walkthroughBatch(t *testing.T) receiver.Batch {
+	t.Helper()
+	body := fixture(t, "logs_session_walkthrough.json")
+	res, err := otlpdecode.Decode(otlpdecode.PayloadLogs, body, otlpdecode.EncodingJSON,
+		otlpdecode.Options{InstallationID: "inst-unit"})
+	if err != nil {
+		t.Fatalf("픽스처 디코드: %v", err)
+	}
+	if len(res.Events) == 0 {
+		t.Fatal("픽스처가 이벤트를 만들지 않았다")
+	}
+	return receiver.Batch{
+		Kind:       otlpdecode.PayloadLogs,
+		Encoding:   otlpdecode.EncodingJSON,
+		Body:       body,
+		ReceivedAt: time.Unix(fixtureUnix, 0),
+		Result:     res,
+	}
+}
+
+func openTestStore(t *testing.T) *store.DB {
+	t.Helper()
+	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "pulsemetry.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	return db
+}
+
+// TestFlushFailureRetriesInsteadOfLosing 는 저장 실패가 치명적이지도, 조용하지도 않은지 본다.
+//
+// 실패한 배치는 다음 틱으로 넘어가고, 성공하면 그때 들어간다. 실패를 무시하고 버리면
+// "왜 이벤트가 보낸 것보다 적은가" 를 아무도 설명하지 못한다.
+func TestFlushFailureRetriesInsteadOfLosing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pulsemetry.db")
+	db, err := store.Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := &syncBuffer{}
+	p := newTestPipeline(t, db, logs, func() time.Time { return time.Unix(fixtureUnix, 0).UTC() })
+
+	// 핸들을 닫아 쓰기를 실패하게 만든다.
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	p.cmds <- command{kind: cmdBatch, batch: walkthroughBatch(t)}
+	p.submit(cmdFlush)
+	// 커맨드가 처리될 때까지 기다린다 — submit 은 큐에 넣기만 한다.
+	waitFor(t, "저장 실패 기록", func() bool { return p.Stats().WriteErrors > 0 })
+
+	if !strings.Contains(logs.String(), "다음 틱에 재시도") {
+		t.Errorf("실패가 조용히 넘어갔다:\n%s", logs.String())
+	}
+	if p.Stats().EventsStored != 0 {
+		t.Errorf("EventsStored = %d, want 0", p.Stats().EventsStored)
+	}
+	p.close(time.Now().Add(5 * time.Second))
+
+	// 새 핸들로 열어 보면 실패한 배치는 실제로 들어가지 않았다.
+	db2, err := store.Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db2.Close()
+	if n := countRows(t, db2.SQL(), `SELECT COUNT(*) FROM events`); n != 0 {
+		t.Errorf("events = %d행, want 0 (쓰기가 실패했으므로)", n)
+	}
+}
+
+// TestAssemblerPruneStopsSnapshotResurrection 은 계약 4 를 고정한다.
+//
+// 조립기 메모리를 정리하지 않으면 세션 맵이 무한히 자라고, 보존 정책이 지운 세션을 다음
+// 스냅샷이 되살린다. 시계를 sessionTTL 너머로 밀어 정리가 실제로 일어나는지 본다.
+//
+// **정리는 반드시 저장 뒤에 온다.** 앞에 두면 마감되는 순간 이미 TTL 을 넘긴 세션
+// (데몬이 몇 시간 잠들었다 깨는 경우)이 스냅샷에 들어가기 전에 사라져 한 번도 저장되지 못한다.
+func TestAssemblerPruneStopsSnapshotResurrection(t *testing.T) {
+	db := openTestStore(t)
+	defer db.Close()
+
+	var nowNano atomic.Int64
+	nowNano.Store(time.Unix(fixtureUnix, 0).UTC().UnixNano())
+	logs := &syncBuffer{}
+	p := newTestPipeline(t, db, logs, func() time.Time { return time.Unix(0, nowNano.Load()).UTC() })
+
+	p.cmds <- command{kind: cmdBatch, batch: walkthroughBatch(t)}
+	p.submit(cmdSessions)
+	waitFor(t, "세션 저장", func() bool { return p.Stats().SessionsWritten > 0 })
+
+	if n := countRows(t, db.SQL(), `SELECT COUNT(*) FROM tool_calls`); n != 3 {
+		t.Fatalf("tool_calls = %d행, want 3", n)
+	}
+
+	// 시계를 sessionTTL 너머로 민다. 이 틱에서 세션이 마감되고, 마감된 세션이 저장된
+	// **뒤에** 조립기 메모리에서 정리된다.
+	nowNano.Store(time.Unix(fixtureUnix, 0).Add(sessionMemoryTTL + time.Hour).UTC().UnixNano())
+	before := p.Stats().SessionsWritten
+	p.submit(cmdSessions)
+	waitFor(t, "마감 + 조립기 정리", func() bool {
+		return p.Stats().SessionsWritten > before && strings.Contains(logs.String(), "조립기 정리")
+	})
+
+	// v3 는 세션 상태를 저장하지 않는다. 마감 결과는 ended_at 으로만 드러난다 (ADR 0009).
+	var endedAt sql.NullInt64
+	if err := db.SQL().QueryRow(`SELECT ended_at FROM sessions`).Scan(&endedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !endedAt.Valid {
+		t.Error("ended_at 이 NULL — 정리 전에 마감 결과가 저장되어야 한다")
+	}
+
+	// 이제 보존 정책이 승격 행을 지운 상황을 흉내 낸다. 자식부터 지운다 — NO ACTION 이다.
+	for _, q := range []string{`DELETE FROM file_changes`, `DELETE FROM tool_calls`} {
+		if _, err := db.SQL().Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before = p.Stats().SessionsWritten
+	p.submit(cmdSessions)
+	p.submit(cmdFlush)
+	waitFor(t, "정리 후 세션 틱", func() bool { return p.Stats().SessionsWritten == before })
+
+	// 조립기가 그 세션을 더 이상 들고 있지 않으므로 스냅샷에도 없다.
+	if n := countRows(t, db.SQL(), `SELECT COUNT(*) FROM tool_calls`); n != 0 {
+		t.Errorf("tool_calls = %d행, want 0 — 보존 정책이 지운 행을 스냅샷이 되살렸다", n)
+	}
+	if n := countRows(t, db.SQL(), `SELECT COUNT(*) FROM sessions`); n != 1 {
+		t.Errorf("sessions = %d행, want 1 — 조립기 정리가 저장된 세션까지 지우면 안 된다", n)
+	}
+}
+
+// TestDedupWindowEvictsOldest 는 창이 유계인지 본다. 무한히 자라면 오래 사는 데몬에서
+// 그대로 메모리 누수다.
+func TestDedupWindowEvictsOldest(t *testing.T) {
+	w := newDedupWindow(2)
+	for _, k := range []string{"a", "b"} {
+		if !w.add(k) {
+			t.Fatalf("%q 첫 등장이 중복으로 판정됐다", k)
+		}
+	}
+	if w.add("a") {
+		t.Error("창 안의 중복을 놓쳤다")
+	}
+	if !w.add("c") { // a 가 밀려난다
+		t.Fatal("새 키가 중복으로 판정됐다")
+	}
+	if !w.add("a") {
+		t.Error("창 밖으로 밀려난 키가 여전히 중복으로 잡힌다 — 창이 자라고 있다")
+	}
+	if len(w.seen) > 2 || len(w.ring) > 2 {
+		t.Errorf("창이 상한을 넘었다: seen=%d ring=%d", len(w.seen), len(w.ring))
+	}
+}
+
+// 키를 만들 수 없는 이벤트끼리 서로를 중복으로 판정하면 서로 다른 이벤트가 하나로 접힌다.
+func TestDedupWindowPassesEmptyKeys(t *testing.T) {
+	w := newDedupWindow(4)
+	if !w.add("") || !w.add("") {
+		t.Error("빈 키가 중복으로 판정됐다")
+	}
+}
+
+// TestPipelineIgnoresCommandsAfterClose 는 종료 뒤 들어온 배치가 panic 을 내지 않는지 본다.
+// cmds 채널을 close 하지 않고 센티널을 쓰는 이유가 여기에 있다.
+func TestPipelineIgnoresCommandsAfterClose(t *testing.T) {
+	db := openTestStore(t)
+	defer db.Close()
+	p := newTestPipeline(t, db, &syncBuffer{}, func() time.Time { return time.Unix(fixtureUnix, 0).UTC() })
+
+	if !p.close(time.Now().Add(5 * time.Second)) {
+		t.Fatal("파이프라인이 제한 시간 안에 닫히지 않았다")
+	}
+	if err := p.Consume(context.Background(), walkthroughBatch(t)); err == nil {
+		t.Error("종료된 파이프라인이 배치를 받아들였다")
+	}
+	p.submit(cmdFlush) // 막히지도 panic 하지도 않아야 한다
+	if !p.close(time.Now().Add(time.Second)) {
+		t.Error("close 를 두 번 부르면 안전해야 한다")
+	}
+}
+
+// PROJ-67 의 재현 절차다. 데몬을 껐다 켜면 조립기 맵이 비어 그 전에 돌던 세션을
+// Advance 가 볼 수 없다. DB 유휴 스윕이 그것을 마감해야 한다.
+func TestSweepClosesSessionsLostToRestart(t *testing.T) {
+	db := openTestStore(t)
+	t.Cleanup(func() { _ = db.Close() })
+
+	base := time.Unix(fixtureUnix, 0).UTC()
+	now := base
+	first := newTestPipeline(t, db, &syncBuffer{}, func() time.Time { return now })
+	feedSession(t, first, "sess-restart", base)
+	if !first.close(time.Now().Add(5 * time.Second)) {
+		t.Fatal("첫 파이프라인 종료 실패")
+	}
+	if got := sessionEndedAt(t, db, "sess-restart"); got != nil {
+		t.Fatalf("아직 유휴가 아닌데 마감됐다: %v", got)
+	}
+
+	// 재시작. 새 파이프라인의 조립기는 이 세션을 모른다.
+	now = base.Add(first.asm.IdleThreshold() + time.Hour)
+	second := newTestPipeline(t, db, &syncBuffer{}, func() time.Time { return now })
+	second.submit(cmdSessions)
+	waitFor(t, "유휴 스윕", func() bool { return sessionEndedAt(t, db, "sess-restart") != nil })
+
+	got := sessionEndedAt(t, db, "sess-restart")
+	if got == nil {
+		t.Fatal("재시작 뒤에도 running 으로 남았다 (PROJ-67)")
+	}
+	// 마감 시각은 컷오프가 아니라 마지막 활동이다.
+	if got != base.Unix() {
+		t.Fatalf("ended_at = %v, want %d", got, base.Unix())
+	}
+}
+
+// 조립기가 아직 진행 중이라 보는 세션을 스윕이 닫으면 다음 스냅샷이 도로 열어 왕복한다.
+func TestSweepDoesNotCloseSessionsAssemblerStillOwns(t *testing.T) {
+	db := openTestStore(t)
+	t.Cleanup(func() { _ = db.Close() })
+
+	base := time.Unix(fixtureUnix, 0).UTC()
+	// 세션 저장이 보여도 파이프라인은 flush 시각을 읽을 수 있어 시계 갱신을 동기화한다.
+	var nowNano atomic.Int64
+	nowNano.Store(base.UnixNano())
+	p := newTestPipeline(t, db, &syncBuffer{}, func() time.Time { return time.Unix(0, nowNano.Load()).UTC() })
+	feedSession(t, p, "sess-live", base)
+
+	nowNano.Store(base.Add(p.asm.IdleThreshold() - time.Minute).UnixNano())
+	before := p.Stats().SessionsWritten
+	p.submit(cmdSessions)
+	waitFor(t, "세션 틱", func() bool { return p.Stats().SessionsWritten > before })
+
+	if got := sessionEndedAt(t, db, "sess-live"); got != nil {
+		t.Fatalf("조립기가 진행 중이라 보는 세션을 스윕이 마감했다: %v", got)
+	}
+}
+
+func feedSession(t *testing.T, p *pipeline, sessionID string, at time.Time) {
+	t.Helper()
+	if err := p.Consume(context.Background(), receiver.Batch{
+		Result: otlpdecode.Result{Events: []event.Event{{
+			Vendor: "claude_code", Name: "claude_code.api_request",
+			InstallationID: "install-1",
+			SessionID:      sessionID, Signal: event.SignalLog,
+			TS: event.NanoFromTime(at),
+		}}},
+	}); err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	p.submit(cmdSessions)
+	waitFor(t, "세션 저장 ("+sessionID+")", func() bool {
+		var n int
+		if err := p.db.SQL().QueryRow(
+			`SELECT COUNT(*) FROM sessions WHERE session_key = ?`, sessionID).Scan(&n); err != nil {
+			return false
+		}
+		return n == 1
+	})
+}
+
+func sessionEndedAt(t *testing.T, db *store.DB, sessionID string) any {
+	t.Helper()
+	var ended any
+	err := db.SQL().QueryRow(
+		`SELECT ended_at FROM sessions WHERE session_key = ?`, sessionID).Scan(&ended)
+	if err != nil {
+		t.Fatalf("ended_at 조회 (%s): %v", sessionID, err)
+	}
+	return ended
+}
+
+// 실측된 flip-flop 회귀다. 훅으로만 열린 세션(OTel 활동 0)을 스윕이 닫은 뒤, 다음
+// 세션 틱의 스냅샷이 그 마감을 NULL 로 되살려 매 틱 마감↔재개가 반복됐다.
+func TestHookOnlySessionStaysClosedAfterSweep(t *testing.T) {
+	db := openTestStore(t)
+	t.Cleanup(func() { _ = db.Close() })
+
+	base := time.Unix(fixtureUnix, 0).UTC()
+	now := base
+	p := newTestPipeline(t, db, &syncBuffer{}, func() time.Time { return now })
+	ctx := context.Background()
+
+	e := localapi.LifecycleEvent{Vendor: "codex", SessionID: "hook-only", Source: "startup"}
+	if err := p.SubmitLifecycle(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+
+	// 유휴 임계값 너머로 민 뒤 세션 틱 — 스윕이 닫는다.
+	now = base.Add(p.asm.IdleThreshold() + time.Minute)
+	p.submit(cmdSessions)
+	waitFor(t, "스윕 마감", func() bool { return sessionEndedAt(t, db, "hook-only") != nil })
+	closedAt := sessionEndedAt(t, db, "hook-only")
+
+	closedN := p.Stats().SessionsClosed
+
+	// 세션 틱을 두 번 더 돌린다. SubmitLifecycle 은 동기라, 반환됐다는 것은 큐에 먼저
+	// 넣은 cmdSessions 가 모두 처리됐다는 뜻이다 (파이프라인 고루틴은 하나, 채널은 FIFO).
+	// flip-flop 은 틱 안에서 일어나 끝난 뒤의 ended_at 만 봐서는 안 보인다 — 스냅샷이
+	// 되살리고 스윕이 도로 닫아 값은 같아진다. 증상은 마감 카운터가 매 틱 자라는 것이다.
+	p.submit(cmdSessions)
+	p.submit(cmdSessions)
+	if err := p.SubmitLifecycle(ctx, localapi.LifecycleEvent{
+		Vendor: "codex", SessionID: "hook-other", Source: "startup"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := sessionEndedAt(t, db, "hook-only"); got != closedAt {
+		t.Fatalf("ended_at 이 흔들렸다: %v → %v", closedAt, got)
+	}
+	if got := p.Stats().SessionsClosed; got != closedN {
+		t.Fatalf("마감 카운터 = %d → %d — 스윕이 같은 세션을 매 틱 다시 닫는다 (flip-flop)", closedN, got)
+	}
+}

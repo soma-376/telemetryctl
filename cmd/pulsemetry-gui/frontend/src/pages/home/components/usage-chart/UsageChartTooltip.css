@@ -1,0 +1,25 @@
+.usage-tooltip.scope-1n5dj3j {
+  transition:
+    left 400ms cubic-bezier(0.22, 1, 0.36, 1),
+    top 400ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: scope-1n5dj3j-tooltip-in 200ms ease-out;
+  will-change: left, top;
+}
+
+@keyframes scope-1n5dj3j-tooltip-in {
+  from {
+    opacity: 0;
+    margin-top: 3px;
+  }
+  to {
+    opacity: 1;
+    margin-top: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .usage-tooltip.scope-1n5dj3j {
+    transition: none;
+    animation: none;
+  }
+}

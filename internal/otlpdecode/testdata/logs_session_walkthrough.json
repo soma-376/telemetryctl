@@ -1,0 +1,120 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "claude-code" } },
+          { "key": "service.version", "value": { "stringValue": "2.1.4" } },
+          { "key": "session.id", "value": { "stringValue": "5f3a9c21-8e44-4bb0-9d1e-2a7c6b0f1234" } },
+          { "key": "terminal.type", "value": { "stringValue": "iTerm.app" } },
+          { "key": "cwd", "value": { "stringValue": "/Users/jy/dev/projects/soma-376/telemetryctl" } },
+          { "key": "organization.id", "value": { "stringValue": "org_01HXYZQ7K3M9V2" } },
+          { "key": "user.id", "value": { "stringValue": "u_88213f0c9d" } },
+          { "key": "user.account_uuid", "value": { "stringValue": "9f2c1d55-3a7e-4c18-9b02-6d41ee0a7788" } },
+          { "key": "user.email", "value": { "stringValue": "kjy02927@gmail.com" } }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": { "name": "com.anthropic.claude_code.events", "version": "2.1.4" },
+          "logRecords": [
+            {
+              "timeUnixNano": "1786353300000000000",
+              "observedTimeUnixNano": "1786353300000000000",
+              "severityText": "INFO",
+              "body": { "stringValue": "claude_code.user_prompt" },
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "00f067aa0ba902b7",
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "claude_code.user_prompt" } },
+                { "key": "event.timestamp", "value": { "stringValue": "2026-08-10T09:15:00Z" } },
+                { "key": "event.id", "value": { "stringValue": "evt_prompt_0001" } },
+                { "key": "prompt_length", "value": { "intValue": "48" } },
+                { "key": "prompt", "value": { "stringValue": "OTLP 디코더에 temporality 분기를 넣고 원문은 로컬에만 남게 해줘" } }
+              ]
+            },
+            {
+              "timeUnixNano": "1786353312000000000",
+              "observedTimeUnixNano": "1786353312000000000",
+              "severityText": "INFO",
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "claude_code.tool_result" } },
+                { "key": "event.id", "value": { "stringValue": "evt_tool_0002" } },
+                { "key": "tool_name", "value": { "stringValue": "Edit" } },
+                { "key": "success", "value": { "boolValue": true } },
+                { "key": "duration_ms", "value": { "intValue": "214" } },
+                { "key": "decision", "value": { "stringValue": "accept" } },
+                { "key": "source", "value": { "stringValue": "config" } },
+                {
+                  "key": "tool_input",
+                  "value": {
+                    "stringValue": "{\"file_path\":\"/Users/jy/dev/projects/soma-376/telemetryctl/internal/otlpdecode/decode.go\",\"old_string\":\"assume delta\",\"new_string\":\"read aggregation_temporality\"}"
+                  }
+                }
+              ]
+            },
+            {
+              "timeUnixNano": "1786353315000000000",
+              "eventName": "claude_code.api_request",
+              "severityText": "INFO",
+              "attributes": [
+                { "key": "event.id", "value": { "stringValue": "evt_api_0003" } },
+                { "key": "model", "value": { "stringValue": "claude-opus-4-6-20260514" } },
+                { "key": "input_tokens", "value": { "intValue": "1820" } },
+                { "key": "output_tokens", "value": { "intValue": "614" } },
+                { "key": "cache_read_tokens", "value": { "intValue": "22140" } },
+                { "key": "cache_creation_tokens", "value": { "intValue": "0" } },
+                { "key": "cost_usd", "value": { "doubleValue": 0.0342 } },
+                { "key": "duration_ms", "value": { "intValue": "3187" } }
+              ]
+            },
+            {
+              "timeUnixNano": "1786353340000000000",
+              "severityText": "WARN",
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "claude_code.tool_result" } },
+                { "key": "event.id", "value": { "stringValue": "evt_tool_0004" } },
+                { "key": "tool_name", "value": { "stringValue": "Bash" } },
+                { "key": "success", "value": { "boolValue": false } },
+                { "key": "duration_ms", "value": { "intValue": "120009" } },
+                { "key": "error", "value": { "stringValue": "ETIMEDOUT" } },
+                { "key": "tool_input", "value": { "stringValue": "{\"command\":\"go test -race ./internal/otlpdecode/\"}" } },
+                { "key": "tool_result", "value": { "stringValue": "signal: killed after 120s in /Users/jy/dev/projects/soma-376/telemetryctl" } }
+              ]
+            },
+            {
+              "timeUnixNano": "1786353351000000000",
+              "severityText": "ERROR",
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "claude_code.api_error" } },
+                { "key": "event.id", "value": { "stringValue": "evt_apierr_0005" } },
+                { "key": "model", "value": { "stringValue": "claude-opus-4-6-20260514" } },
+                { "key": "error", "value": { "stringValue": "rate_limit_error" } },
+                { "key": "status_code", "value": { "intValue": "429" } },
+                { "key": "attempt", "value": { "intValue": "2" } },
+                { "key": "duration_ms", "value": { "intValue": "88" } }
+              ]
+            },
+            {
+              "timeUnixNano": "1786353362000000000",
+              "severityText": "WARN",
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "claude_code.tool_result" } },
+                { "key": "event.id", "value": { "stringValue": "evt_tool_0006" } },
+                { "key": "tool_name", "value": { "stringValue": "Read" } },
+                { "key": "success", "value": { "boolValue": false } },
+                { "key": "duration_ms", "value": { "intValue": "4" } },
+                {
+                  "key": "error",
+                  "value": {
+                    "stringValue": "ENOENT: no such file or directory, open '/Users/jy/dev/projects/soma-376/telemetryctl/internal/otlpdecode/missing.go'"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

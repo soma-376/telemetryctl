@@ -1,0 +1,50 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "claude-code" } },
+          { "key": "session.id", "value": { "stringValue": "5f3a9c21-8e44-4bb0-9d1e-2a7c6b0f1234" } },
+          { "key": "cwd", "value": { "stringValue": "/Users/jy/dev/projects/soma-376/telemetryctl" } },
+          { "key": "user.email", "value": { "stringValue": "kjy02927@gmail.com" } },
+          { "key": "organization.id", "value": { "stringValue": "org_01HXYZQ7K3M9V2" } }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": { "name": "com.anthropic.claude_code", "version": "2.1.4" },
+          "metrics": [
+            {
+              "name": "claude_code.lines_of_code.count",
+              "unit": "count",
+              "sum": {
+                "aggregationTemporality": "AGGREGATION_TEMPORALITY_DELTA",
+                "isMonotonic": true,
+                "dataPoints": [
+                  {
+                    "startTimeUnixNano": "1786353240000000000",
+                    "timeUnixNano": "1786353300000000000",
+                    "asInt": "42",
+                    "attributes": [
+                      { "key": "type", "value": { "stringValue": "added" } },
+                      { "key": "model", "value": { "stringValue": "claude-opus-4-6-20260514" } }
+                    ]
+                  },
+                  {
+                    "startTimeUnixNano": "1786353240000000000",
+                    "timeUnixNano": "1786353300000000000",
+                    "asInt": "17",
+                    "attributes": [
+                      { "key": "type", "value": { "stringValue": "removed" } },
+                      { "key": "model", "value": { "stringValue": "claude-opus-4-6-20260514" } }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

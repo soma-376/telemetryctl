@@ -1,45 +1,274 @@
 # telemetryctl
 
-Codex와 Claude Code에 조직의 OpenTelemetry 설정을 안전하게 적용하기 위한 Go 기반 CLI입니다.
+Codex와 Claude Code의 OpenTelemetry 설정을 조직 단위로 안전하게 적용하는 **클라이언트 데몬**입니다.
+직원은 **한 줄 설치**로 초대 코드를 입력하면, enrollment 서버가 회사에 맞는 설정을 내려주고 이
+클라이언트가 Claude Code·Codex 설정에 필요한 OTel 키만 병합합니다.
 
-현재는 설정 manifest 검증과 Codex·Claude Code 설정 병합 로직을 구현한 초기 단계입니다. CLI 진입점, Enrollment API 연동, 설치 상태 저장은 아직 구현되지 않았습니다.
+이 저장소는 **클라이언트 CLI/데몬 전용**입니다(Go, 단일 정적 바이너리). enrollment 서버는 **별도
+저장소**로 분리돼 있으며, 레포 간 계약은 [문서 허브](https://github.com/soma-376/docs/tree/main/contracts)에 있습니다.
+enrollment의 기계 판독 원본은 이 레포의 `contracts/` JSON Schema입니다.
 
 ## 구조
 
 ```text
 .
-├── contracts/              # Enrollment 서버와 공유하는 JSON Schema
-├── docs/                   # 설치 아키텍처와 개발 워크플로
+├── cmd/
+│   ├── telemetryctl/          # CLI 진입점 (enroll·status·reconnect·daemon·stats·sessions·purge·local·autostart·version)
+│   └── pulsemetry-gui/        # Wails v3 데스크탑 앱 (루트 go.mod 공유, ADR 0004)
+├── contracts/                 # 서버와의 JSON Schema 계약 사본 (계약 테스트 기준)
+│   ├── enrollment-manifest.schema.json
+│   └── enrollment-envelope.schema.json
+├── docs/                      # 설치 아키텍처·로컬 파이프라인·SQLite 스키마·ADR·개발 워크플로
 └── internal/
-    ├── configmerge/        # Codex·Claude Code 설정 병합 및 백업
-    ├── hostenv/            # OS·WSL 감지와 설정 파일 경로 계산
-    └── manifest/           # Enrollment manifest 파싱 및 검증
+    ├── contract/              #   enroll 요청/응답·manifest Go 타입 (스키마와 1:1)
+    ├── enrollment/            #   서버 /v1/enroll 호출
+    ├── installer/             #   설정 적용 오케스트레이션 + 로컬 상태 + local enable/disable
+    ├── credential/            #   설치 토큰·ingest 토큰 원본 보관 (OS 키링)
+    ├── config/                #   Claude·Codex 설정 병합·백업
+    ├── hostenv/               #   OS·WSL 감지, 설정 파일 경로
+    │
+    │                          # ── 로컬 데이터 파이프라인 (PROJ-36) ──
+    ├── event/                 #   정규화 이벤트 타입·DedupKey·경로 해시 (IO 없음)
+    ├── vendor/                #   벤더 정체성의 단일 출처 (정식 ID·별칭·정규화)
+    ├── otlpdecode/            #   OTLP 디코드 + content 제거 재인코딩 (proto 의존 격리)
+    ├── receiver/              #   loopback OTLP/HTTP 수신기
+    ├── forward/               #   회사 Collector 전달 (유계 큐·제한된 재시도)
+    ├── session/               #   이벤트 → 세션 조립, 제목 휴리스틱 (순수 함수)
+    ├── pricing/               #   LLM 호출 비용 산정 (보고값이 없을 때의 가격표)
+    ├── store/                 #   SQLite 스키마·쓰기·승격·보존 정책
+    │
+    │                          # ── 조회와 화면 ──
+    ├── dashboard/             #   화면별 조회 API (CLI·데몬 공용, Wails 의존 없음)
+    │   └── tray/              #     트레이 퀵뷰 스냅샷 조립과 캐시
+    ├── vendorlimit/           #   벤더 구독 사용 한도 조회 (Claude API·Codex App Server)
+    ├── codexapp/              #   Codex App Server 프로세스·프로토콜 (ADR 0011)
+    ├── localapi/              #   GUI ↔ 데몬 로컬 HTTP 계약 (ADR 0013)
+    ├── updatecheck/           #   enroll 서버 업데이트 확인과 마지막 성공 결과
+    │
+    ├── runtimeinfo/           #   runtime.json (비밀 없음: 주소·pid·데이터 경로)
+    ├── autostart/             #   로그인 시 데몬 자동 실행 등록 (launchd·systemd user unit)
+    └── daemon/                #   위 패키지 배선 + 틱 루프 + graceful shutdown
 ```
 
-구현되지 않은 디렉터리는 파일이 추가되는 시점에 생성합니다.
+**경계 규칙**: 클라이언트(Go)와 서버는 코드를 공유하지 않습니다. enrollment는 `contracts/`의
+JSON Schema와 `internal/contract`의 Go 타입이 대응하는지 계약 테스트로 검증합니다.
+업데이트 확인은 문서 허브의 [별도 계약](https://github.com/soma-376/docs/blob/main/contracts/daemon-updates.md)을 따릅니다.
+
+## 사용법
+
+한 줄 설치. **초대 코드를 URL 에 실어야 합니다** — 서버가 그 코드를 부트스트랩 스크립트에
+박아서 내려주고, 스크립트가 바이너리를 받아 `enroll` 까지 실행합니다. 코드가 없으면 서버가
+400 `invalid_request` 로 끊습니다.
+
+```powershell
+irm "<server>/windows?code=<초대코드>" | iex          # PowerShell
+```
+```sh
+curl -fsSL "<server>/unix?code=<초대코드>" | sh        # bash
+```
+
+설치된 바이너리 이름은 **`pulsemetry`** 입니다(`~/.pulsemetry/bin/pulsemetry`). 아래 예시는
+저장소 이름을 따라 `telemetryctl` 로 적지만, 한 줄 설치로 받은 환경에서는 `pulsemetry` 로 부릅니다.
+`go build ./cmd/telemetryctl` 로 직접 빌드하면 `telemetryctl` 이라는 이름이 나옵니다.
+
+또는 바이너리를 직접 실행:
+
+```sh
+telemetryctl enroll --invite <code> [--server <url>]   # 등록 후 설정 적용
+telemetryctl reconnect [--server <url>]                # 텔레메트리 토큰 재발급 및 설정 갱신
+telemetryctl status                                    # 설치·로컬 파이프라인·데몬 업데이트 상태 표시
+telemetryctl daemon [옵션]                             # foreground 데몬 (로컬 수신기 + 집계 + 상위 전달)
+telemetryctl local enable|disable [--port 4318]        # 벤더 설정을 로컬 수신기로 재배선/해제
+telemetryctl autostart enable|disable|status           # 로그인 시 데몬 자동 실행 등록/해제/조회
+telemetryctl stats [--since 7d] [--group vendor]       # 로컬 집계 조회
+telemetryctl sessions [--since 7d] [--status running]  # 로컬 세션 목록 조회
+telemetryctl purge --content [--before 2026-07-01]     # 보관된 프롬프트·툴 원문 삭제
+```
+
+전체 플래그는 `telemetryctl help` 를 보세요.
+
+데몬은 시작 직후와 24시간마다 enroll 서버에서 업데이트 여부를 확인합니다. CLI `status`와
+GUI 설정의 **데몬 업데이트**는 마지막 확인 결과를 표시하며 다운로드·설치는 수행하지 않습니다.
+백엔드 API는 아직 임시 계약이므로 서버가 404를 반환하면 미지원으로 표시하고 수집은 계속합니다.
+
+`enroll` 은 서버에서 받은 설정 봉투(`{installation_id, installation_token, telemetry_token, manifest}`)를 적용해
+Claude Code(`~/.claude/settings.json`)·Codex(`~/.codex/config.toml`)에 OTel 키만 병합하고,
+적용 내역을 `~/.pulsemetry/state.json` 에 기록합니다. 서버 URL 은 `--server` > `PULSEMETRY_SERVER` >
+빌드 기본값(릴리스 시 `-ldflags` 주입) 순으로 결정합니다.
+
+`installation_token`과 회사 `telemetry_token`은 OS 키링에만 저장합니다. 로컬 파이프라인이 배선된
+기본 상태에서 Claude·Codex 설정에 기록되는 것은 **로컬 ingest 토큰**뿐이고, 배선이 강등된
+(회사 직결 — grpc manifest·키링 불가) 설치에서만 `telemetry_token`이 설정에 실립니다. `reconnect`는 설치 토큰으로
+`POST /v1/installations/telemetry-token`을 호출해 새 telemetry token을 발급받습니다.
+
+## 로컬 데이터 파이프라인 (opt-out, 기본 켜짐)
+
+`enroll` 이 벤더 설정을 로컬 수신기로 자동 배선합니다. 데몬이 loopback OTLP 수신기를 띄워 시그널을
+직접 받고, 세션 단위로 조립·집계해 로컬 SQLite(`~/.pulsemetry/pulsemetry.db`)에 저장한 뒤 회사
+Collector 로도 전달합니다. **끄려면 `local disable` 입니다.**
+
+> **로컬 스키마는 v1로 고정한다.** 빈 DB는 단일 DDL로 초기화하며, 개발 DB의 DDL 변경은
+> DB 재생성으로 적용한다. [SQLite 스키마 문서](docs/sqlite-schema/README.md)를 따른다.
+
+```sh
+telemetryctl enroll --invite <코드>   # 설치 + 로컬 배선 + 자동 실행 등록 (endpoint → http://localhost:4318)
+telemetryctl sessions --since 1d
+telemetryctl autostart status         # 자동 실행 등록 상태 확인
+telemetryctl local disable            # 회사 Collector 직결로 복귀
+```
+
+> **데몬이 떠 있지 않으면 텔레메트리가 로컬에도 회사에도 남지 않습니다.** `enroll` 이 로그인 시
+> 자동 실행을 등록해(macOS LaunchAgent · 리눅스 systemd user unit) 이 상태를 막습니다. 등록은
+> best-effort 라 실패해도 `enroll` 은 성공하고 사실을 알립니다 — 그때는 `telemetryctl daemon` 을
+> 직접 띄우면 됩니다. 원치 않으면 `telemetryctl autostart disable` 입니다.
+>
+> 자동 실행은 **사용자 수준**이라 로그인할 때 시작하고 로그아웃하면 함께 종료합니다.
+> 비정상 종료일 때만 재시작하므로 직접 정지시키면 정지 상태를 유지합니다
+> ([ADR 0007](docs/adr/0007-데몬은-비정상-종료일-때만-자동-재시작한다.md)).
+> Windows(작업 스케줄러)는 후속 티켓이라 `telemetryctl daemon` 을 직접 띄워야 합니다.
+
+로컬 OTel 설정은 회사 manifest 와 무관하게 **고정**입니다 — 시그널 셋을 전부 켜고 원문·tool details
+수집도 켭니다(응답 원문 제외). 회사가 수집 범위를 좁혀도 로컬 화면이 비지 않게 하기 위해서입니다.
+그래도 **로컬 파이프라인이 배선된 상태에서는 회사로 나가는 데이터가 배선 전후로 동일합니다** —
+데몬이 회사 manifest 의 `signals` 로 전달 여부를, `privacy` 로 제거 대상을 판단합니다.
+단, 회사 직결로 강등된 설치(grpc 테넌트·키링 실패)에는 데몬이 경로에 없어 벤더 설정 계층만 남습니다
+(허브 `contracts/telemetry-ingest.md` §5 M13). 프롬프트 원문을 포함한 모든 로컬 데이터는
+400일간 보관됩니다. 원문은 항목당 16KB로 제한되며 `--no-store-content`·`purge --content` 로
+끄거나 지울 수 있습니다([ADR 0008](docs/adr/0008-로컬-데이터를-400일간-보존한다.md)).
+
+기존 설치자(이미 `enroll` 을 마친 사용자)는 바이너리를 교체해도 자동 전환되지 않습니다.
+`telemetryctl local enable` 로 명시적으로 켜세요.
+
+데스크탑 앱(트레이 퀵뷰)은 SQLite 를 직접 열지 않습니다. 데몬이 로컬 HTTP 로 조회 결과를
+내려주고 GUI 는 그것을 그립니다 — 그래서 화면과 CLI 가 같은 `internal/dashboard` 함수로 같은
+숫자를 냅니다([ADR 0013](docs/adr/0013-GUI는-데몬의-로컬-API로-대시보드를-조회한다.md)).
+벤더 구독 사용 한도(Claude·Codex)는 데몬이 기동 직후 한 번과 이후 5분마다 조회해 저장하고,
+실패해도 마지막 성공값을 지우지 않습니다.
+
+토폴로지·프라이버시 불변식·GUI 조회 API 계약은 [로컬 파이프라인 문서](docs/local-pipeline.md)에,
+DDL과 테이블별 계약은 [SQLite 스키마 문서](docs/sqlite-schema/README.md)에, 설계 결정 배경은
+[ADR](docs/adr/)에 있습니다.
+
+## 로컬 개발
+
+enrollment 서버는 별도 저장소에서 띄우고(로컬 URL 예: `http://localhost:8088`), 클라이언트는 그
+URL 로 붙습니다.
+
+```sh
+go build -o dist/telemetryctl ./cmd/telemetryctl
+go run ./cmd/telemetryctl enroll --invite TEST-1234 --server http://localhost:8088
+```
+
+릴리스 빌드는 서버 기본값을 주입합니다:
+
+```sh
+go build -ldflags "-X main.defaultServer=https://get.your-service.com" ./cmd/telemetryctl
+```
 
 ## 핵심 원칙
 
 - 기존 설정 파일 전체를 덮어쓰지 않고 필요한 OTel 키만 병합합니다.
-- 기존 파일은 최초 변경 전에 `.telemetryctl.bak`으로 백업합니다.
-- 다른 OTel endpoint가 있으면 명시적인 강제 옵션 없이는 교체하지 않습니다.
-- manifest의 알 수 없는 필드와 지원하지 않는 버전을 거부합니다.
-- 토큰을 로그에 출력하지 않습니다.
+- 기존 파일은 최초 변경 전에 `<이름>.pulsemetry-backup.<확장자>`(예: `settings.pulsemetry-backup.json`)로 백업합니다.
+- 다른 OTel endpoint 가 있으면 명시적 `--force` 없이는 교체하지 않습니다.
+- manifest 의 알 수 없는 필드와 지원하지 않는 버전을 거부합니다.
+- 토큰을 로그·상태 파일(`state.json`·`runtime.json`)에 기록하지 않습니다. 토큰 원본은 **OS 키링**
+  (Windows Credential Manager·macOS Keychain·Linux Secret Service)에만 두고,
+  Claude·Codex 설정의 Authorization 헤더는 여기서 파생되는 사본으로 취급합니다.
+- 로컬 저장소에도 전체 작업 경로·`user.*`·`organization.id` 를 남기지 않습니다. 속성은 allowlist
+  컬럼으로만 받고 catch-all 컬럼을 두지 않습니다.
+- 텔레메트리 손실은 허용하되 개발 도구 지연은 허용하지 않습니다. 수신기는 큐가 차면 `429` 가 아니라
+  `200` + `PartialSuccess` 로 답하고, 상위 전달은 절대 수신을 막지 않습니다.
 
 ## 개발
 
-요구 사항은 Go 1.23 이상입니다.
+클라이언트는 Go 1.25 이상이 필요합니다. SQLite 드라이버는 순수 Go 라 **CGO 가 필요 없습니다.**
+
+빌드와 검사는 [Task](https://taskfile.dev) 로 진입합니다. 루트 `Taskfile.yml` 이 단일 출처이고
+CI 도 같은 명령을 부르므로, 푸시 전에 `task test` 만 통과시키면 CI 가 보는 것과 같습니다.
 
 ```sh
-go test ./...
+task dev:gui        # GUI 를 핫리로드로 띄운다
+task dev:daemon     # 데몬을 포그라운드로 실행 (옵션은 -- 뒤에)
+task cli -- status  # CLI 실행
+
+task build          # CLI + GUI → artifacts/build/{os}-{arch}
+task build:cli      # 현재 컴퓨터용 CLI만 빌드
+task build:cli TARGET_OS=linux TARGET_ARCH=arm64  # 지정한 대상용 CLI
+task build:cli:all  # Windows·macOS·Linux × amd64·arm64 CLI 6종
+task build CLI_VERSION=0.1.0 GUI_VERSION=0.1.0  # CLI·GUI 버전 주입
+task package:gui TARGET_OS=darwin TARGET_ARCH=arm64 GUI_VERSION=0.1.0  # GUI 배포 패키지
+task test           # 전체 검사 (빌드·vet·race 테스트·gofmt·go mod tidy·tsc --noEmit)
 ```
 
-자세한 설계는 [설치 아키텍처](docs/installation-architecture.md), 협업 규칙은 [개발 워크플로](docs/development-workflow.md)를 참고하세요.
+CLI의 `TARGET_OS`는 `windows`, `darwin`(macOS), `linux`, `TARGET_ARCH`는 `amd64`, `arm64`를
+지원합니다. 생략한 값은 현재 컴퓨터 기준입니다. CLI 빌드는 `CGO_ENABLED=0`으로 실행하며,
+결과는 `artifacts/build/{대상 OS}-{대상 CPU}/bin/pulsemetry`에 저장합니다. Windows 대상에만
+`.exe`가 붙습니다. 다른 대상용 파일도 현재 컴퓨터에서 빌드할 수 있지만, 실행 검증에는 해당
+OS·CPU 환경이 필요합니다. `task build`는 현재 컴퓨터용 GUI와 CLI를 함께 만듭니다.
+
+### CLI·GUI 릴리스
+
+`main`에 반영된 커밋에 `v0.1.0` 같은 태그를 발행하면
+`.github/workflows/release.yml`이 CLI 검사·빌드와 GUI 빌드·패키징을 거쳐 GitHub Releases에 게시합니다.
+`v0.1.0-rc.1` 같은 태그는 prerelease로 게시합니다. 태그의 `v`를 제외한 버전을
+`CLI_VERSION`과 `GUI_VERSION`으로 주입합니다. CLI의 `pulsemetry version`과 설치 요청,
+GUI 배포 패키지는 같은 릴리스 버전을 사용합니다.
+
+Windows·macOS(`darwin`)·Linux 각각 `amd64`·`arm64`를 대상으로 아래 산출물 12개와
+그 파일들의 `SHA256SUMS`를 게시합니다.
+
+| 종류 | Release asset 이름 | 형식 |
+|---|---|---|
+| CLI | `pulsemetry_cli_{os}_{arch}` (Windows만 `.exe`) | 실행 파일 6개 |
+| Windows GUI | `pulsemetry_gui_windows_{arch}.exe` | NSIS 인스톨러 |
+| macOS GUI | `pulsemetry_gui_darwin_{arch}.dmg` | DMG |
+| Linux GUI | `pulsemetry_gui_linux_{arch}.AppImage` | AppImage |
+
+GUI 패키지에는 GUI만 포함합니다. GUI를 사용하려면 CLI를 별도로 설치하고 데몬을 실행해야 합니다.
+CLI는 별도 실행 파일로 배포하며 인스톨러로 만들지 않습니다.
+GUI는 해당 OS에서 빌드·패키징하며 Wails `v3.0.0-beta.11`과 플랫폼별 빌드 도구가 필요합니다.
+로컬 패키징은 `task package:gui TARGET_OS=darwin TARGET_ARCH=arm64 GUI_VERSION=0.1.0`처럼
+실행합니다. `TARGET_OS`·`TARGET_ARCH`를 생략하면 현재 컴퓨터 기준입니다.
+
+Linux AppImage 패키징에는 `--no-sort`를 지원하는 `patchelf`(0.15 이상)가 필요합니다.
+기본은 `PATH`의 실행 파일이며, 다른 파일을 선택하려면
+`PATCHELF=/경로/patchelf task package:gui TARGET_OS=linux TARGET_ARCH=amd64`처럼 지정합니다.
+패키징 스크립트는 선택한 도구를 절대 경로로 고정하고 지원 옵션을 확인한 뒤,
+AppDir의 GUI 실행 파일에 RPATH를 설정할 때만 `--no-sort`를 적용해 Go 빌드 정보 판독을 유지합니다.
+
+함께 묶이는 라이브러리에는 기존 인자를 그대로 전달하지만, 이들도 linuxdeploy의 내장 도구 대신
+선택한 `patchelf`로 처리됩니다. 기존 AppImage에는 이 변경이 반영되지 않으므로
+`task package:gui`로 다시 생성하고 릴리스 검증을 실행해야 합니다.
+
+모든 빌드와 첨부 파일 검증·업로드가 성공해야 draft Release를 공개합니다.
+같은 버전은 자동으로 덮어쓰지 않습니다. 실패 후 draft가 남으면 첨부 파일과 실패 원인을 확인하고,
+미공개 draft만 삭제한 뒤 해당 태그의 workflow를 재실행합니다. 공개된 버전의 수정은 새 태그로 발행합니다.
+
+backend의 기존 `/bin/pulsemetry_{os}_{arch}`(Windows만 `.exe`) 다운로드 경로는 유지합니다.
+backend CI가 고정된 릴리스의 `pulsemetry_cli_{os}_{arch}`를 내려받아 체크섬을 검증하고,
+기존 서버 파일명으로 배치해 이미지에 포함하는 연결은 backend 저장소의 후속 작업입니다.
+backend 설치 과정에서 CLI를 PATH에 등록하는 작업도 이번 릴리스 범위에 포함하지 않습니다.
+서버 다운로드 계약은 [문서 허브의 enrollment API](../docs/contracts/enrollment-api.md)를 따릅니다.
+
+`go build ./...` 를 직접 쓰지 않습니다. GUI 가 Vite 산출물을 embed 하고 OS 의 창 시스템을 링크해서
+순수 Go 기준의 검사가 성립하는 범위가 아닙니다. 자세한 것은 `AGENTS.md` 「명령어」를 보세요.
+
+자세한 설계는 [설치 아키텍처](docs/installation-architecture.md),
+[로컬 파이프라인](docs/local-pipeline.md), [SQLite 스키마](docs/sqlite-schema/README.md)를 참고하세요.
+결정 배경은 [ADR](docs/adr/), 협업 규칙은 [개발 워크플로](docs/development-workflow.md)에 있습니다.
+enrollment 서버 스펙은 서버 저장소를 참조하세요.
 
 ## 다음 구현 대상
 
-1. `cmd/telemetryctl/main.go`와 명령 구조
-2. Enrollment API 클라이언트와 인증 흐름
-3. 설치·복구·제거를 조정하는 installer 계층
-4. 로컬 설치 상태 저장소
-5. Manifest JSON Schema 계약 테스트와 Codex 병합 테스트
+1. **데몬 자동 실행 등록 — Windows** (PROJ-56, 작업 스케줄러). macOS·리눅스는 PROJ-55 에서
+   구현했습니다 (`internal/autostart`, [ADR 0007](docs/adr/0007-데몬은-비정상-종료일-때만-자동-재시작한다.md)).
+   Windows 에서는 `autostart` 명령이 미지원임을 알리고 `telemetryctl daemon` 을 직접 띄워야 합니다
+2. **GUI 화면 배선** — 트레이 퀵뷰는 실데이터로 돌고 있고, Home·Activity 는 아직 목데이터입니다
+3. **조회 API 전용 토큰** — 현재 데몬 로컬 API 는 ingest 토큰을 그대로 씁니다. 그 토큰은 벤더 설정
+   파일에 평문으로 들어가므로, 세션 이력을 돌려주는 조회 경로는 별도 자격으로 분리해야 합니다
+4. **고아 세션 마감** — 데몬이 비정상 종료하면 그때 열려 있던 세션의 `ended_at` 이 NULL 로 남아
+   영원히 "진행 중" 으로 보입니다. 기동 시 유휴 임계값을 넘긴 세션을 마감해야 합니다
+5. 토큰 rotation · heartbeat · 설정 재조회(`GET /v1/manifest`)
+6. `resource_attributes` → `OTEL_RESOURCE_ATTRIBUTES` 배선 (회사 단위 태깅)
+7. 설치 바이너리 PATH 등록, `uninstall`·`repair` (자격증명 파일에서 헤더 재주입)
+8. Codex 텔레메트리 인증 배선 (현재 Codex 설정에는 토큰이 들어가지 않음)

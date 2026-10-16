@@ -1,8 +1,15 @@
 # Build output
-/telemetryctl
-/telemetryctl.exe
+/pulsemetry
+/pulsemetry.exe
+# wails3 dev/build 가 레포 루트에 떨구는 GUI 바이너리. artifacts/ 로 가는 task build 산출물과
+# 달리 여기 남는다.
+/pulsemetry-gui
+/pulsemetry-gui.exe
 /dist/
 /bin/
+/artifacts/
+/.task/
+/scripts/gen-icons/node_modules/
 
 # Go test and coverage artifacts
 *.test
@@ -14,15 +21,19 @@ coverage.*
 /analysis/report.json
 /analysis/history.jsonl
 
-# Backups created by telemetryctl
-*.telemetryctl.bak
+# Backups created by pulsemetry
+*.pulsemetry-backup.*
+
+# 임시 Go 빌드 캐시. 실수로 커밋하면 수십만 파일이 들어온다.
+/.tmp-go-cache/
 
 # Python cache
 __pycache__/
 *.pyc
 
 # Editors and operating systems
-/.claude/
+/.claude/*
+!/.claude/settings.json
 /.idea/
 /.vscode/
 .DS_Store

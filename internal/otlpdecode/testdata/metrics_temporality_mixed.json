@@ -1,0 +1,79 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "claude-code" } },
+          { "key": "session.id", "value": { "stringValue": "5f3a9c21-8e44-4bb0-9d1e-2a7c6b0f1234" } }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": { "name": "com.anthropic.claude_code" },
+          "metrics": [
+            {
+              "name": "claude_code.session.count",
+              "unit": "count",
+              "sum": {
+                "aggregationTemporality": "AGGREGATION_TEMPORALITY_DELTA",
+                "isMonotonic": true,
+                "dataPoints": [
+                  { "timeUnixNano": "1786353360000000000", "asInt": "1", "attributes": [] }
+                ]
+              }
+            },
+            {
+              "name": "claude_code.active_time.total",
+              "unit": "s",
+              "sum": {
+                "aggregationTemporality": "AGGREGATION_TEMPORALITY_CUMULATIVE",
+                "isMonotonic": true,
+                "dataPoints": [
+                  { "timeUnixNano": "1786353360000000000", "asDouble": 412.5, "attributes": [] }
+                ]
+              }
+            },
+            {
+              "name": "claude_code.commit.count",
+              "unit": "count",
+              "sum": {
+                "aggregationTemporality": "AGGREGATION_TEMPORALITY_UNSPECIFIED",
+                "isMonotonic": true,
+                "dataPoints": [
+                  { "timeUnixNano": "1786353360000000000", "asInt": "2", "attributes": [] },
+                  { "timeUnixNano": "1786353361000000000", "asInt": "1", "attributes": [] }
+                ]
+              }
+            },
+            {
+              "name": "claude_code.context.window_used",
+              "unit": "tokens",
+              "gauge": {
+                "dataPoints": [
+                  { "timeUnixNano": "1786353360000000000", "asInt": "24580", "attributes": [] }
+                ]
+              }
+            },
+            {
+              "name": "claude_code.tool.duration",
+              "unit": "ms",
+              "histogram": {
+                "aggregationTemporality": "AGGREGATION_TEMPORALITY_DELTA",
+                "dataPoints": [
+                  {
+                    "timeUnixNano": "1786353360000000000",
+                    "count": "4",
+                    "sum": 812.0,
+                    "bucketCounts": ["1", "2", "1"],
+                    "explicitBounds": [100.0, 500.0],
+                    "attributes": []
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

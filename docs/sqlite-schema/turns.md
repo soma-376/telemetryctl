@@ -1,0 +1,53 @@
+# `turns`
+
+세션 안의 실제 턴과 귀속할 수 없는 이벤트를 담는 가상 턴을 저장한다.
+
+| 컬럼 | 타입 | 제약 | 설명 |
+|---|---|---|---|
+| `id` | `INTEGER` | 기본 키 | SQLite rowid 별칭 |
+| `session_id` | `INTEGER` | 필수, FK | `sessions.id` 참조 |
+| `turn_key` | `TEXT` | 필수 | Claude Code `prompt.id` 또는 Codex 합성 키 |
+| `turn_index` | `INTEGER` | 선택 | 실제 턴 순서. 가상 턴은 `NULL` |
+| `client_version` | `TEXT` | 선택 | 벤더 클라이언트 버전 |
+| `started_at` | `INTEGER` | 선택 | 턴 시작 시각 |
+| `ended_at` | `INTEGER` | 선택 | 턴 종료 시각 |
+| `prompt_text` | `TEXT` | 선택 | 프롬프트 원문 |
+| `prompt_message_id` | `TEXT` | 선택 | OTel에서 관측한 Codex 메시지 ID |
+| `prompt_source_turn_id` | `TEXT` | 선택 | OTel에서 관측한 Codex 원천 turn ID |
+| `prompt_completeness` | `TEXT` | 필수 | `complete`·`truncated`·`unknown`; 기본값 `unknown` |
+| `prompt_completeness_evidence` | `TEXT` | 선택 | 본문 완전성 또는 UTF-8 절단 근거 |
+| `prompt_evidence_event_id` | `INTEGER` | 선택 | 근거가 된 기존 이벤트 ID. 이벤트 중복 키는 그대로 둠 |
+| `prompt_conflict` | `INTEGER` | 필수 | 서로 다른 OTel 근거 충돌 여부(0/1) |
+| `content_purged` | `INTEGER` | 필수 | 원문 삭제 뒤 JSONL 재처리로 본문이 되살아나지 않도록 하는 표식(0/1) |
+| `ttft_ms` | `INTEGER` | 선택 | Codex time-to-first-token |
+
+`(session_id, turn_key)`와 `(session_id, turn_index)`는 각각 UNIQUE다. SQLite는 UNIQUE의
+`NULL`을 서로 다른 값으로 취급하므로 `ux_turns_virtual` 부분 UNIQUE 인덱스가 세션별
+`turn_index IS NULL` 행을 하나로 제한한다.
+
+```sql
+CREATE TABLE turns (
+  id             INTEGER PRIMARY KEY,
+  session_id     INTEGER NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+  turn_key       TEXT NOT NULL,
+  turn_index     INTEGER CHECK (turn_index IS NULL OR (typeof(turn_index) = 'integer' AND turn_index >= 0)),
+  client_version TEXT,
+  started_at     INTEGER,
+  ended_at       INTEGER,
+  prompt_text    TEXT,
+  prompt_message_id TEXT,
+  prompt_source_turn_id TEXT,
+  prompt_completeness TEXT NOT NULL DEFAULT 'unknown' CHECK (prompt_completeness IN ('complete', 'truncated', 'unknown')),
+  prompt_completeness_evidence TEXT,
+  prompt_evidence_event_id INTEGER,
+  prompt_conflict INTEGER NOT NULL DEFAULT 0 CHECK (prompt_conflict IN (0, 1)),
+  content_purged INTEGER NOT NULL DEFAULT 0 CHECK (content_purged IN (0, 1)),
+  ttft_ms        INTEGER CHECK (ttft_ms >= 0),
+  UNIQUE (session_id, turn_key),
+  UNIQUE (session_id, turn_index),
+  CHECK (ended_at >= started_at)
+);
+
+CREATE UNIQUE INDEX ux_turns_virtual
+ON turns (session_id) WHERE turn_index IS NULL;
+```

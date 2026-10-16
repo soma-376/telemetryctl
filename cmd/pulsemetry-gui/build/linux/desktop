@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=Pulsemetry
+Comment=AI 도구 사용 현황 데스크톱 대시보드
+# The Exec line includes %u to pass the URL to the application
+Exec=Pulsemetry %u
+Terminal=false
+Type=Application
+Icon=Pulsemetry
+Categories=Utility;
+StartupWMClass=Pulsemetry
+
+ 

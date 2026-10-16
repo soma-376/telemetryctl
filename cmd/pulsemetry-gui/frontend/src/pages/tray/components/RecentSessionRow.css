@@ -1,0 +1,13 @@
+@media (prefers-reduced-motion: no-preference) {
+  .session-row.scope-x6o5n4:is(
+      :where(.scope-x6o5n4):hover,
+      :where(.scope-x6o5n4):focus-visible
+    )
+    .overflowing:where(.scope-x6o5n4)
+    .title-text:where(.scope-x6o5n4) {
+    overflow: visible;
+    text-overflow: clip;
+    transform: translateX(var(--title-offset));
+    transition: transform var(--title-duration) linear 0.4s;
+  }
+}

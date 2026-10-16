@@ -1,0 +1,19 @@
+# 줄바꿈은 저장소 안에서 LF 하나로 통일한다.
+#
+# 없으면 무슨 일이 나는가: Windows 체크아웃이 CRLF 로 쓰이는데 Go 도구는 LF 를 기준으로 본다.
+# 그래서 clean checkout 에서 CI 의 format-deps 잡이 실패한다 — `gofmt -l` 이
+# cmd/pulsemetry-gui 의 .go 파일을 전부 잡고, `go mod tidy -diff` 가 go.sum 126줄을 통째로
+# 다르다고 한다. `gofmt -d` 로 보면 실제로 바뀌는 것은 줄 끝의 CR 뿐이고 코드는 그대로다.
+#
+# 로컬에서도 같은 이유로 `wails3 generate bindings` 나 `go mod tidy` 를 돌릴 때마다
+# bindings/·go.mod 가 "수정됨" 으로 잡힌다. 내용 변경은 0줄이다.
+* text=auto eol=lf
+
+# 바이너리는 변환하지 않는다. text=auto 가 대개 알아서 감지하지만 오탐하면 파일이 깨지므로
+# 이 레포에 실제로 있는 것은 명시해 둔다.
+*.png   binary
+*.ico   binary
+*.icns  binary
+*.car   binary
+*.exe   binary
+*.syso  binary

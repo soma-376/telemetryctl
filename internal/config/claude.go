@@ -1,0 +1,304 @@
+package config
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"sort"
+	"strings"
+
+	"github.com/your-org/pulsemetry/internal/contract"
+	"github.com/your-org/pulsemetry/internal/vendor"
+)
+
+// 아래 셋은 localapi·receiver 의 같은 이름 상수와 값이 같아야 한다. 그 패키지를 import
+// 하지 않는 이유는 LocalIngestHeader 와 같다(의존성 방향, localheader.go). 어긋나면
+// claude_test.go 의 TestClaudeHookPathsMatchDaemon 이 잡는다.
+const (
+	hookAPIPathPrefix    = "/v1/hooks/"
+	hookSessionStartPath = "/v1/hooks/session-start"
+	hookSessionEndPath   = "/v1/hooks/session-end"
+
+	// claudeHookTimeoutSec 은 훅 HTTP 요청 상한이다. 데몬이 죽어 있으면 그만큼 세션
+	// 종료가 지연된다.
+	claudeHookTimeoutSec = 5
+)
+
+// claudeManagedEnvKeys 는 이 도구가 소유권을 주장하는 env 키 전부다.
+//
+// 이 목록의 역할은 두 가지다. (1) MergeClaude 가 병합 전에 여기 있는 키를 전부 지워
+// "우리가 예전에 넣었다가 지금은 넣지 않는 키"가 남지 않게 하고, (2) uninstall 이
+// 사용자가 직접 넣은 키를 건드리지 않고 우리 것만 제거할 수 있게 한다 (§5.2).
+//
+// 따라서 claudeEnv 가 쓰는 키는 **반드시** 여기에도 있어야 한다. 한쪽만 늘리면
+// 조용히 잔재가 남는다 — claude_test.go 의 대칭성 테스트가 그것을 잡는다.
+var claudeManagedEnvKeys = []string{
+	"CLAUDE_CODE_ENABLE_TELEMETRY",
+	// 로컬 배선에서만 켜지지만(claudeEnv) 목록에는 언제나 있어야 한다. 여기서 빠지면
+	// local disable 이 이 키를 지우지 못해 회사 직결 상태에 로컬 흔적이 남는다 (PROJ-45).
+	"CLAUDE_CODE_ENHANCED_TELEMETRY_BETA",
+	"OTEL_EXPORTER_OTLP_PROTOCOL",
+	"OTEL_EXPORTER_OTLP_ENDPOINT",
+	"OTEL_EXPORTER_OTLP_HEADERS",
+	"OTEL_EXPORTER_OTLP_COMPRESSION",
+	"OTEL_METRICS_EXPORTER",
+	"OTEL_LOGS_EXPORTER",
+	"OTEL_TRACES_EXPORTER",
+	"OTEL_LOG_USER_PROMPTS",
+	"OTEL_LOG_ASSISTANT_RESPONSES",
+	"OTEL_LOG_TOOL_DETAILS",
+	"OTEL_LOG_TOOL_CONTENT",
+	"OTEL_LOG_RAW_API_BODIES",
+	// 아래 셋은 PROJ-36 에서 추가됐다 (계획서 「CLI 변경」).
+	"OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE",
+	"OTEL_METRIC_EXPORT_INTERVAL",
+	"OTEL_LOGS_EXPORT_INTERVAL",
+	// PROJ-45 추가. 로컬은 traces 도 항상 켜므로 그 주기도 명시한다.
+	"OTEL_TRACES_EXPORT_INTERVAL",
+}
+
+// 아래 세 값은 PROJ-36 이 명시적으로 고정하는 exporter 동작이다.
+//
+// 전부 Claude Code 의 문서화된 기본값과 같은 값을 쓴다. 목적이 "동작을 바꾸는 것"이
+// 아니라 "가정하지 않는 것"이기 때문이다 — 사용자가 셸 프로필에서 이 값들을 덮어써도
+// 우리가 쓴 settings.json 의 env 가 이깁니다. 값을 적어 두면 그 가정이 검증 가능해지고,
+// 관리 키 목록에 들어가 있으므로 uninstall 이 되돌릴 수도 있다 (§5.2).
+const (
+	// claudeTemporality 는 delta 로 고정한다. 로컬 롤업이 Sum.aggregation_temporality 를
+	// 실제로 읽어 분기하긴 하지만(계획서 「반드시 알아야 할 제약」 §4), cumulative 로
+	// 들어오면 리셋 추적 오차가 그대로 비용 수치에 얹힌다. 어차피 Claude Code 기본값이
+	// delta 이므로 그것을 명시적으로 못박는다.
+	claudeTemporality = "delta"
+	// claudeMetricExportInterval 은 밀리초다. Claude Code 기본값 60초.
+	claudeMetricExportInterval = "60000"
+	// claudeLogsExportInterval 은 밀리초다. Claude Code 기본값 5초.
+	claudeLogsExportInterval = "5000"
+	// claudeTracesExportInterval 은 밀리초다. 로그와 같은 주기를 쓴다 — 툴 타임라인은
+	// 로그와 트레이스를 같은 시간축에 놓고 조립하므로 주기가 어긋나면 세션 마감 시점에
+	// 한쪽만 도착한 배치가 생긴다 (PROJ-45).
+	claudeTracesExportInterval = "5000"
+)
+
+func claudeEnv(m *contract.Manifest, token string) map[string]string {
+	env := map[string]string{
+		"CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+		"OTEL_EXPORTER_OTLP_PROTOCOL":  m.OTLP.Protocol,
+		"OTEL_EXPORTER_OTLP_ENDPOINT":  m.OTLP.Endpoint,
+		"OTEL_EXPORTER_OTLP_HEADERS":   claudeHeaders(m, token),
+		"OTEL_METRICS_EXPORTER":        exporterEnv(m.Signals.Metrics),
+		"OTEL_LOGS_EXPORTER":           exporterEnv(m.Signals.Logs),
+		"OTEL_TRACES_EXPORTER":         exporterEnv(m.Signals.Traces),
+		"OTEL_LOG_USER_PROMPTS":        boolEnv(m.Privacy.CollectUserPrompts),
+		"OTEL_LOG_ASSISTANT_RESPONSES": boolEnv(m.Privacy.CollectAssistantResponses),
+		"OTEL_LOG_TOOL_DETAILS":        boolEnv(m.Privacy.CollectToolDetails),
+		"OTEL_LOG_TOOL_CONTENT":        boolEnv(m.Privacy.CollectToolContent),
+		"OTEL_LOG_RAW_API_BODIES":      boolEnv(m.Privacy.CollectRawAPIBodies),
+
+		"OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": claudeTemporality,
+		"OTEL_METRIC_EXPORT_INTERVAL":                       claudeMetricExportInterval,
+		"OTEL_LOGS_EXPORT_INTERVAL":                         claudeLogsExportInterval,
+		"OTEL_TRACES_EXPORT_INTERVAL":                       claudeTracesExportInterval,
+	}
+	if m.OTLP.Compression != "" {
+		env["OTEL_EXPORTER_OTLP_COMPRESSION"] = m.OTLP.Compression
+	}
+	// 확장 텔레메트리는 **로컬 배선에서만** 켠다.
+	//
+	// 회사 직결 상태에서 켜면 회사가 받는 데이터가 재배선 여부에 따라 달라진다 —
+	// installer/local.go 의 불변식 1 위반이다. 로컬은 포워더가 회사 기준으로 다시
+	// 거르므로 켜도 상위로 나가는 것이 늘지 않는다.
+	//
+	// 판별은 X-Pulsemetry-Local 헤더와 같은 isLocalEndpoint 를 쓴다. "로컬인가" 의
+	// 진실원을 하나로 유지하는 것이 localheader.go 가 설명하는 그 이유다.
+	if isLocalEndpoint(m.OTLP.Endpoint) {
+		env["CLAUDE_CODE_ENHANCED_TELEMETRY_BETA"] = "1"
+	}
+	return env
+}
+
+// claudeHeaders 는 OTEL_EXPORTER_OTLP_HEADERS 값을 만든다.
+//
+// 형식은 W3C Baggage 를 닮은 "K=V,K=V" 다. 로컬 수신기로 재배선된 경우에만 두 번째
+// 쌍이 붙는다 (localheader.go 가 그 이유를 설명한다).
+//
+// 쉼표와 등호로 나누는 형식이라 값에 그 두 문자가 없어야 파싱이 모호해지지 않는다.
+// 토큰은 receiver.NewToken 이 base64url **패딩 없이** 만들므로 (= 가 없고 - _ 만 쓴다)
+// 그 조건을 만족한다 — receiver/auth.go 가 인용·이스케이프를 피하려고 일부러 고른
+// 인코딩이고, 여기가 그 선택에 기대는 지점이다.
+//
+// 되읽기는 bearerFromHeaderList 가 한다 (token.go). `local disable` 이 회사 토큰을
+// 되찾는 유일한 경로이므로 이 형식과 그 파서는 함께 움직여야 한다.
+func claudeHeaders(m *contract.Manifest, token string) string {
+	headers := "Authorization=Bearer " + token
+	if isLocalEndpoint(m.OTLP.Endpoint) {
+		headers += "," + LocalIngestHeader + "=" + LocalIngestHeaderValue
+	}
+	return headers
+}
+
+// claudeLifecycleEvents 는 우리가 거는 훅 이벤트와 그 경로다.
+//
+// SessionStart 에 matcher 를 두지 않는다. startup·resume·clear·compact·fork 가 전부
+// "세션이 살아 있다" 는 뜻이라 갈라 볼 이유가 없다.
+var claudeLifecycleEvents = []struct{ event, path string }{
+	{"SessionStart", hookSessionStartPath},
+	{"SessionEnd", hookSessionEndPath},
+}
+
+// claudeHookURL 은 훅이 POST 할 데몬 주소다. 포트는 OTLP endpoint 에서 파생한다 —
+// 수신기가 포트 폴백을 하면 둘 다 같이 움직여야 한다.
+func claudeHookURL(endpoint, path, vendorID string) string {
+	return strings.TrimRight(endpoint, "/") + path + "?vendor=" + vendorID
+}
+
+// claudeHookHandler 는 http 훅 하나다. Codex 와 달리 프로세스를 띄우지 않고 데몬으로
+// 직접 POST 한다. 헤더의 토큰은 리터럴이다 — 같은 파일의 OTEL_EXPORTER_OTLP_HEADERS 가
+// 이미 같은 값을 평문으로 담고 있어 노출이 늘지 않는다.
+func claudeHookHandler(endpoint, path, token string) map[string]any {
+	return map[string]any{
+		"type": "http",
+		"url":  claudeHookURL(endpoint, path, string(vendor.ClaudeCode)),
+		"headers": map[string]any{
+			"Authorization":   "Bearer " + token,
+			LocalIngestHeader: LocalIngestHeaderValue,
+		},
+		"timeout": claudeHookTimeoutSec,
+	}
+}
+
+// isClaudeHook 은 handler 가 우리 것인지 본다.
+//
+// 포트는 보지 않는다 — 폴백으로 바뀌어도 예전에 쓴 handler 를 알아보고 지워야 한다.
+// 대신 loopback 호스트와 경로를 함께 본다. 경로만 보면 `/v1/hooks/` 를 쓰는 남의
+// 서버(사내 감사 서비스 등)로 향하는 사용자 훅까지 우리 것으로 오인해 지운다.
+func isClaudeHook(v map[string]any) bool {
+	if typ, _ := v["type"].(string); typ != "http" {
+		return false
+	}
+	raw, _ := v["url"].(string)
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	if !isLocalEndpoint(parsed.Scheme + "://" + parsed.Host) {
+		return false
+	}
+	return strings.HasPrefix(parsed.Path, hookAPIPathPrefix)
+}
+
+// mergeClaudeHooks 는 이벤트 배열이나 사용자 handler 를 소유하지 않고 우리 handler 하나만
+// 관리한다 (mergeCodexHooks 와 같은 규칙).
+func mergeClaudeHooks(root map[string]any, endpoint, token string, enabled bool) []string {
+	hooks, _ := root["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
+	managed := []string{}
+	for _, ev := range claudeLifecycleEvents {
+		groups := toMapSlice(root, hooks[ev.event])
+		want := claudeHookHandler(endpoint, ev.path, token)
+
+		out := groups[:0]
+		for _, group := range groups {
+			handlers := toMapSlice(root, group["hooks"])
+			kept := handlers[:0]
+			for _, handler := range handlers {
+				if isClaudeHook(handler) {
+					// 값이 낡았을 수 있으므로(포트·토큰) 남기지 않고 아래에서 새로 넣는다.
+					continue
+				}
+				kept = append(kept, handler)
+			}
+			if len(kept) > 0 {
+				group["hooks"] = kept
+				out = append(out, group)
+			}
+		}
+		if enabled {
+			out = append(out, map[string]any{"hooks": []map[string]any{want}})
+			managed = append(managed, "hooks."+ev.event+":"+ev.path)
+		}
+		if len(out) == 0 {
+			delete(hooks, ev.event)
+		} else {
+			hooks[ev.event] = out
+		}
+	}
+	if len(hooks) == 0 {
+		delete(root, "hooks")
+	} else {
+		root["hooks"] = hooks
+	}
+	return managed
+}
+
+// toMapSlice 는 JSON 에서 읽은 []any 와 우리가 만든 []map[string]any 를 같은 모양으로
+// 맞춘다. 파일에서 온 값은 언제나 []any 다.
+func toMapSlice(_ map[string]any, v any) []map[string]any {
+	switch typed := v.(type) {
+	case []map[string]any:
+		return typed
+	case []any:
+		out := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			if m, ok := item.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+func boolEnv(value bool) string {
+	if value {
+		return "1"
+	}
+	return "0"
+}
+
+func exporterEnv(enabled bool) string {
+	if enabled {
+		return "otlp"
+	}
+	return "none"
+}
+
+// MergeClaude authoritatively synchronizes only Pulsemetry-managed OTel keys.
+func MergeClaude(path string, m *contract.Manifest, token string, _ bool) (Result, error) {
+	raw, existed, err := readFileIfExists(path)
+	if err != nil {
+		return Result{}, err
+	}
+	root := map[string]any{}
+	if existed && len(raw) > 0 {
+		if err := json.Unmarshal(raw, &root); err != nil {
+			return Result{}, fmt.Errorf("parse Claude settings %s: %w", path, err)
+		}
+	}
+	env := map[string]any{}
+	if current, ok := root["env"].(map[string]any); ok {
+		env = current
+	}
+	for _, key := range claudeManagedEnvKeys {
+		delete(env, key)
+	}
+	desired := claudeEnv(m, token)
+	keys := make([]string, 0, len(desired))
+	for key, value := range desired {
+		env[key] = value
+		keys = append(keys, "env."+key)
+	}
+	keys = append(keys, mergeClaudeHooks(root, m.OTLP.Endpoint, token, isLocalEndpoint(m.OTLP.Endpoint))...)
+	sort.Strings(keys)
+	root["env"] = env
+	out, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return Result{}, err
+	}
+	out = append(out, '\n')
+	if err := AtomicWriteFile(path, out, 0o600); err != nil {
+		return Result{}, err
+	}
+	return Result{Path: path, ManagedKeys: keys, ManagedEntries: captureManaged(root, keys), Created: !existed}, nil
+}
