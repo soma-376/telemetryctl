@@ -21,7 +21,7 @@ enrollment의 기계 판독 원본은 이 레포의 `contracts/` JSON Schema입�
 ├── docs/                      # 설치 아키텍처·로컬 파이프라인·SQLite 스키마·ADR·개발 워크플로
 └── internal/
     ├── contract/              #   enroll 요청/응답·manifest Go 타입 (스키마와 1:1)
-    ├── enrollment/            #   서버 /v1/enroll 호출
+    ├── enrollment/            #   서버 /api/v1/enroll 호출
     ├── installer/             #   설정 적용 오케스트레이션 + 로컬 상태 + local enable/disable
     ├── credential/            #   설치 토큰·ingest 토큰 원본 보관 (OS 키링)
     ├── config/                #   Claude·Codex 설정 병합·백업
@@ -99,7 +99,7 @@ Claude Code(`~/.claude/settings.json`)·Codex(`~/.codex/config.toml`)에 OTel �
 `installation_token`과 회사 `telemetry_token`은 OS 키링에만 저장합니다. 로컬 파이프라인이 배선된
 기본 상태에서 Claude·Codex 설정에 기록되는 것은 **로컬 ingest 토큰**뿐이고, 배선이 강등된
 (회사 직결 — grpc manifest·키링 불가) 설치에서만 `telemetry_token`이 설정에 실립니다. `reconnect`는 설치 토큰으로
-`POST /v1/installations/telemetry-token`을 호출해 새 telemetry token을 발급받습니다.
+`POST /api/v1/installations/telemetry-token`을 호출해 새 telemetry token을 발급받습니다.
 
 ## 로컬 데이터 파이프라인 (opt-out, 기본 켜짐)
 
@@ -268,7 +268,7 @@ enrollment 서버 스펙은 서버 저장소를 참조하세요.
    파일에 평문으로 들어가므로, 세션 이력을 돌려주는 조회 경로는 별도 자격으로 분리해야 합니다
 4. **고아 세션 마감** — 데몬이 비정상 종료하면 그때 열려 있던 세션의 `ended_at` 이 NULL 로 남아
    영원히 "진행 중" 으로 보입니다. 기동 시 유휴 임계값을 넘긴 세션을 마감해야 합니다
-5. 토큰 rotation · heartbeat · 설정 재조회(`GET /v1/manifest`)
+5. 토큰 rotation · heartbeat · 설정 재조회(`GET /api/v1/manifest`)
 6. `resource_attributes` → `OTEL_RESOURCE_ATTRIBUTES` 배선 (회사 단위 태깅)
 7. 설치 바이너리 PATH 등록, `uninstall`·`repair` (자격증명 파일에서 헤더 재주입)
 8. Codex 텔레메트리 인증 배선 (현재 Codex 설정에는 토큰이 들어가지 않음)
