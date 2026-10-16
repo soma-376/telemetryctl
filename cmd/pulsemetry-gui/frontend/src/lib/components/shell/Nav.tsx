@@ -1,6 +1,4 @@
-import Pill from "$lib/components/ui/Pill";
 import { Fragment } from "react";
-import BarsIcon from "../../icons/BarsIcon";
 import HomeIcon from "../../icons/HomeIcon";
 import ListIcon from "../../icons/ListIcon";
 import type { AppSection } from "../../navigation";
@@ -51,20 +49,6 @@ export default function Nav({
               })()}
             </Fragment>
           ))}
-          <span
-            title="준비 중"
-            className="text-text-muted flex flex-1 items-center justify-center font-semibold whitespace-nowrap gap-[9px] p-[12px_8px] rounded-[12px] text-[14px] [cursor:default]"
-          >
-            <BarsIcon size={17} strokeWidth={1.8} /> Insights{" "}
-            <Pill
-              label="준비 중"
-              fg="var(--color-text-muted)"
-              bg="var(--color-track)"
-              fontSize={10.5}
-              radius={5}
-              padding="3px 6px"
-            />
-          </span>
         </div>
       </nav>
     </>

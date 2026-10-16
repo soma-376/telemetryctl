@@ -91,28 +91,9 @@ export default function App() {
                 className="flex flex-1 flex-col overflow-y-auto"
               >
                 {activeTab === "overview" ? (
-                  <>
-                    <Home onNavigate={go} />
-                  </>
+                  <Home onNavigate={go} />
                 ) : (
-                  <>
-                    {activeTab === "activity" ? (
-                      <>
-                        <Activity />
-                      </>
-                    ) : (
-                      <>
-                        <main className="flex flex-1 flex-col items-center justify-center gap-2">
-                          <div className="text-text font-bold text-[25px] tracking-[-0.02em]">
-                            Insights
-                          </div>
-                          <div className="text-text-secondary text-[13.5px]">
-                            아직 준비 중인 화면이야.
-                          </div>
-                        </main>
-                      </>
-                    )}
-                  </>
+                  <Activity />
                 )}
               </div>
               <Nav active={activeTab} onSelect={go} />

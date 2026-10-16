@@ -1,1 +1,1 @@
-export type AppSection = "overview" | "activity" | "insights";
+export type AppSection = "overview" | "activity";
