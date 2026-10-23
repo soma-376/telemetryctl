@@ -301,7 +301,7 @@ PC 또는 설치 환경마다 달라지는 값이다.
 
 ```text
 허용:
-- telemetry_token 재발급 (POST /v1/installations/telemetry-token)
+- telemetry_token 재발급 (POST /api/v1/installations/telemetry-token)
 
 금지:
 - OTLP 데이터 전송 — telemetry_token(ptt_) 의 몫이다

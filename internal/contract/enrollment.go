@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// EnrollRequest 는 POST /v1/enroll 요청 본문이다. 서버와 클라이언트가 공유하는 유일한 요청 계약이다
+// EnrollRequest 는 POST /api/v1/enroll 요청 본문이다. 서버와 클라이언트가 공유하는 유일한 요청 계약이다
 // (각자 따로 선언하지 않는다 — 필드 드리프트 방지).
 type EnrollRequest struct {
 	Code          string `json:"code,omitempty"`
@@ -24,7 +24,7 @@ type EnrollRequest struct {
 
 // Enrollment 은 enroll 응답 봉투다. 순수 설정 manifest 에 이 설치의 정체성·토큰을 감싼다.
 // installation_id·installation_token 은 "설정"이 아니라 이 설치의 자격이므로 manifest 밖에 둔다:
-// 설정 재조회(GET /v1/manifest)에 secret 을 매번 싣지 않기 위함이다 (enrollment-server-spec §4.3·§5).
+// 설정 재조회(GET /api/v1/manifest)에 secret 을 매번 싣지 않기 위함이다 (enrollment-server-spec §4.3·§5).
 type Enrollment struct {
 	InstallationID    string   `json:"installation_id"`
 	InstallationToken string   `json:"installation_token"`
