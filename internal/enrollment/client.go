@@ -1,4 +1,4 @@
-// Package enrollment 는 pulsemetry CLI 가 enrollment 서버의 /v1/enroll 을 호출하는
+// Package enrollment 는 pulsemetry CLI 가 enrollment 서버의 /api/v1/enroll 을 호출하는
 // 클라이언트다. 요청/응답 모두 공유 계약(contract)을 사용한다.
 package enrollment
 
@@ -19,7 +19,7 @@ func Enroll(serverURL string, req contract.EnrollRequest) (*contract.Enrollment,
 	if err != nil {
 		return nil, err
 	}
-	url := strings.TrimRight(serverURL, "/") + "/v1/enroll"
+	url := strings.TrimRight(serverURL, "/") + "/api/v1/enroll"
 	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
 
 	if err != nil {
@@ -43,7 +43,7 @@ func Enroll(serverURL string, req contract.EnrollRequest) (*contract.Enrollment,
 // RefreshTelemetryToken exchanges the installation credential kept in the OS
 // keyring for the replaceable bearer token used by OTLP exporters.
 func RefreshTelemetryToken(serverURL, installationToken string) (*contract.TelemetryTokenResponse, error) {
-	url := strings.TrimRight(serverURL, "/") + "/v1/installations/telemetry-token"
+	url := strings.TrimRight(serverURL, "/") + "/api/v1/installations/telemetry-token"
 	req, err := http.NewRequest(http.MethodPost, url, nil)
 	if err != nil {
 		return nil, err
