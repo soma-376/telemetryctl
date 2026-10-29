@@ -56,3 +56,5 @@ export type {
   TraySnapshot,
   VendorLimit,
 };
+
+export type { Snapshot as PolicySnapshot } from "../../bindings/github.com/your-org/pulsemetry/internal/policy";

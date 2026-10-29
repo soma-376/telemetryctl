@@ -1,6 +1,6 @@
 // Package credential 은 로컬 비밀의 OS 키링(Windows Credential Manager·macOS
 // Keychain·Linux Secret Service) 보관소다. 디스크에 평문 파일로 남지 않는다.
-// 대표 항목인 설치 자격증명(installation_token)은 telemetry_token 재발급 시에만
+// 대표 항목인 설치 자격증명(installation_token)은 telemetry_token 재발급과 설치 상태 보고에만
 // 사용한다. Claude/Codex 설정에는 이 토큰이 아니라 교체 가능한 telemetry_token을
 // 기록하고, state.json에도 비밀을 두지 않는다.
 package credential

@@ -104,7 +104,7 @@ export function packageGUI(mode, { root, os, arch, version, wails = 'wails3' }) 
   }[os];
   execFileSync(wailsCommand, ['task', task, `GOOS=${os}`, `ARCH=${arch}`, `GUI_VERSION=${version}`,
     `BIN_DIR=${dirs.build}`, `ASSETS_DIR=${dirs.assets}`, `PACKAGE_DIR=${dirs.packageDir}`,
-    ...(os === 'windows' ? ['FORMAT=nsis'] : [])], { cwd, env: packageEnv, stdio: 'inherit' });
+    ...(os === 'windows' ? ['FORMAT=nsis', 'INSTALL_SCOPE=user'] : [])], { cwd, env: packageEnv, stdio: 'inherit' });
   if (mode === 'package' && os === 'darwin') {
     copyFileSync(path.join(dirs.build, 'Pulsemetry.dmg'), path.join(dirs.packageDir, 'Pulsemetry.dmg'));
   }

@@ -3,27 +3,19 @@ import Dot from "$lib/components/ui/Dot";
 import Mascot from "$lib/components/ui/Mascot";
 import Pill from "$lib/components/ui/Pill";
 import { AGENT_STYLE } from "$lib/domain/agent";
-import CheckIcon from "$lib/icons/CheckIcon";
 import ChevronDownIcon from "$lib/icons/ChevronDownIcon";
 import RefreshIcon from "$lib/icons/RefreshIcon";
 import SlidersIcon from "$lib/icons/SlidersIcon";
 import XIcon from "$lib/icons/XIcon";
 import { getAppInfo, type AppInfo } from "$lib/ipc/app";
+import { usePolicyQuery } from "$lib/query/policy";
+import CollectionPolicy from "./CollectionPolicy";
 import { useUpdatesQuery } from "$lib/query/updates";
 import { cssStyle, useWindowEvent } from "$lib/react-utils";
 import { Fragment, useEffect, useState } from "react";
 import DaemonUpdates from "./DaemonUpdates";
 import { UninstallSetting } from "./Uninstall";
-import {
-  COLLECTION,
-  CONNECTIONS,
-  CONN_STATUS,
-  HEALTH,
-  POLICY,
-  PREFS,
-  PREF_DEFAULTS,
-  TRANSPORT,
-} from "./mock";
+import { CONNECTIONS, CONN_STATUS, HEALTH, PREFS, PREF_DEFAULTS } from "./mock";
 
 export default function SettingsModal({
   open,
@@ -33,6 +25,7 @@ export default function SettingsModal({
   onClose: () => void;
 }) {
   const updates = useUpdatesQuery(open);
+  const policy = usePolicyQuery(open);
   const [toggles, setToggles] = useState(PREF_DEFAULTS);
   const [appInfo, setAppInfo] = useState<AppInfo>({
     name: "Pulsemetry",
@@ -284,122 +277,10 @@ export default function SettingsModal({
                 <div className="text-text-muted font-semibold text-[11.5px] tracking-[0.02em] m-[22px_0_8px]">
                   보안 및 데이터 수집
                 </div>
-                <div className="flex items-start gap-[10px] [background:#fdf6ec] [border:1px_solid_#efdfc4] rounded-[11px] p-[11px_14px] mb-[14px]">
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="#8b6b36"
-                    strokeWidth="1.9"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="flex-none w-[15px] h-[15px] mt-[2px]"
-                  >
-                    <path d="M12 4.5 21 19.5H3z" />
-                    <path d="M12 10v4" />
-                    <circle cx="12" cy="16.8" r="0.9" fill="#8b6b36" />
-                  </svg>
-                  <div className="text-[12px] leading-[1.6] text-[#5d5852]">
-                    아래 항목은{" "}
-                    <strong className="text-text font-semibold">
-                      조직의 중앙 서버로 전송
-                    </strong>
-                    됩니다. 조직 정책으로 관리되며 이 기기에서 변경할 수 없어요.
-                  </div>
-                </div>
-                {COLLECTION.map((c, i) => (
-                  <Fragment key={c.key}>
-                    <div
-                      style={cssStyle(
-                        "border-bottom:1px solid " +
-                          String(line(i, COLLECTION.length)),
-                      )}
-                      className="grid items-center grid-cols-[26px_minmax(0,1fr)_auto] gap-[11px] p-[9px_0]"
-                    >
-                      <span
-                        style={cssStyle(
-                          "background:" +
-                            String(
-                              c.sent ? "#f4f0e9" : "var(--color-inactive-soft)",
-                            ) +
-                            ";color:" +
-                            String(c.sent ? "var(--color-accent)" : "#a8a29a"),
-                        )}
-                        className="flex items-center justify-center w-[26px] h-[26px] rounded-[8px] text-[12px]"
-                      >
-                        {c.icon}
-                      </span>
-                      <span className="min-w-0">
-                        <span className="text-text block truncate font-semibold text-[12.5px] mb-[3px]">
-                          {c.label}
-                        </span>
-                        <span className="block truncate [font-family:var(--font-mono)] text-[10.5px] text-[#a8a29a]">
-                          {c.key}
-                        </span>
-                      </span>
-                      <span
-                        style={cssStyle(
-                          "color:" +
-                            String(
-                              c.sent
-                                ? "var(--color-accent)"
-                                : "var(--color-inactive)",
-                            ) +
-                            ";background:" +
-                            String(
-                              c.sent
-                                ? "var(--color-accent-soft)"
-                                : "var(--color-inactive-soft)",
-                            ),
-                        )}
-                        className="inline-flex items-center font-semibold whitespace-nowrap justify-self-end gap-[6px] text-[11px] rounded-[7px] p-[5px_9px]"
-                      >
-                        {c.sent ? (
-                          <>
-                            <CheckIcon
-                              size={10}
-                              strokeWidth={2.8}
-                              className="flex-none"
-                            />
-                          </>
-                        ) : (
-                          <>
-                            <XIcon
-                              size={10}
-                              strokeWidth={2.8}
-                              className="flex-none"
-                            />
-                          </>
-                        )}
-                        {c.sent ? "전송" : "제외"}
-                      </span>
-                    </div>
-                  </Fragment>
-                ))}
-                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-[10px] mt-[14px]">
-                  <div className="bg-surface-hover [border:1px_solid_#efe9e1] rounded-[11px] p-[12px_14px]">
-                    <div className="text-text-muted text-[11px] mb-[7px]">
-                      전송 대상
-                    </div>
-                    <div className="text-text [font-family:var(--font-mono)] text-[11.5px] mb-[9px] [overflow-wrap:anywhere]">
-                      {TRANSPORT.target}
-                    </div>
-                    <div className="text-text-secondary flex items-center gap-[7px] text-[11.5px]">
-                      <Dot size={6} color="var(--color-success)" />
-                      {TRANSPORT.status}
-                    </div>
-                  </div>
-                  <div className="bg-surface-hover [border:1px_solid_#efe9e1] rounded-[11px] p-[12px_14px]">
-                    <div className="text-text-muted text-[11px] mb-[7px]">
-                      정책 출처
-                    </div>
-                    <div className="text-text truncate font-semibold text-[12.5px] mb-[6px]">
-                      {POLICY.org}
-                    </div>
-                    <div className="text-text-muted whitespace-pre-line text-[11.5px] leading-[1.5]">
-                      {POLICY.detail}
-                    </div>
-                  </div>
-                </div>
+                <CollectionPolicy
+                  snapshot={policy.data}
+                  unavailable={policy.isError}
+                />
                 <div className="text-text-muted text-[11.5px] leading-[1.6] mt-[14px]">
                   수집 항목 변경은 조직 관리자에게 문의하세요.
                 </div>

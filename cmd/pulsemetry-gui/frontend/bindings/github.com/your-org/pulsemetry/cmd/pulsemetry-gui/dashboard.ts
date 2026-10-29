@@ -24,6 +24,9 @@ import * as home$0 from "../../internal/dashboard/home/models.js";
 import * as tray$0 from "../../internal/dashboard/tray/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as policy$0 from "../../internal/policy/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as updatecheck$0 from "../../internal/updatecheck/models.js";
 
 export function Activity(q: activity$0.Query): $CancellablePromise<activity$0.Page> {
@@ -36,6 +39,13 @@ export function ActivitySession(id: number): $CancellablePromise<activity$0.Deta
 
 export function Home(q: home$0.Query): $CancellablePromise<home$0.Snapshot> {
     return $Call.ByID(1346496579, q);
+}
+
+/**
+ * Policy는 실행 중인 데몬이 집행하는 정책과 서버 확인 상태를 읽는다.
+ */
+export function Policy(): $CancellablePromise<policy$0.Snapshot> {
+    return $Call.ByID(1124216574);
 }
 
 /**

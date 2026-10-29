@@ -49,6 +49,8 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+	case "gui":
+		os.Exit(cmdGUI(os.Args[2:]))
 	case "uninstall":
 		os.Exit(cmdUninstall(os.Args[2:]))
 	case "hook":
@@ -92,6 +94,7 @@ func writeUsage(w io.Writer) {
 사용법:
   pulsemetry enroll --invite <code> [--server <url>] [--force]   초대 코드로 등록 후 설정 적용 (로컬 파이프라인 자동 배선)
   pulsemetry reconnect [--server <url>]                          저장된 설치 자격증명으로 텔레메트리 토큰 재발급
+  pulsemetry gui install                                       GUI 설치 후 데몬 준비 확인·최초 실행
   pulsemetry status                                              현재 설치·로컬 파이프라인 상태 표시
   pulsemetry uninstall [--dry-run] [--yes] [--delete-data]         사용자 설정을 보존하며 설치 해제
   pulsemetry daemon [옵션]                                       foreground 데몬 실행

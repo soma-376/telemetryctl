@@ -31,8 +31,9 @@ func main() {
 	removal := &Removal{enabled: uninstallMode}
 
 	app := application.New(application.Options{
-		Name:        "Pulsemetry",
-		Description: "AI 도구 사용 현황 데스크톱 대시보드",
+		Name:           "Pulsemetry",
+		SingleInstance: &application.SingleInstanceOptions{UniqueID: "dev.soma376.pulsemetry", OnSecondInstanceLaunch: func(application.SecondInstanceData) { svc.OpenMainWindow() }},
+		Description:    "AI 도구 사용 현황 데스크톱 대시보드",
 		Services: []application.Service{
 			application.NewService(svc),
 			application.NewService(dash),
