@@ -169,6 +169,10 @@ func (o Options) validate() error {
 
 // counters 는 원자적으로 갱신되는 누적 카운터다. Stats 로 스냅샷을 뜬다.
 type counters struct {
+	// 전달 전 손실은 시그널별로 센다. 회사가 끈 시그널을 손실 보고에서 뺄 수 있다.
+	lostLogs     atomic.Int64
+	lostMetrics  atomic.Int64
+	lostTraces   atomic.Int64
 	accepted     atomic.Int64
 	dropped      atomic.Int64
 	decoded      atomic.Int64
@@ -291,6 +295,34 @@ func (rc *Receiver) Stats() Stats {
 // QueueDepth 는 현재 큐에 쌓인 배치 수다.
 func (rc *Receiver) QueueDepth() int { return len(rc.queue) }
 
+// Lost는 상위 전달 전 큐 포화·디코드 실패로 잃은 페이로드 수다.
+// Sink는 이미 상위 전달을 예약한 뒤 로컬 저장만 실패할 수 있으므로 제외한다.
+func (rc *Receiver) Lost(kind otlpdecode.PayloadKind) int64 {
+	if counter := rc.lossCounter(kind); counter != nil {
+		return counter.Load()
+	}
+	return 0
+}
+
+func (rc *Receiver) lossCounter(kind otlpdecode.PayloadKind) *atomic.Int64 {
+	switch kind {
+	case otlpdecode.PayloadLogs:
+		return &rc.stats.lostLogs
+	case otlpdecode.PayloadMetrics:
+		return &rc.stats.lostMetrics
+	case otlpdecode.PayloadTraces:
+		return &rc.stats.lostTraces
+	default:
+		return nil
+	}
+}
+
+func (rc *Receiver) recordLoss(kind otlpdecode.PayloadKind) {
+	if counter := rc.lossCounter(kind); counter != nil {
+		counter.Add(1)
+	}
+}
+
 // QueueCapacity 는 큐 길이다.
 func (rc *Receiver) QueueCapacity() int { return cap(rc.queue) }
 
@@ -365,7 +397,7 @@ func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rc.opt.ControlAPI.ServeHTTP(w, r)
 		return
 	}
-	if (strings.HasPrefix(r.URL.Path, LocalAPIPathPrefix) || r.URL.Path == "/v1/home" || r.URL.Path == "/v1/updates" || r.URL.Path == "/v1/activity" || strings.HasPrefix(r.URL.Path, "/v1/activity/") || strings.HasPrefix(r.URL.Path, HookAPIPathPrefix)) && rc.opt.LocalAPI != nil {
+	if (strings.HasPrefix(r.URL.Path, LocalAPIPathPrefix) || r.URL.Path == "/v1/home" || r.URL.Path == "/v1/updates" || r.URL.Path == "/v1/policy" || r.URL.Path == "/v1/activity" || strings.HasPrefix(r.URL.Path, "/v1/activity/") || strings.HasPrefix(r.URL.Path, HookAPIPathPrefix)) && rc.opt.LocalAPI != nil {
 		if ok, reason := rc.authorize(r); !ok {
 			total := rc.stats.unauthorized.Add(1)
 			rc.logUnauthorized(reason, total)
@@ -459,6 +491,7 @@ func (rc *Receiver) serveIngest(w http.ResponseWriter, r *http.Request, kind otl
 	item := queueItem{kind: kind, enc: enc, body: body, received: rc.opt.Now()}
 	if !rc.enqueue(item) {
 		rc.stats.dropped.Add(1)
+		rc.recordLoss(kind)
 		// 429 가 아니라 200 + PartialSuccess 다 (§5.4, ADR 0001).
 		// 429 는 exporter 재시도를 유발하고, 재시도는 Claude Code 종료를 지연시킨다.
 		// rejected 수를 0 으로 두는 것은 OTLP 스펙이 정의한 "경고" 형태다 —
@@ -501,6 +534,7 @@ func (rc *Receiver) consume(item queueItem) {
 	res, err := otlpdecode.Decode(item.kind, item.body, item.enc, rc.opt.Decode)
 	if err != nil {
 		rc.stats.decodeErrors.Add(1)
+		rc.recordLoss(item.kind)
 		rc.logf("수신 배치 디코드 실패: kind=%s enc=%s bytes=%d: %v",
 			item.kind, item.enc, len(item.body), err)
 		return

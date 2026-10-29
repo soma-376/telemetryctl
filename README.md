@@ -224,11 +224,15 @@ Windows·macOS(`darwin`)·Linux 각각 `amd64`·`arm64`를 대상으로 아래 �
 | macOS GUI | `pulsemetry_gui_darwin_{arch}.dmg` | DMG |
 | Linux GUI | `pulsemetry_gui_linux_{arch}.AppImage` | AppImage |
 
-GUI 패키지에는 GUI만 포함합니다. GUI를 사용하려면 CLI를 별도로 설치하고 데몬을 실행해야 합니다.
-CLI는 별도 실행 파일로 배포하며 인스톨러로 만들지 않습니다.
+GUI 패키지에는 GUI만 포함합니다. 한 줄 설치 스크립트가 CLI 등록 뒤 `pulsemetry gui install`로 GUI도 설치합니다.
+데몬 준비 완료 후 최초 한 번 GUI를 열며, GUI 설치·실행 실패는 수집에 영향을 주지 않습니다.
+기존 CLI 설치자는 `pulsemetry gui install`로 GUI 설치·첫 실행을 재시도할 수 있습니다.
+CLI는 별도 실행 파일로 배포하며 인스톨러로 만들지 않습니다. Windows GUI 패키지는 사용자 범위 NSIS입니다.
 GUI는 해당 OS에서 빌드·패키징하며 Wails `v3.0.0-beta.11`과 플랫폼별 빌드 도구가 필요합니다.
 로컬 패키징은 `task package:gui TARGET_OS=darwin TARGET_ARCH=arm64 GUI_VERSION=0.1.0`처럼
 실행합니다. `TARGET_OS`·`TARGET_ARCH`를 생략하면 현재 컴퓨터 기준입니다.
+macOS 패키지는 `artifacts/package/darwin-{arch}/Pulsemetry.dmg`에 생성되며 앱 이름은
+`Pulsemetry.app`입니다. 개발 실행도 같은 이름을 쓰고 번들은 `cmd/pulsemetry-gui/bin/dev/`에 둡니다.
 
 Linux AppImage 패키징에는 `--no-sort`를 지원하는 `patchelf`(0.15 이상)가 필요합니다.
 기본은 `PATH`의 실행 파일이며, 다른 파일을 선택하려면
@@ -268,7 +272,20 @@ enrollment 서버 스펙은 서버 저장소를 참조하세요.
    파일에 평문으로 들어가므로, 세션 이력을 돌려주는 조회 경로는 별도 자격으로 분리해야 합니다
 4. **고아 세션 마감** — 데몬이 비정상 종료하면 그때 열려 있던 세션의 `ended_at` 이 NULL 로 남아
    영원히 "진행 중" 으로 보입니다. 기동 시 유휴 임계값을 넘긴 세션을 마감해야 합니다
-5. 토큰 rotation · heartbeat · 설정 재조회(`GET /api/v1/manifest`)
+5. 토큰 rotation · 설정 재조회(`GET /api/v1/manifest`). 설치 상태 보고(heartbeat)는 데몬 시작 직후와 매분 전송합니다([ADR 0036](docs/adr/0036-설치-상태는-수집과-분리해-매분-보고한다.md)).
 6. `resource_attributes` → `OTEL_RESOURCE_ATTRIBUTES` 배선 (회사 단위 태깅)
 7. 설치 바이너리 PATH 등록, `uninstall`·`repair` (자격증명 파일에서 헤더 재주입)
 8. Codex 텔레메트리 인증 배선 (현재 Codex 설정에는 토큰이 들어가지 않음)
+
+### GUI 설치와 정책 상태
+
+GUI 위치는 macOS `~/Applications/Pulsemetry.app`, Windows `%LOCALAPPDATA%/Programs/Pulsemetry/Pulsemetry.exe`,
+Linux `~/.local/share/pulsemetry/Pulsemetry.AppImage`다. Linux는 사용자 애플리케이션 메뉴에도 등록한다.
+GUI가 이미 있으면 덮어쓰지 않는다. 데스크톱 세션이 없거나 데몬이 준비되지 않으면 첫 실행을 보류한다.
+첫 실행 요청의 성공 기록은 데이터 디렉터리의 `gui/opened`이며, 데몬이 재시작될 때 창을 다시 열지 않는다.
+
+설정의 수집 정책은 데몬의 `/v1/policy`를 로컬 인증으로 조회한다. 적용 manifest의 판·허용 항목과
+매분 heartbeat로 확인한 서버 판을 표시한다. 확인 실패·미확인·3분 넘은 결과는 최신 적용으로 표시하지 않는다.
+정책 자동 적용은 하지 않으므로 새 판 적용은 관리자 설치 안내에 따른 재설치가 필요하다.
+서버에는 GUI 릴리스 자산과 `SHA256SUMS`가 필요하고 `PULSEMETRY_HEARTBEAT_ENABLED=true`로 보고를 켜야 한다.
+결정은 [허브 ADR 0027](../docs/adr/0027-install-desktop-and-report-policy-status.md)을 따른다.
