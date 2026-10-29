@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -44,7 +45,8 @@ func TestInstallDownloadsThenWaitsAndOpensOnlyOnce(t *testing.T) {
 		t.Fatalf("최초 설치: %+v %v", result, err)
 	}
 	fi, _ := os.Stat(result.Path)
-	if fi.Mode().Perm() != 0o755 {
+	// Windows 파일시스템에는 Unix 실행 비트가 없다. 설치·첫 실행 검증은 모든 OS에서 유지한다.
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o755 {
 		t.Fatal("AppImage 실행 권한 없음")
 	}
 	result, err = Install(context.Background(), o)
