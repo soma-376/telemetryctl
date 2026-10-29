@@ -86,6 +86,8 @@ var ErrGRPCUnsupported = errors.New("forward: grpc 상위 전달은 아직 지�
 
 // Options 는 포워더 구성이다. 상위 endpoint·프로토콜·프라이버시 정책은 전부 Manifest 에서 온다.
 type Options struct {
+	// Now는 전달 성공 시각의 시계다. nil이면 time.Now다.
+	Now func() time.Time
 	// Manifest 는 **회사 manifest 원본**이다. 로컬 배선이 쓰는 고정 프로필이 아니다 —
 	// 무엇을 보낼지(Signals)와 무엇을 지울지(Privacy)의 기준은 둘 다 회사가 정한 범위여야
 	// 한다 (ADR 0003·0006). 고정 프로필을 여기 넣으면 두 집행이 통째로 무력화된다.
@@ -110,8 +112,12 @@ type Options struct {
 	MaxBackoff  time.Duration
 }
 
-// Stats 는 전달 결과 집계다. 값은 담지 않는다 — 개수만이다.
+// Stats는 페이로드 본문 없이 전달 결과의 건수와 마지막 성공 시각을 담는다.
 type Stats struct {
+	// Pending은 큐 대기와 전송·재시도 중인 페이로드를 합한 수다.
+	Pending int64
+	// LastSentAt은 마지막 HTTP 2xx 응답 시각이다. 성공 전에는 zero다.
+	LastSentAt time.Time
 	// Enqueued 는 큐에 들어간 페이로드 수다.
 	Enqueued int64
 	// Sent 는 상위가 2xx 로 받은 페이로드 수다.
@@ -159,6 +165,7 @@ type Forwarder struct {
 	logger  *log.Logger
 	client  *http.Client
 	timeout time.Duration
+	now     func() time.Time
 
 	maxAttempts int
 	baseBackoff time.Duration
@@ -187,6 +194,9 @@ type Forwarder struct {
 
 // New 는 포워더를 만든다. manifest 가 grpc 면 ErrGRPCUnsupported 로 거부한다.
 func New(opts Options) (*Forwarder, error) {
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
 	if opts.Logger == nil {
 		return nil, errors.New("forward: logger 는 필수")
 	}
@@ -221,6 +231,7 @@ func New(opts Options) (*Forwarder, error) {
 		logger:        opts.Logger,
 		client:        client,
 		timeout:       timeout,
+		now:           opts.Now,
 		maxAttempts:   orDefaultInt(opts.MaxAttempts, DefaultMaxAttempts),
 		baseBackoff:   orDefaultDuration(opts.BaseBackoff, DefaultBaseBackoff),
 		maxBackoff:    orDefaultDuration(opts.MaxBackoff, DefaultMaxBackoff),
@@ -317,18 +328,25 @@ func (f *Forwarder) Enqueue(kind otlpdecode.PayloadKind, enc otlpdecode.Encoding
 	}
 
 	size := int64(len(body))
+	// 워커가 성공·실패를 세기 전에 Enqueued를 기록한다. 같은 잠금으로 읽는
+	// 보고 스냅샷에서 완료 수가 접수 수보다 커지는 순간이 생기지 않는다.
+	f.statsMu.Lock()
 	if f.queuedBytes.Load()+size > f.maxQueueBytes {
+		f.statsMu.Unlock()
 		f.dropQueueFull()
 		return false
 	}
 
 	j := job{kind: kind, enc: enc, body: bytes.Clone(body)}
+	f.queuedBytes.Add(size)
 	select {
 	case f.queue <- j:
-		f.queuedBytes.Add(size)
-		f.bump(func(s *Stats) { s.Enqueued++ })
+		f.stats.Enqueued++
+		f.statsMu.Unlock()
 		return true
 	default:
+		f.queuedBytes.Add(-size)
+		f.statsMu.Unlock()
 		f.dropQueueFull()
 		return false
 	}
@@ -440,7 +458,9 @@ func (f *Forwarder) discardQueued() int64 {
 func (f *Forwarder) Stats() Stats {
 	f.statsMu.Lock()
 	defer f.statsMu.Unlock()
-	return f.stats
+	s := f.stats
+	s.Pending = s.Enqueued - s.Sent - s.DroppedScrub - s.DroppedShutdown - s.Discarded - s.Failed
+	return s
 }
 
 func (f *Forwarder) bump(fn func(*Stats)) {
@@ -497,7 +517,10 @@ func (f *Forwarder) send(kind otlpdecode.PayloadKind, enc otlpdecode.Encoding, b
 		status, retryAfter, err := f.post(target, contentType, body, token)
 		switch classify(status, err) {
 		case dispositionDone:
-			f.bump(func(s *Stats) { s.Sent++ })
+			f.bump(func(s *Stats) {
+				s.Sent++
+				s.LastSentAt = f.now().UTC()
+			})
 			return
 
 		case dispositionAuth:
@@ -523,6 +546,7 @@ func (f *Forwarder) send(kind otlpdecode.PayloadKind, enc otlpdecode.Encoding, b
 			if attempt < f.maxAttempts {
 				f.bump(func(s *Stats) { s.Retries++ })
 				if !f.waitBackoff(attempt, retryAfter) {
+					f.bump(func(s *Stats) { s.DroppedShutdown++ })
 					return
 				}
 			}

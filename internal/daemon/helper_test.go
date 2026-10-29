@@ -20,6 +20,7 @@ import (
 
 	"github.com/your-org/pulsemetry/internal/contract"
 	"github.com/your-org/pulsemetry/internal/forward"
+	"github.com/your-org/pulsemetry/internal/heartbeat"
 	"github.com/your-org/pulsemetry/internal/installer"
 	"github.com/your-org/pulsemetry/internal/receiver"
 	"github.com/your-org/pulsemetry/internal/runtimeinfo"
@@ -197,9 +198,10 @@ func (h *harness) run(o harnessOptions) {
 		Logger:    log.New(h.logs, "", 0),
 		// 실제 포트를 미리 확보해 두고 그 번호를 요청한다. FixedPort 가 아니므로
 		// 그 사이에 누가 채 가도 임의 포트로 폴백하고, 테스트는 Ready 가 준 값을 쓴다.
-		ListenPort:    freePort(h.t),
-		IngestToken:   testIngestToken,
-		ForwardTokens: forward.StaticToken("telemetry-token-for-test"),
+		ListenPort:        freePort(h.t),
+		IngestToken:       testIngestToken,
+		ForwardTokens:     forward.StaticToken("telemetry-token-for-test"),
+		HeartbeatReporter: heartbeatReporterFunc(func(context.Context, heartbeat.Report) error { return nil }),
 		UpdateChecker: updateCheckerFunc(func(context.Context) (updatecheck.Result, error) {
 			return updatecheck.Result{LatestVersion: installer.Version}, nil
 		}),

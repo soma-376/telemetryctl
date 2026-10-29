@@ -8,6 +8,7 @@ import (
 	"github.com/your-org/pulsemetry/internal/dashboard/tray"
 	"github.com/your-org/pulsemetry/internal/hostenv"
 	"github.com/your-org/pulsemetry/internal/localapi"
+	"github.com/your-org/pulsemetry/internal/policy"
 	"github.com/your-org/pulsemetry/internal/store"
 	"github.com/your-org/pulsemetry/internal/updatecheck"
 )
@@ -64,4 +65,9 @@ func (d *Dashboard) Tray(ctx context.Context, q tray.Query) (tray.Snapshot, erro
 // RefreshTray 는 데몬에 수동 갱신을 명령하고 그 결과를 다시 받는다 (퀵뷰의 새로고침 버튼).
 func (d *Dashboard) RefreshTray(ctx context.Context, q tray.Query) (tray.Snapshot, error) {
 	return d.ipcClient.RefreshManual(ctx, q)
+}
+
+// Policy는 실행 중인 데몬이 집행하는 정책과 서버 확인 상태를 읽는다.
+func (d *Dashboard) Policy(ctx context.Context) (policy.Snapshot, error) {
+	return d.ipcClient.Policy(ctx)
 }

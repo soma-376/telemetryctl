@@ -373,6 +373,9 @@ test('build·macOS·Windows 작업은 사용자 PATCHELF를 그대로 전달한�
     assert.equal(result.status, 0, result.stderr);
     assert.equal(loggedCalls(setup.wailsLog).every((call) => call.patchelf === originalPatchelf), true);
     assert.equal(loggedCalls(setup.patchelfLog).length, 0);
+    if (os === 'windows') {
+      assert.equal(loggedCalls(setup.wailsLog).some((call) => call.args.includes('INSTALL_SCOPE=user')), true);
+    }
   }
 });
 

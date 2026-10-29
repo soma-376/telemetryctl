@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+
+	"github.com/your-org/pulsemetry/internal/otlpdecode"
 )
 
 // Server 는 Receiver 를 loopback 리스너들에 물린 것이다.
@@ -98,6 +100,9 @@ func (s *Server) HealthURL() string { return s.Endpoint() + HealthPath }
 
 // Stats 는 수신기 카운터 스냅샷이다.
 func (s *Server) Stats() Stats { return s.recv.Stats() }
+
+// Lost는 해당 시그널의 상위 전달 전 손실 수다.
+func (s *Server) Lost(kind otlpdecode.PayloadKind) int64 { return s.recv.Lost(kind) }
 
 // Handler 는 내부 Receiver 다. 테스트와 상태 조회용이다.
 func (s *Server) Handler() *Receiver { return s.recv }

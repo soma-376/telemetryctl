@@ -33,7 +33,9 @@ Unicode true
 ####
 ## Include the wails tools
 ####
-!define WAILS_INSTALL_SCOPE "user"
+!ifndef WAILS_INSTALL_SCOPE
+    !define WAILS_INSTALL_SCOPE "user"
+!endif
 !include "wails_tools.nsh"
 
 # Windows 파일 버전은 숫자 네 부분이어야 한다. 표시 버전에는 prerelease도 유지한다.

@@ -1,10 +1,4 @@
-import type {
-  CollectionItem,
-  ConnectionRow,
-  ConnState,
-  HealthItem,
-  Pref,
-} from "./types";
+import type { ConnectionRow, ConnState, HealthItem, Pref } from "./types";
 
 export type * from "./types";
 
@@ -80,46 +74,4 @@ export const CONN_STATUS: Record<
     bg: "var(--color-inactive-soft)",
     action: true,
   },
-};
-
-// 조직 정책 — 이 기기에서는 읽기 전용.
-export const COLLECTION: CollectionItem[] = [
-  { icon: "◫", label: "로그", key: "logs", sent: true },
-  { icon: "◔", label: "메트릭", key: "metrics", sent: true },
-  { icon: "⇢", label: "트레이스", key: "traces", sent: true },
-  {
-    icon: "✎",
-    label: "사용자 프롬프트",
-    key: "collect_user_prompts",
-    sent: true,
-  },
-  {
-    icon: "✳",
-    label: "AI 응답",
-    key: "collect_assistant_responses",
-    sent: true,
-  },
-  {
-    icon: "⚒",
-    label: "도구 호출 정보",
-    key: "collect_tool_details",
-    sent: true,
-  },
-  {
-    icon: "▤",
-    label: "도구 입출력 내용",
-    key: "collect_tool_content",
-    sent: false,
-  },
-  { icon: "◎", label: "사용자 이메일", key: "collect_user_email", sent: true },
-];
-
-export const TRANSPORT = {
-  target: "otel.acme-corp.internal:4317",
-  status: "TLS · 40초 전 전송",
-};
-
-export const POLICY = {
-  org: "Acme Corp · Engineering",
-  detail: "policy.yaml v4\n2026-08-04 적용",
 };

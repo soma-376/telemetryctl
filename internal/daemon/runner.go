@@ -39,11 +39,13 @@ import (
 	"github.com/your-org/pulsemetry/internal/dashboard"
 	"github.com/your-org/pulsemetry/internal/dashboard/tray"
 	"github.com/your-org/pulsemetry/internal/forward"
+	"github.com/your-org/pulsemetry/internal/heartbeat"
 	"github.com/your-org/pulsemetry/internal/hostenv"
 	"github.com/your-org/pulsemetry/internal/installer"
 	"github.com/your-org/pulsemetry/internal/instancelock"
 	"github.com/your-org/pulsemetry/internal/localapi"
 	"github.com/your-org/pulsemetry/internal/otlpdecode"
+	"github.com/your-org/pulsemetry/internal/policy"
 	"github.com/your-org/pulsemetry/internal/receiver"
 	"github.com/your-org/pulsemetry/internal/runtimeinfo"
 	"github.com/your-org/pulsemetry/internal/store"
@@ -115,6 +117,9 @@ const (
 	// DefaultUpdateInterval 은 등록 서버의 업데이트 확인 주기다.
 	DefaultUpdateInterval = 24 * time.Hour
 
+	// DefaultHeartbeatInterval은 사용량 발생과 무관한 설치 상태 보고 주기다.
+	DefaultHeartbeatInterval = time.Minute
+
 	// pipelineQueue 는 소유자 고루틴 앞의 커맨드 버퍼다. 수신기 워커 2개 + 틱들이
 	// 잠깐 겹치는 것만 흡수하면 되므로 작게 둔다. 진짜 버퍼는 수신기 큐다.
 	pipelineQueue = 8
@@ -144,14 +149,15 @@ type Options struct {
 	NoStoreContent bool
 
 	// 틱 주기. 0 이면 위의 기본값.
-	Interval        time.Duration
-	FlushInterval   time.Duration
-	PruneInterval   time.Duration
-	TokenInterval   time.Duration
-	ShutdownTimeout time.Duration
-	LimitInterval   time.Duration
-	UpdateInterval  time.Duration
-	BatchEvents     int
+	Interval          time.Duration
+	FlushInterval     time.Duration
+	PruneInterval     time.Duration
+	TokenInterval     time.Duration
+	ShutdownTimeout   time.Duration
+	LimitInterval     time.Duration
+	UpdateInterval    time.Duration
+	HeartbeatInterval time.Duration
+	BatchEvents       int
 	// CodexJSONLRoot는 격리된 파일 검증을 위한 경계다. 비우면 사용자 홈의
 	// .codex/sessions를 읽기 전용으로 사용한다.
 	CodexJSONLRoot string
@@ -170,6 +176,8 @@ type Options struct {
 	CodexThreadReader codexapp.ThreadReader
 	// UpdateChecker 는 실제 등록 서버를 호출하지 않는 테스트용 조회 경계다.
 	UpdateChecker updatecheck.Checker
+	// HeartbeatReporter는 테스트에서 실제 키링·등록 서버를 사용하지 않는 경계다.
+	HeartbeatReporter heartbeat.Reporter
 
 	// Ready 는 기동이 끝나 요청을 받을 수 있게 된 순간 한 번 호출된다.
 	// runtime.json 에 쓴 것과 같은 값을 준다.
@@ -205,6 +213,9 @@ func (o Options) normalized() (Options, error) {
 	}
 	if o.UpdateInterval <= 0 {
 		o.UpdateInterval = DefaultUpdateInterval
+	}
+	if o.HeartbeatInterval <= 0 {
+		o.HeartbeatInterval = DefaultHeartbeatInterval
 	}
 	if o.BatchEvents <= 0 {
 		o.BatchEvents = DefaultBatchEvents
@@ -256,8 +267,11 @@ type daemon struct {
 	codexSourceCancel context.CancelFunc
 	codexSourceErr    error
 	claudeTitles      *titleRefresher
+	policy            *policy.Service
 	updates           *updatecheck.Service
 	updatesDone       chan struct{}
+	heartbeatDone     chan struct{}
+	receivingSince    time.Time
 	// query 는 GUI 조회에 쓰는 read-only 핸들이다. 쓰기 커넥션(db)과 별개다 —
 	// dashboard 는 mode=ro 를 강제하고, 조회가 쓰기를 할 수 없다는 것이 그 계약이다.
 	query *dashboard.Service
@@ -283,6 +297,7 @@ func (d *daemon) start(ctx context.Context) error {
 	}
 	d.state = state
 	d.initUpdates()
+	d.policy = policy.New(state.ConfigRevision, state.InstalledAt, state.Manifest, state.ServerURL != "", d.opts.Now)
 	if drift, err := installer.InspectManaged(d.opts.StatePath, state); err != nil {
 		d.log.Printf("경고: 설정 drift 검사 실패: %v", err)
 	} else {
@@ -426,6 +441,7 @@ func (d *daemon) start(ctx context.Context) error {
 		state.InstallationID, db.Path(), store.DefaultRetentionDays, storeContent,
 		!d.opts.DisableReceiver, d.fwd != nil)
 	d.startUpdates(ctx)
+	d.startHeartbeat(ctx)
 
 	if d.opts.Ready != nil {
 		d.opts.Ready(info)
@@ -474,6 +490,7 @@ func (d *daemon) startForwarder() error {
 		Manifest: d.state.Manifest,
 		Tokens:   tokens,
 		Logger:   d.log,
+		Now:      d.opts.Now,
 	})
 	if err != nil {
 		if errors.Is(err, forward.ErrGRPCUnsupported) {
@@ -536,12 +553,13 @@ func (d *daemon) startReceiver() error {
 		Logger:     d.log,
 		Decode:     otlpdecode.Options{InstallationID: d.state.InstallationID, SkipPayload: !d.state.Local.StoreContent || d.opts.NoStoreContent},
 		Now:        d.opts.Now,
-		LocalAPI:   localapi.WithHome(localapi.WithUpdates(localapi.WithActivity(localapi.NewServer(d.limits, tray.NewBuilder(d.query), d.pipe), d.query), d.updates), d.query),
+		LocalAPI:   localapi.WithPolicy(localapi.WithHome(localapi.WithUpdates(localapi.WithActivity(localapi.NewServer(d.limits, tray.NewBuilder(d.query), d.pipe), d.query), d.updates), d.query), d.policy),
 	})
 	if err != nil {
 		return fmt.Errorf("로컬 수신기 기동: %w", err)
 	}
 	d.srv = srv
+	d.receivingSince = d.opts.Now().UTC()
 	d.receiverToken = token
 
 	if srv.Port() != requested {
@@ -787,6 +805,7 @@ func (d *daemon) shutdown() {
 		cancel()
 	}
 	d.waitUpdates(overall)
+	d.waitHeartbeat(overall)
 
 	if d.query != nil {
 		if err := d.query.Stop(); err != nil {

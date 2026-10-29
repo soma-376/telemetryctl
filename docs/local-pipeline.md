@@ -1077,8 +1077,22 @@ telemetryctl daemon [--listen localhost:4318] [--data-dir <경로>] [--state <�
 **하드 실패**한다 — 조용히 수신만 하면 벤더 설정이 우리를 가리키는 순간 회사 Collector 로 가던
 스트림이 아무도 모르게 끊긴다. 오류 메시지가 `--no-forward` 탈출구를 안내한다.
 
-틱 주기: flush 2초(또는 512 이벤트) · 세션 30초 · prune 1시간(+기동 직후 1회) · 토큰 확인 15분.
+틱 주기: flush 2초(또는 512 이벤트) · 세션 30초 · prune 1시간(+기동 직후 1회) · 토큰 확인 15분 · 설치 상태 보고 1분(+기동 직후 1회).
 크래시 시 잃는 양의 상한이 곧 flush 주기다.
+
+설치 상태 보고는 별도 워커가 등록 서버의 `POST /api/v1/installations/{installationId}/heartbeat`로 보낸다.
+인증은 키링의 설치 자격증명(`pit_`)이고, 사용량이 없어도 수신기·전달기 상태와 적용 판을 보고한다.
+HTTP 요청은 10초로 제한하며 실패하면 다음 1분 주기에 최신 상태로 다시 보낸다. 보고 실패는 수집·저장·전달을 막지 않는다.
+서버 응답의 `report_interval_seconds`는 이 버전의 고정 주기를 바꾸지 않는다.
+
+전달 성공·손실·대기는 이벤트 개수가 아닌 **페이로드 수**다. 성공은 상위 HTTP 2xx이며 최종 적재 완료와 다르다.
+대기는 전달 큐와 진행 중인 전송·재시도이고, 로컬 수신기에서 아직 디코드 중인 배치는 포함하지 않는다.
+손실에는 회사가 수집하는 시그널의 수신 큐 포화·디코드 실패와 포워더의 실제 폐기를 포함한다.
+정책으로 끈 시그널과 재시도 횟수는 손실에 더하지 않는다. 회사 직결 경로도 수신기·전달기의 가동 여부는 보고하되, 회사로 직접 가는 전송의 수치는 알 수 없어 0·null로 보낸다.
+프로세스가 재시작하면 `run_id`와 누적 수치가 새로 시작한다([ADR 0036](adr/0036-설치-상태는-수집과-분리해-매분-보고한다.md)).
+
+서버는 heartbeat 수신 기능이 활성화되어 있어야 한다. `http_status_404`는 해당 경로의 비활성화·미지원 여부를,
+`http_status_401`·`http_status_403`은 설치 자격증명·폐기 여부를 확인한다. 로그에는 토큰·URL·응답 본문을 넣지 않는다.
 
 세션 틱 안의 순서가 load-bearing 이다: **`Advance` → `Snapshot` → flush → 조립기 `Prune`.**
 `Prune` 을 앞에 두면 데몬이 몇 시간 잠들었다 깰 때, 마감되는 순간 이미 TTL(2시간)을 넘긴 세션이
@@ -1618,3 +1632,12 @@ PowerShell은 `& '실행 경로' hook codex`를 사용하고, Linux·macOS의 PO
     저장한다
 12. **systemd `Type=notify`** (`sd_notify`) — `enable --now` 가 반환될 때 데몬이 이미 수신 가능함을
     systemd 가 알게 한다. 지금은 CLI 가 `/healthz` 폴링으로 대신한다 (ADR 0007 Follow-up)
+
+### GUI 정책 상태
+
+`GET /v1/policy`는 기존 로컬 토큰·헤더 인증 뒤 읽는다. 데몬 시작 때 실제로 로드한 manifest의
+`applied_revision`, `applied_at`, `signals`, `privacy`와 heartbeat 확인 결과의 `expected_revision`,
+`last_checked_at`, `status`를 제공한다. 판을 덮어쓰거나 재조회·토큰 회전을 실행하지 않는다.
+상태는 `checking`, `disabled`, `unknown`, `error`, `stale`, `current`, `pending`, `ahead`다.
+서버 확인 성공 후 3분이 지나면 조회 시 `stale`로 계산한다. 실패해도 마지막 확인 판은 남지만
+`current`로 표시하지 않는다. GUI는 설정이 열려 있을 때만 10초마다 이 로컬 스냅샷을 읽는다.
